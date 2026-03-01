@@ -1,0 +1,13 @@
+{
+  "id": "alert-1",
+  "therapistId": "therapist-01",
+  "therapistName": "Dr. Evelyn Reed",
+  "bookingId": "BK-002",
+  "timestamp": "2024-08-26T10:05:00.000Z",
+  "status": "active",
+  "type": "sos",
+  "location": {
+    "_latitude": 22.3072,
+    "_longitude": 73.1812
+  }
+}

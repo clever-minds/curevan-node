@@ -1,0 +1,13 @@
+{
+  "context": "chat_assistant",
+  "interactionId": "8p76MAqFjr_hHUysYbHFE",
+  "rating": "positive",
+  "query": "Welcome, Patient User! How can I help you today?\ne.g., \"What are my upcoming appointments?\"",
+  "response": "Welcome, Patient User! How can I help you today?\ne.g., \"What are my upcoming appointments?\"",
+  "id": "W06XtwJMVxqlz2ppX7Rj",
+  "userId": "patient-01",
+  "timestamp": {
+    "_seconds": 1758541058,
+    "_nanoseconds": 140000000
+  }
+}

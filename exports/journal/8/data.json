@@ -1,0 +1,33 @@
+{
+  "id": "8",
+  "title": "'Tech Neck' Is Real: 5 Physiotherapy-Approved Exercises for Office Workers",
+  "slug": "tech-neck-physiotherapy-exercises",
+  "excerpt": "Constant screen time is leading to a rise in neck and shoulder pain. Our certified physiotherapists share five simple yet effective exercises you can do at your desk to combat 'tech neck' and improve your posture.",
+  "content": "This article would provide illustrated, step-by-step guides for five simple exercises like chin tucks and shoulder blade squeezes. It would serve as a great lead magnet and link back to the Physiotherapy service page and a call-to-action to book an ergonomic assessment.",
+  "featuredImage": "https://placehold.co/600x400.png",
+  "aiHint": "person stretching at desk",
+  "authorId": "therapist-01",
+  "authorName": "Dr. Evelyn Reed",
+  "status": "published",
+  "tags": [
+    "physiotherapy",
+    "ergonomics",
+    "workplace-health"
+  ],
+  "stats": {
+    "totalViews": 2150,
+    "uniqueViews": 1800
+  },
+  "createdAt": {
+    "_seconds": 1724230800,
+    "_nanoseconds": 0
+  },
+  "publishedAt": {
+    "_seconds": 1724230800,
+    "_nanoseconds": 0
+  },
+  "updatedAt": {
+    "_seconds": 1724230800,
+    "_nanoseconds": 0
+  }
+}

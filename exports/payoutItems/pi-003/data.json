@@ -1,0 +1,26 @@
+{
+  "id": "pi-003",
+  "type": "service",
+  "sourceId": "BK-003",
+  "therapistId": "therapist-02",
+  "patientId": "patient-01",
+  "serviceTypeId": "acupuncture",
+  "grossAmount": 95000,
+  "platformFeePct": 0,
+  "platformFeeAmount": 0,
+  "gstOnPlatformFee": 0,
+  "preTdsPayable": 95000,
+  "tdsDeducted": 9500,
+  "netAmount": 85500,
+  "currency": "INR",
+  "state": "paid",
+  "membershipPlanSnapshot": "standard",
+  "createdAt": {
+    "_seconds": 1723275600,
+    "_nanoseconds": 0
+  },
+  "weekStart": {
+    "_seconds": 1722816000,
+    "_nanoseconds": 0
+  }
+}

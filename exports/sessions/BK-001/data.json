@@ -1,0 +1,32 @@
+{
+  "id": "BK-001",
+  "bookingId": "BK-001",
+  "therapistId": "therapist-01",
+  "durationMin": 60,
+  "endedAt": {
+    "_seconds": 1722858000,
+    "_nanoseconds": 0
+  },
+  "startedAt": {
+    "_seconds": 1722854400,
+    "_nanoseconds": 0
+  },
+  "events": [
+    {
+      "type": "start_verification_success",
+      "at": {
+        "_seconds": 1722854400,
+        "_nanoseconds": 0
+      },
+      "note": "Patient verified via OTP."
+    },
+    {
+      "type": "session_ended",
+      "at": {
+        "_seconds": 1722858000,
+        "_nanoseconds": 0
+      },
+      "note": "Therapist marked session as complete."
+    }
+  ]
+}

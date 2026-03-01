@@ -1,0 +1,10 @@
+{
+  "uid": "therapist-02",
+  "role": "therapist",
+  "phone": "9876543215",
+  "roles": [
+    "therapist"
+  ],
+  "name": "Dr. Samuel Chen",
+  "email": "therapist2@curevan.com"
+}

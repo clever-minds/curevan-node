@@ -1,0 +1,13 @@
+{
+  "id": "SHP-003",
+  "orderId": "ORD-004",
+  "awb": "BLUEDART456789",
+  "carrier": "Blue Dart",
+  "createdAt": "2024-07-01T10:00:00.000Z",
+  "customerName": "Patient User",
+  "cityState": "Vadodara, Gujarat",
+  "status": "Delivered",
+  "eta": "2024-07-03T18:00:00.000Z",
+  "deliveredAt": "2024-07-03T15:00:00.000Z",
+  "slaBreached": false
+}

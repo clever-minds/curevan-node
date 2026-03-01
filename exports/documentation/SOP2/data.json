@@ -1,0 +1,27 @@
+{
+  "id": "SOP2",
+  "title": "SOP: PCR Completion & Locking",
+  "slug": "sop-pcr-completion-locking",
+  "status": "published",
+  "categoryIds": [
+    "Operations",
+    "Clinical"
+  ],
+  "sopVersion": "v1.0",
+  "excerpt": "Guide to correctly filling out and locking the Patient Care Report after a session.",
+  "content": "Detailed content of the SOP...",
+  "coverImageUrl": "https://placehold.co/600x400.png",
+  "authorId": "admin-therapy-01",
+  "createdAt": {
+    "_seconds": 1722852000,
+    "_nanoseconds": 0
+  },
+  "publishedAt": {
+    "_seconds": 1722852000,
+    "_nanoseconds": 0
+  },
+  "updatedAt": {
+    "_seconds": 1722852000,
+    "_nanoseconds": 0
+  }
+}

@@ -1,0 +1,12 @@
+{
+  "sku": "CV-TENS-01",
+  "productId": "P1",
+  "warehouseId": "VAD-01",
+  "onHand": 150,
+  "reserved": 12,
+  "reorderPoint": 20,
+  "updatedAt": {
+    "_seconds": 1724490000,
+    "_nanoseconds": 0
+  }
+}

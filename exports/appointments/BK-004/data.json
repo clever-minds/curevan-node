@@ -1,0 +1,39 @@
+{
+  "id": "BK-004",
+  "patientId": "patient-02",
+  "patientName": "Audit Patient",
+  "patientPhone": "9876543217",
+  "therapistId": "therapist-03",
+  "therapist": "Dr. Priya Desai",
+  "therapistPhone": "9876543216",
+  "serviceTypeId": "speech-therapy",
+  "therapyType": "Speech Therapy",
+  "serviceAmount": 80000,
+  "totalAmount": 80000,
+  "time": "15:00",
+  "mode": "online",
+  "status": "Completed",
+  "cancellationReason": null,
+  "notes": "Assessment session for new patient.",
+  "serviceAddress": null,
+  "paymentStatus": "Paid",
+  "pcrStatus": "locked",
+  "verificationStatus": "Verified",
+  "clinicId": null,
+  "date": {
+    "_seconds": 1724112000,
+    "_nanoseconds": 0
+  },
+  "createdAt": {
+    "_seconds": 1723680000,
+    "_nanoseconds": 0
+  },
+  "startTime": {
+    "_seconds": 1724166000,
+    "_nanoseconds": 0
+  },
+  "endTime": {
+    "_seconds": 1724169600,
+    "_nanoseconds": 0
+  }
+}

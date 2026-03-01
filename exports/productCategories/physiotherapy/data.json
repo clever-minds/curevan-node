@@ -1,0 +1,7 @@
+{
+  "id": "physiotherapy",
+  "name": "Physiotherapy",
+  "description": "Equipment for physical therapy and rehabilitation.",
+  "image": "https://placehold.co/600x400.png",
+  "isActive": true
+}

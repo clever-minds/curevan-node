@@ -1,0 +1,10 @@
+{
+  "uid": "admin-ecom-01",
+  "email": "ecom@curevan.com",
+  "role": "admin",
+  "roles": [
+    "admin.ecom"
+  ],
+  "name": "E-commerce Admin",
+  "phone": "9876543212"
+}

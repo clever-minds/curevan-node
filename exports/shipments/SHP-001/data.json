@@ -1,0 +1,12 @@
+{
+  "id": "SHP-001",
+  "orderId": "ORD-001",
+  "awb": "DTDC987654321",
+  "carrier": "DTDC",
+  "createdAt": "2024-07-28T14:00:00.000Z",
+  "customerName": "Patient User",
+  "cityState": "Vadodara, Gujarat",
+  "status": "In Transit",
+  "eta": "2024-07-30T18:00:00.000Z",
+  "slaBreached": false
+}

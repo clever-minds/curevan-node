@@ -1,0 +1,17 @@
+{
+  "id": "N1",
+  "name": "Digital Thermometer",
+  "description": "Fast and accurate digital thermometer for all ages, with a flexible tip for comfort.",
+  "categoryId": "nursing-care",
+  "brand": "Curevan Health",
+  "sku": "CV-THERM-D1",
+  "price": 2000,
+  "mrp": 2200,
+  "featuredImage": "https://placehold.co/400x400.png",
+  "isActive": true,
+  "isCouponExcluded": false,
+  "rating": 4,
+  "stock": 250,
+  "reorderPoint": 40,
+  "hsnCode": "902519"
+}

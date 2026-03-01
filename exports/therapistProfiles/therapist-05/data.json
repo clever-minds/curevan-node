@@ -1,0 +1,121 @@
+{
+  "image": "https://placehold.co/100x100.png",
+  "specialty": "Nursing Care",
+  "address": {
+    "country": "India",
+    "pin": "600090",
+    "city": "Chennai",
+    "state": "Tamil Nadu",
+    "line1": "22 Besant Nagar Beach Rd"
+  },
+  "rating": 4.8,
+  "bio": "Dr. Meena Iyer provides compassionate and skilled nursing care at home, including post-operative care, wound management, and injections.",
+  "isProfilePublic": true,
+  "referralDiscountRate": 0.05,
+  "tax": {
+    "panVerified": true,
+    "pan": "XYZAB5432N"
+  },
+  "availability": {
+    "windows": {
+      "thu": {
+        "evening": {
+          "start": "16:00",
+          "end": "18:00"
+        },
+        "enabled": true,
+        "morning": {
+          "start": "09:00",
+          "end": "13:00"
+        }
+      },
+      "tue": {
+        "evening": {
+          "start": "16:00",
+          "end": "18:00"
+        },
+        "enabled": true,
+        "morning": {
+          "start": "09:00",
+          "end": "13:00"
+        }
+      },
+      "sat": {
+        "evening": {
+          "start": "16:00",
+          "end": "18:00"
+        },
+        "enabled": false,
+        "morning": {
+          "start": "09:00",
+          "end": "13:00"
+        }
+      },
+      "wed": {
+        "evening": {
+          "start": "16:00",
+          "end": "18:00"
+        },
+        "enabled": true,
+        "morning": {
+          "start": "09:00",
+          "end": "13:00"
+        }
+      },
+      "fri": {
+        "evening": {
+          "start": "16:00",
+          "end": "18:00"
+        },
+        "enabled": true,
+        "morning": {
+          "start": "09:00",
+          "end": "13:00"
+        }
+      },
+      "mon": {
+        "evening": {
+          "start": "16:00",
+          "end": "18:00"
+        },
+        "enabled": true,
+        "morning": {
+          "start": "09:00",
+          "end": "13:00"
+        }
+      },
+      "sun": {
+        "evening": {
+          "start": "16:00",
+          "end": "18:00"
+        },
+        "enabled": false,
+        "morning": {
+          "start": "09:00",
+          "end": "13:00"
+        }
+      }
+    },
+    "slotMinutes": 60
+  },
+  "experience": 9,
+  "referralActive": true,
+  "membershipPlan": "standard",
+  "qualifications": [
+    "B.Sc. Nursing"
+  ],
+  "referralCommissionRate": 0.1,
+  "reviews": 88,
+  "referralCode": "DRMEENA10",
+  "name": "Dr. Meena Iyer",
+  "serviceTypes": [
+    "Nursing Care"
+  ],
+  "id": "therapist-05",
+  "profileViewCount": 1750,
+  "position": {
+    "lng": 80.268,
+    "lat": 13.003
+  },
+  "hourlyRate": 900
+}

@@ -1,0 +1,13 @@
+{
+  "id": "1",
+  "userId": "patient-01",
+  "type": "booking_confirmed",
+  "title": "Booking Confirmed!",
+  "message": "Your booking with Dr. Evelyn Reed for Physiotherapy on Aug 30 at 5:00 PM is confirmed.",
+  "read": false,
+  "link": "/dashboard/bookings",
+  "createdAt": {
+    "_seconds": 1724407800,
+    "_nanoseconds": 0
+  }
+}

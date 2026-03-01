@@ -1,0 +1,16 @@
+{
+  "id": "CN-ORD-003",
+  "creditNoteNumber": "CN-2024-001",
+  "referenceInvoiceId": "INV-ORD-003",
+  "reason": "Customer cancellation before dispatch.",
+  "status": "issued",
+  "userId": "patient-01",
+  "meta": {
+    "issuedAt": {
+      "_seconds": 1724677200,
+      "_nanoseconds": 0
+    },
+    "createdBy": "system"
+  },
+  "totalAmountPaise": 259800
+}

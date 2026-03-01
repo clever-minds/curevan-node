@@ -1,0 +1,50 @@
+{
+  "id": "ORD-003",
+  "userId": "patient-01",
+  "customerName": "Patient User",
+  "customerPhone": "9876543214",
+  "items": [
+    {
+      "sku": "CF-RB-SET5",
+      "name": "CureFlex Pro Resistance Bands (Set of 5)",
+      "qty": 2,
+      "price": 129900,
+      "mrp": 199900,
+      "hsnCode": "950691",
+      "taxRatePct": 18,
+      "featuredImage": "https://placehold.co/400x400.png"
+    }
+  ],
+  "shippingAddress": {
+    "line1": "456 Health St",
+    "city": "Vadodara",
+    "state": "Gujarat",
+    "pin": "390007",
+    "country": "India"
+  },
+  "billingAddress": {
+    "line1": "456 Health St",
+    "city": "Vadodara",
+    "state": "Gujarat",
+    "pin": "390007",
+    "country": "India"
+  },
+  "subtotal": 259800,
+  "couponDiscount": 0,
+  "taxableValue": 220169,
+  "cgst": 19815,
+  "sgst": 19815,
+  "igst": 0,
+  "totalTax": 39630,
+  "total": 259800,
+  "commissionAmount": 0,
+  "commissionState": "na",
+  "status": "Cancelled",
+  "paymentStatus": "Refunded",
+  "paymentTxnId": "pay_ghi101",
+  "deliveredAt": null,
+  "createdAt": {
+    "_seconds": 1724673600,
+    "_nanoseconds": 0
+  }
+}

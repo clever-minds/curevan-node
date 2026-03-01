@@ -1,0 +1,27 @@
+{
+  "id": "T1",
+  "title": "Home Visit Safety Basics",
+  "slug": "home-visit-safety-basics",
+  "status": "published",
+  "categoryIds": [
+    "Operations"
+  ],
+  "difficulty": "beginner",
+  "durationMin": 12,
+  "excerpt": "Learn the essential safety protocols for conducting home visits.",
+  "content": "Detailed content about safety protocols...",
+  "coverImageUrl": "https://placehold.co/600x400.png",
+  "authorId": "admin-super-01",
+  "createdAt": {
+    "_seconds": 1722854400,
+    "_nanoseconds": 0
+  },
+  "publishedAt": {
+    "_seconds": 1722854400,
+    "_nanoseconds": 0
+  },
+  "updatedAt": {
+    "_seconds": 1722854400,
+    "_nanoseconds": 0
+  }
+}

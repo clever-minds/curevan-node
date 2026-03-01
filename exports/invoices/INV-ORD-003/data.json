@@ -1,0 +1,14 @@
+{
+  "id": "INV-ORD-003",
+  "invoiceNumber": "INV-ORD-003",
+  "status": "cancelled",
+  "userId": "patient-01",
+  "source": {
+    "orderId": "ORD-003"
+  },
+  "totalAmountPaise": 259800,
+  "issuedAt": {
+    "_seconds": 1724673600,
+    "_nanoseconds": 0
+  }
+}

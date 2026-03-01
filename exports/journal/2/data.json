@@ -1,0 +1,33 @@
+{
+  "id": "2",
+  "title": "Understanding the Benefits of Acupuncture",
+  "slug": "understanding-the-benefits-of-acupuncture",
+  "excerpt": "Acupuncture has been practiced for centuries. Learn about its benefits for pain management, stress relief, and overall wellness from our experts.",
+  "content": "Detailed content about acupuncture benefits...",
+  "videoUrl": "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+  "featuredImage": "https://placehold.co/600x400.png",
+  "aiHint": "acupuncture needles on back",
+  "authorId": "therapist-02",
+  "authorName": "Dr. Samuel Chen",
+  "status": "published",
+  "tags": [
+    "wellness",
+    "acupuncture"
+  ],
+  "stats": {
+    "totalViews": 1892,
+    "uniqueViews": 1500
+  },
+  "createdAt": {
+    "_seconds": 1697882400,
+    "_nanoseconds": 0
+  },
+  "publishedAt": {
+    "_seconds": 1697882400,
+    "_nanoseconds": 0
+  },
+  "updatedAt": {
+    "_seconds": 1697882400,
+    "_nanoseconds": 0
+  }
+}

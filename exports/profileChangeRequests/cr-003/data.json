@@ -1,0 +1,24 @@
+{
+  "id": "cr-003",
+  "userId": "therapist-02",
+  "role": "therapist",
+  "entityId": "therapist-02",
+  "section": "KYC & Payments",
+  "changes": [
+    {
+      "fieldPath": "bankAccountNumber",
+      "old": "********1234",
+      "new": "********5678"
+    }
+  ],
+  "status": "approved",
+  "reviewerId": "admin-super-01",
+  "createdAt": {
+    "_seconds": 1724317200,
+    "_nanoseconds": 0
+  },
+  "reviewedAt": {
+    "_seconds": 1724493600,
+    "_nanoseconds": 0
+  }
+}

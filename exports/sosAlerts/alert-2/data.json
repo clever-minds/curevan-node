@@ -1,0 +1,15 @@
+{
+  "id": "alert-2",
+  "therapistId": "therapist-02",
+  "therapistName": "Dr. Samuel Chen",
+  "bookingId": "BK-003",
+  "timestamp": "2024-08-25T14:30:00.000Z",
+  "status": "resolved",
+  "type": "missed_check_in",
+  "location": {
+    "_latitude": 22.2981,
+    "_longitude": 73.1957
+  },
+  "resolvedAt": "2024-08-25T14:45:00.000Z",
+  "resolvedBy": "admin-super-01"
+}

@@ -1,0 +1,33 @@
+{
+  "id": "1",
+  "title": "5 Stretches to Relieve Tech Neck",
+  "slug": "5-stretches-to-relieve-tech-neck",
+  "excerpt": "In our digitally-driven world, 'tech neck' is a common complaint. Discover five simple stretches you can do at your desk to alleviate neck and shoulder pain.",
+  "content": "Detailed content about the 5 stretches...",
+  "featuredImage": "https://placehold.co/600x400.png",
+  "aiHint": "person stretching at office desk",
+  "authorId": "therapist-01",
+  "authorName": "Dr. Evelyn Reed",
+  "status": "published",
+  "tags": [
+    "physiotherapy",
+    "back-pain",
+    "exercise"
+  ],
+  "stats": {
+    "totalViews": 2578,
+    "uniqueViews": 1980
+  },
+  "createdAt": {
+    "_seconds": 1698228000,
+    "_nanoseconds": 0
+  },
+  "publishedAt": {
+    "_seconds": 1698228000,
+    "_nanoseconds": 0
+  },
+  "updatedAt": {
+    "_seconds": 1698228000,
+    "_nanoseconds": 0
+  }
+}

@@ -1,0 +1,56 @@
+{
+  "id": "ORD-001",
+  "userId": "patient-01",
+  "customerName": "Patient User",
+  "customerPhone": "9876543214",
+  "items": [
+    {
+      "sku": "CV-TENS-01",
+      "name": "TENS Unit",
+      "qty": 1,
+      "price": 750000,
+      "mrp": 850000,
+      "hsnCode": "901910",
+      "taxRatePct": 18,
+      "featuredImage": "https://placehold.co/400x400.png"
+    }
+  ],
+  "shippingAddress": {
+    "line1": "456 Health St",
+    "city": "Vadodara",
+    "state": "Gujarat",
+    "pin": "390007",
+    "country": "India"
+  },
+  "billingAddress": {
+    "line1": "456 Health St",
+    "city": "Vadodara",
+    "state": "Gujarat",
+    "pin": "390007",
+    "country": "India"
+  },
+  "subtotal": 750000,
+  "couponDiscount": 37500,
+  "taxableValue": 603814,
+  "cgst": 54343,
+  "sgst": 54343,
+  "igst": 0,
+  "totalTax": 108686,
+  "total": 712500,
+  "commissionAmount": 71250,
+  "commissionState": "paid",
+  "status": "Delivered",
+  "paymentStatus": "Paid",
+  "paymentTxnId": "pay_xyz123",
+  "couponCode": "DREVELYN25",
+  "couponId": "1",
+  "referredTherapistId": "therapist-01",
+  "createdAt": {
+    "_seconds": 1722000000,
+    "_nanoseconds": 0
+  },
+  "deliveredAt": {
+    "_seconds": 1722259200,
+    "_nanoseconds": 0
+  }
+}

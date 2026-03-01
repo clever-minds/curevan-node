@@ -1,0 +1,10 @@
+{
+  "id": "1",
+  "code": "DREVELYN25",
+  "therapistId": "therapist-01",
+  "discountType": "percent",
+  "value": 0.05,
+  "permanent": true,
+  "active": true,
+  "status": "Active"
+}

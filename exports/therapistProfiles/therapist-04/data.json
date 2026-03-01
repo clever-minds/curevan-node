@@ -1,0 +1,123 @@
+{
+  "image": "https://placehold.co/100x100.png",
+  "specialty": "Physiotherapy",
+  "address": {
+    "country": "India",
+    "pin": "600017",
+    "city": "Chennai",
+    "state": "Tamil Nadu",
+    "line1": "101 Recovery Road, T. Nagar"
+  },
+  "rating": 4.9,
+  "bio": "Dr. Arjun Kumar is a leading physiotherapist in Chennai, focusing on neurological rehabilitation and pain management. He brings 15 years of dedicated experience.",
+  "isProfilePublic": true,
+  "referralDiscountRate": 0.05,
+  "tax": {
+    "panVerified": true,
+    "pan": "PQRST6789M"
+  },
+  "availability": {
+    "windows": {
+      "thu": {
+        "evening": {
+          "start": "15:00",
+          "end": "19:00"
+        },
+        "enabled": true,
+        "morning": {
+          "start": "08:00",
+          "end": "12:00"
+        }
+      },
+      "tue": {
+        "evening": {
+          "start": "15:00",
+          "end": "19:00"
+        },
+        "enabled": true,
+        "morning": {
+          "start": "08:00",
+          "end": "12:00"
+        }
+      },
+      "sat": {
+        "evening": {
+          "start": "15:00",
+          "end": "17:00"
+        },
+        "enabled": true,
+        "morning": {
+          "start": "09:00",
+          "end": "14:00"
+        }
+      },
+      "wed": {
+        "evening": {
+          "start": "15:00",
+          "end": "19:00"
+        },
+        "enabled": true,
+        "morning": {
+          "start": "08:00",
+          "end": "12:00"
+        }
+      },
+      "fri": {
+        "evening": {
+          "start": "15:00",
+          "end": "19:00"
+        },
+        "enabled": true,
+        "morning": {
+          "start": "08:00",
+          "end": "12:00"
+        }
+      },
+      "mon": {
+        "evening": {
+          "start": "15:00",
+          "end": "19:00"
+        },
+        "enabled": true,
+        "morning": {
+          "start": "08:00",
+          "end": "12:00"
+        }
+      },
+      "sun": {
+        "evening": {
+          "start": "16:00",
+          "end": "18:00"
+        },
+        "enabled": false,
+        "morning": {
+          "start": "09:00",
+          "end": "13:00"
+        }
+      }
+    },
+    "slotMinutes": 60
+  },
+  "experience": 15,
+  "referralActive": true,
+  "membershipPlan": "premium",
+  "qualifications": [
+    "MPT (Neurology)",
+    "Certified NDT"
+  ],
+  "referralCommissionRate": 0.1,
+  "reviews": 150,
+  "referralCode": "DRARJUN20",
+  "name": "Dr. Arjun Kumar",
+  "serviceTypes": [
+    "Physiotherapy",
+    "Geri care Therapy"
+  ],
+  "id": "therapist-04",
+  "profileViewCount": 3100,
+  "position": {
+    "lng": 80.235,
+    "lat": 13.042
+  },
+  "hourlyRate": 1300
+}

@@ -1,0 +1,13 @@
+{
+  "id": "3",
+  "userId": "therapist-01",
+  "type": "new_review",
+  "title": "New 5-Star Review!",
+  "message": "Patient User left you a 5-star review for booking BK-001.",
+  "read": false,
+  "link": "/dashboard/therapist/reviews",
+  "createdAt": {
+    "_seconds": 1724409000,
+    "_nanoseconds": 0
+  }
+}

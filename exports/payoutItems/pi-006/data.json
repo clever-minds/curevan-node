@@ -1,0 +1,26 @@
+{
+  "id": "pi-006",
+  "type": "service",
+  "sourceId": "BK-006",
+  "therapistId": "therapist-05",
+  "patientId": "patient-02",
+  "serviceTypeId": "nursing-care",
+  "grossAmount": 90000,
+  "platformFeePct": 0,
+  "platformFeeAmount": 0,
+  "gstOnPlatformFee": 0,
+  "preTdsPayable": 90000,
+  "tdsDeducted": 9000,
+  "netAmount": 81000,
+  "currency": "INR",
+  "state": "onHold",
+  "membershipPlanSnapshot": "standard",
+  "createdAt": {
+    "_seconds": 1722100000,
+    "_nanoseconds": 0
+  },
+  "weekStart": {
+    "_seconds": 1721606400,
+    "_nanoseconds": 0
+  }
+}

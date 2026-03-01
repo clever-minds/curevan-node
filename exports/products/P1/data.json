@@ -1,0 +1,23 @@
+{
+  "id": "P1",
+  "name": "Curevan Digital TENS Unit - 12 Modes",
+  "description": "Advanced Transcutaneous Electrical Nerve Stimulation (TENS) unit with 12 pre-programmed modes for targeted pain relief and muscle stimulation.",
+  "longDescription": "Features a large LCD screen, rechargeable battery, and includes 4 electrode pads. Ideal for home use for chronic pain, arthritis, and post-injury recovery. Always use under the guidance of a qualified therapist.",
+  "categoryId": "physiotherapy",
+  "brand": "Curevan Basics",
+  "sku": "CV-TENS-D12",
+  "price": 3499,
+  "mrp": 4500,
+  "featuredImage": "https://placehold.co/400x400.png",
+  "isActive": true,
+  "isCouponExcluded": false,
+  "rating": 4.7,
+  "stock": 150,
+  "reorderPoint": 25,
+  "hsnCode": "901910",
+  "countryOfOrigin": "India",
+  "manufacturer": "Himaya Care Pvt. Ltd.",
+  "batchNumber": "TENS24-001",
+  "mfgDate": "2024-05-01",
+  "expiryDate": "2027-04-30"
+}

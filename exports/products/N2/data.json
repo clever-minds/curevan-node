@@ -1,0 +1,23 @@
+{
+  "id": "N2",
+  "name": "Fingertip Pulse Oximeter with OLED Display",
+  "description": "Clinically tested pulse oximeter for accurately measuring blood oxygen saturation (SpO2) and pulse rate.",
+  "longDescription": "Features a bright, multi-directional OLED display for easy reading. Suitable for all ages. Includes batteries and a lanyard.",
+  "categoryId": "nursing-care",
+  "brand": "Curevan Health",
+  "sku": "CV-OXI-F1",
+  "price": 1800,
+  "mrp": 2500,
+  "featuredImage": "https://placehold.co/400x400.png",
+  "isActive": true,
+  "isCouponExcluded": false,
+  "rating": 4.6,
+  "stock": 120,
+  "reorderPoint": 25,
+  "hsnCode": "901890",
+  "countryOfOrigin": "China",
+  "importer": "Himaya Care Pvt. Ltd.",
+  "batchNumber": "OXI24-009",
+  "mfgDate": "2024-04-01",
+  "expiryDate": "2029-03-31"
+}

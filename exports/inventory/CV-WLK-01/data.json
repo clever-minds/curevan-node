@@ -1,0 +1,12 @@
+{
+  "sku": "CV-WLK-01",
+  "productId": "G1",
+  "warehouseId": "VAD-01",
+  "onHand": 80,
+  "reserved": 5,
+  "reorderPoint": 15,
+  "updatedAt": {
+    "_seconds": 1724490000,
+    "_nanoseconds": 0
+  }
+}

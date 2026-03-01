@@ -1,0 +1,33 @@
+{
+  "id": "3",
+  "title": "How to Choose the Right Massage Gun",
+  "slug": "how-to-choose-the-right-massage-gun",
+  "excerpt": "Massage guns are popular recovery tools. This guide will help you understand the features to look for and how to choose the best one for your needs.",
+  "content": "Detailed content about choosing a massage gun...",
+  "featuredImage": "https://placehold.co/600x400.png",
+  "aiHint": "massage gun on leg muscle",
+  "authorId": "therapist-01",
+  "authorName": "Dr. Evelyn Reed",
+  "status": "published",
+  "tags": [
+    "recovery",
+    "fitness",
+    "tools"
+  ],
+  "stats": {
+    "totalViews": 3401,
+    "uniqueViews": 2800
+  },
+  "createdAt": {
+    "_seconds": 1697623200,
+    "_nanoseconds": 0
+  },
+  "publishedAt": {
+    "_seconds": 1697623200,
+    "_nanoseconds": 0
+  },
+  "updatedAt": {
+    "_seconds": 1697623200,
+    "_nanoseconds": 0
+  }
+}

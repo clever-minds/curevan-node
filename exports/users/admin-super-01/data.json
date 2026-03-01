@@ -1,0 +1,10 @@
+{
+  "uid": "admin-super-01",
+  "email": "admin@curevan.com",
+  "role": "admin",
+  "roles": [
+    "admin.super"
+  ],
+  "name": "Curevan Super Admin",
+  "phone": "9876543210"
+}

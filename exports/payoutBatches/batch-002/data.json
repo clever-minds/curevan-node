@@ -1,0 +1,24 @@
+{
+  "id": "batch-002",
+  "therapistId": "therapist-01",
+  "totals": {
+    "gross": 71250,
+    "commission": 0,
+    "penalties": 0,
+    "net": 71250
+  },
+  "status": "paid",
+  "payoutRef": "razorpay_payout_abc456",
+  "weekStart": {
+    "_seconds": 1721606400,
+    "_nanoseconds": 0
+  },
+  "weekEnd": {
+    "_seconds": 1722211199,
+    "_nanoseconds": 0
+  },
+  "payoutDate": {
+    "_seconds": 1722592800,
+    "_nanoseconds": 0
+  }
+}

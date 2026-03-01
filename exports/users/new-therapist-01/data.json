@@ -1,0 +1,21 @@
+{
+  "uid": "new-therapist-01",
+  "email": "therapist@curevan.com",
+  "role": "therapist",
+  "roles": [
+    "therapist"
+  ],
+  "name": "New Therapist",
+  "phone": "9876543218",
+  "createdAt": {
+    "_seconds": 1672531200,
+    "_nanoseconds": 0
+  },
+  "address": {
+    "line1": "New Therapist Location",
+    "city": "Vadodara",
+    "state": "Gujarat",
+    "pin": "390001",
+    "country": "India"
+  }
+}

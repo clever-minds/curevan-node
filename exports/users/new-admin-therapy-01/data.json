@@ -1,0 +1,21 @@
+{
+  "uid": "new-admin-therapy-01",
+  "email": "therapy-admin@curevan.com",
+  "role": "therapy-admin",
+  "roles": [
+    "therapy-admin"
+  ],
+  "name": "New Therapy Admin",
+  "phone": "9876543215",
+  "createdAt": {
+    "_seconds": 1672531200,
+    "_nanoseconds": 0
+  },
+  "address": {
+    "line1": "New Therapy Dept.",
+    "city": "Vadodara",
+    "state": "Gujarat",
+    "pin": "390012",
+    "country": "India"
+  }
+}

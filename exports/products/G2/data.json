@@ -1,0 +1,17 @@
+{
+  "id": "G2",
+  "name": "Pill Organizer",
+  "description": "A 7-day pill organizer with large compartments, AM/PM slots, and easy-open lids.",
+  "categoryId": "geri-care-therapy",
+  "brand": "Curevan Basics",
+  "sku": "CV-PILL-7D",
+  "price": 1200,
+  "mrp": 1200,
+  "featuredImage": "https://placehold.co/400x400.png",
+  "isActive": true,
+  "isCouponExcluded": true,
+  "rating": 4.9,
+  "stock": 500,
+  "reorderPoint": 100,
+  "hsnCode": "392490"
+}

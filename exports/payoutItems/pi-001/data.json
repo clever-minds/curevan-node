@@ -1,0 +1,26 @@
+{
+  "id": "pi-001",
+  "type": "service",
+  "sourceId": "BK-001",
+  "therapistId": "therapist-01",
+  "patientId": "patient-01",
+  "serviceTypeId": "physiotherapy",
+  "grossAmount": 110000,
+  "platformFeePct": 0.1,
+  "platformFeeAmount": 11000,
+  "gstOnPlatformFee": 1678,
+  "preTdsPayable": 99000,
+  "tdsDeducted": 9900,
+  "netAmount": 89100,
+  "currency": "INR",
+  "state": "paid",
+  "membershipPlanSnapshot": "premium",
+  "createdAt": {
+    "_seconds": 1722930000,
+    "_nanoseconds": 0
+  },
+  "weekStart": {
+    "_seconds": 1723420800,
+    "_nanoseconds": 0
+  }
+}

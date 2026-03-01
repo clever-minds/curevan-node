@@ -1,0 +1,12 @@
+{
+  "sku": "CF-RB-SET5",
+  "productId": "P2",
+  "warehouseId": "VAD-01",
+  "onHand": 300,
+  "reserved": 25,
+  "reorderPoint": 50,
+  "updatedAt": {
+    "_seconds": 1724490000,
+    "_nanoseconds": 0
+  }
+}

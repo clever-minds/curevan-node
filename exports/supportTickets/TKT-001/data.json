@@ -1,0 +1,23 @@
+{
+  "id": "TKT-001",
+  "userId": "patient-01",
+  "topic": "payment",
+  "subject": "Duplicate charge for my last order",
+  "status": "open",
+  "priority": "high",
+  "messages": [
+    {
+      "by": "user",
+      "at": "2024-08-23T09:20:00Z",
+      "text": "Hello, I believe I was charged twice for my recent order (ORD-001). Can you please look into this and issue a refund for the extra charge? Thank you."
+    }
+  ],
+  "createdAt": {
+    "_seconds": 1724385600,
+    "_nanoseconds": 0
+  },
+  "updatedAt": {
+    "_seconds": 1724392800,
+    "_nanoseconds": 0
+  }
+}

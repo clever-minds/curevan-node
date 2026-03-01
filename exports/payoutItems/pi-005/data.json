@@ -1,0 +1,26 @@
+{
+  "id": "pi-005",
+  "type": "service",
+  "sourceId": "BK-005",
+  "therapistId": "therapist-04",
+  "patientId": "patient-01",
+  "serviceTypeId": "geri-care-therapy",
+  "grossAmount": 130000,
+  "platformFeePct": 0.1,
+  "platformFeeAmount": 13000,
+  "gstOnPlatformFee": 2340,
+  "preTdsPayable": 117000,
+  "tdsDeducted": 11700,
+  "netAmount": 105300,
+  "currency": "INR",
+  "state": "inBatch",
+  "membershipPlanSnapshot": "premium",
+  "createdAt": {
+    "_seconds": 1721500000,
+    "_nanoseconds": 0
+  },
+  "weekStart": {
+    "_seconds": 1721001600,
+    "_nanoseconds": 0
+  }
+}

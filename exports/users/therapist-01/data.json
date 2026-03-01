@@ -1,0 +1,10 @@
+{
+  "uid": "therapist-01",
+  "email": "therapist@curevan.com",
+  "role": "therapist",
+  "roles": [
+    "therapist"
+  ],
+  "name": "Dr. Rafia Ma",
+  "phone": "9876543213"
+}

@@ -1,0 +1,24 @@
+{
+  "id": "cr-001",
+  "userId": "therapist-01",
+  "role": "therapist",
+  "entityId": "therapist-01",
+  "section": "Professional Details",
+  "changes": [
+    {
+      "fieldPath": "qualification",
+      "old": "MPT (Orthopedics)",
+      "new": "MPT (Ortho), Certified Dry Needling"
+    },
+    {
+      "fieldPath": "experienceYears",
+      "old": 10,
+      "new": 12
+    }
+  ],
+  "status": "pending",
+  "createdAt": {
+    "_seconds": 1724490000,
+    "_nanoseconds": 0
+  }
+}

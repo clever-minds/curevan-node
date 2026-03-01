@@ -1,0 +1,29 @@
+{
+  "id": "BK-001",
+  "patientId": "patient-01",
+  "therapistId": "therapist-01",
+  "serviceTypeId": "physiotherapy",
+  "chiefComplaint": "Post-operative TKR (Total Knee Replacement) pain, right knee. Difficulty with flexion and extension.",
+  "assessment": "Patient reports pain level at 7/10. Observable swelling around the knee joint. Limited range of motion: Flexion at 90 degrees, Extension lacking 5 degrees. Gait is antalgic.",
+  "diagnosis": "Post-operative knee stiffness and pain.",
+  "treatmentProvided": "Manual therapy including gentle patellar mobilization. Cryotherapy to reduce swelling. Prescribed and demonstrated basic quad-setting and heel-sliding exercises.",
+  "planOfCare": "Continue physiotherapy 3 times a week for 4 weeks. Focus on improving range of motion and strength. Re-assess progress in 2 weeks. Patient to perform home exercise program daily.",
+  "vitals": {
+    "bp": "130/85",
+    "hr": "78",
+    "rr": "16",
+    "temp": "98.7°F"
+  },
+  "status": "locked",
+  "lockedBy": "therapist-01",
+  "version": 1,
+  "history": [],
+  "createdAt": {
+    "_seconds": 1722859200,
+    "_nanoseconds": 0
+  },
+  "lockedAt": {
+    "_seconds": 1722949200,
+    "_nanoseconds": 0
+  }
+}

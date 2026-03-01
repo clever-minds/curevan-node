@@ -1,0 +1,27 @@
+{
+  "id": "T3",
+  "title": "Post-Surgery Rehab Protocol: Knee (Overview)",
+  "slug": "post-surgery-rehab-protocol-knee",
+  "status": "published",
+  "categoryIds": [
+    "Clinical"
+  ],
+  "difficulty": "intermediate",
+  "durationMin": 20,
+  "excerpt": "An overview of the standard protocol for post-surgery knee rehabilitation.",
+  "content": "Detailed content about knee rehab protocols...",
+  "coverImageUrl": "https://placehold.co/600x400.png",
+  "authorId": "admin-therapy-01",
+  "createdAt": {
+    "_seconds": 1722854400,
+    "_nanoseconds": 0
+  },
+  "publishedAt": {
+    "_seconds": 1722854400,
+    "_nanoseconds": 0
+  },
+  "updatedAt": {
+    "_seconds": 1722854400,
+    "_nanoseconds": 0
+  }
+}

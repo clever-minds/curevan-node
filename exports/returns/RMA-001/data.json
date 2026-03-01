@@ -1,0 +1,20 @@
+{
+  "id": "RMA-001",
+  "orderId": "ORD-001",
+  "customerName": "Patient User",
+  "cityState": "Vadodara, Gujarat",
+  "items": [
+    {
+      "sku": "CV-TENS-01",
+      "name": "TENS Unit",
+      "qty": 1,
+      "price": 750000
+    }
+  ],
+  "reason": "Defective",
+  "method": "pickup",
+  "status": "Approved",
+  "refundStatus": "Pending",
+  "totalRefundAmount": 715000,
+  "createdAt": "2024-08-01T10:00:00.000Z"
+}

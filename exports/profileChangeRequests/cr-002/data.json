@@ -1,0 +1,19 @@
+{
+  "id": "cr-002",
+  "userId": "patient-01",
+  "role": "patient",
+  "entityId": "patient-01",
+  "section": "Personal Info",
+  "changes": [
+    {
+      "fieldPath": "dob",
+      "old": "1990-01-01",
+      "new": "1990-01-15"
+    }
+  ],
+  "status": "pending",
+  "createdAt": {
+    "_seconds": 1724403600,
+    "_nanoseconds": 0
+  }
+}

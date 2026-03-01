@@ -1,0 +1,13 @@
+{
+  "id": "2",
+  "userId": "patient-01",
+  "type": "therapist_on_way",
+  "title": "Therapist On The Way",
+  "message": "Dr. Evelyn Reed has started their journey and will be at your doorstep soon!",
+  "read": false,
+  "link": "/discover",
+  "createdAt": {
+    "_seconds": 1724408880,
+    "_nanoseconds": 0
+  }
+}

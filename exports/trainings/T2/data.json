@@ -1,0 +1,27 @@
+{
+  "id": "T2",
+  "title": "Using Your Referral Code to Boost Earnings",
+  "slug": "using-your-referral-code",
+  "status": "published",
+  "categoryIds": [
+    "Earnings"
+  ],
+  "difficulty": "beginner",
+  "durationMin": 8,
+  "excerpt": "A guide on how to effectively use your referral code.",
+  "content": "Detailed content about referral codes...",
+  "coverImageUrl": "https://placehold.co/600x400.png",
+  "authorId": "admin-super-01",
+  "createdAt": {
+    "_seconds": 1722854400,
+    "_nanoseconds": 0
+  },
+  "publishedAt": {
+    "_seconds": 1722854400,
+    "_nanoseconds": 0
+  },
+  "updatedAt": {
+    "_seconds": 1722854400,
+    "_nanoseconds": 0
+  }
+}

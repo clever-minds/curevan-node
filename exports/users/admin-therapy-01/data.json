@@ -1,0 +1,10 @@
+{
+  "uid": "admin-therapy-01",
+  "email": "therapy@curevan.com",
+  "role": "admin",
+  "roles": [
+    "admin.therapy"
+  ],
+  "name": "Therapy Admin",
+  "phone": "9876543211"
+}

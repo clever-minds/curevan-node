@@ -1,0 +1,18 @@
+{
+  "email": "subscriber3@example.com",
+  "status": "unsubscribed",
+  "source": "footer",
+  "consentVersion": "v1.0",
+  "unsubToken": "token-for-subscriber3",
+  "segments": [
+    "patient"
+  ],
+  "createdAt": {
+    "_seconds": 1722854400,
+    "_nanoseconds": 0
+  },
+  "confirmedAt": {
+    "_seconds": 1722854500,
+    "_nanoseconds": 0
+  }
+}

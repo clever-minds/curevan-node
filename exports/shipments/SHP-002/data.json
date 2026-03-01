@@ -1,0 +1,12 @@
+{
+  "id": "SHP-002",
+  "orderId": "ORD-002",
+  "awb": "DLVRY123456789",
+  "carrier": "Delhivery",
+  "createdAt": "2024-08-25T11:00:00.000Z",
+  "customerName": "Audit Patient",
+  "cityState": "Bengaluru, Karnataka",
+  "status": "Pending Pickup",
+  "eta": "2024-08-28T18:00:00.000Z",
+  "slaBreached": false
+}

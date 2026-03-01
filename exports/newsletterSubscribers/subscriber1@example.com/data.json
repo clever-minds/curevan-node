@@ -1,0 +1,19 @@
+{
+  "email": "subscriber1@example.com",
+  "status": "active",
+  "source": "footer",
+  "consentVersion": "v1.0",
+  "unsubToken": "token-for-subscriber1",
+  "segments": [
+    "patient",
+    "physiotherapy_interest"
+  ],
+  "createdAt": {
+    "_seconds": 1724490000,
+    "_nanoseconds": 0
+  },
+  "confirmedAt": {
+    "_seconds": 1724490120,
+    "_nanoseconds": 0
+  }
+}

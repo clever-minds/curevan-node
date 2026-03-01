@@ -1,0 +1,33 @@
+{
+  "id": "TKT-002",
+  "userId": "therapist-01",
+  "topic": "booking",
+  "subject": "Unable to reschedule my appointment",
+  "status": "closed",
+  "priority": "medium",
+  "messages": [
+    {
+      "by": "user",
+      "at": "2024-08-18T10:00:00Z",
+      "text": "Hi, I am trying to reschedule my appointment with Patient User (BK-002) for next week, but the system is giving me an error. Can you please assist?"
+    },
+    {
+      "by": "admin",
+      "at": "2024-08-18T11:30:00Z",
+      "text": "Hi Dr. Rafia, we've looked into it. The patient's requested slot was unavailable. We have now manually rescheduled it for you for Aug 26th at 10:00 AM as requested. Please let us know if that works."
+    },
+    {
+      "by": "user",
+      "at": "2024-08-18T12:00:00Z",
+      "text": "That works perfectly. Thank you for the quick help!"
+    }
+  ],
+  "createdAt": {
+    "_seconds": 1723953600,
+    "_nanoseconds": 0
+  },
+  "updatedAt": {
+    "_seconds": 1724040000,
+    "_nanoseconds": 0
+  }
+}

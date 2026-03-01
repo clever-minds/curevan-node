@@ -1,0 +1,23 @@
+{
+  "id": "pi-002",
+  "type": "product",
+  "sourceId": "ORD-001",
+  "therapistId": "therapist-01",
+  "patientId": "patient-01",
+  "serviceTypeId": "e-commerce",
+  "grossAmount": 71250,
+  "platformFeePct": 0,
+  "platformFeeAmount": 0,
+  "gstOnPlatformFee": 0,
+  "preTdsPayable": 71250,
+  "tdsDeducted": 7125,
+  "netAmount": 64125,
+  "currency": "INR",
+  "state": "paid",
+  "weekStart": "2024-07-22T00:00:00.0Z",
+  "membershipPlanSnapshot": "premium",
+  "createdAt": {
+    "_seconds": 1722259200,
+    "_nanoseconds": 0
+  }
+}

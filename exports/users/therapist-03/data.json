@@ -1,0 +1,10 @@
+{
+  "uid": "therapist-03",
+  "role": "therapist",
+  "phone": "9876543216",
+  "roles": [
+    "therapist"
+  ],
+  "name": "Dr. Priya Desai",
+  "email": "therapist3@curevan.com"
+}

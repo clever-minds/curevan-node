@@ -1,0 +1,14 @@
+{
+  "id": "INV-ORD-001",
+  "invoiceNumber": "INV-ORD-001",
+  "status": "issued",
+  "userId": "patient-01",
+  "source": {
+    "orderId": "ORD-001"
+  },
+  "totalAmountPaise": 715000,
+  "issuedAt": {
+    "_seconds": 1722086400,
+    "_nanoseconds": 0
+  }
+}

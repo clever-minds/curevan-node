@@ -1,0 +1,41 @@
+{
+  "id": "ORD-005",
+  "userId": "patient-02",
+  "customerName": "Audit Patient",
+  "items": [
+    {
+      "sku": "N2",
+      "name": "Fingertip Pulse Oximeter",
+      "qty": 1,
+      "price": 180000,
+      "mrp": 250000,
+      "hsnCode": "901890",
+      "taxRatePct": 18,
+      "featuredImage": "https://placehold.co/400x400.png"
+    }
+  ],
+  "shippingAddress": {
+    "line1": "101 Audit Ave",
+    "city": "Bengaluru",
+    "state": "Karnataka",
+    "pin": "560001",
+    "country": "India"
+  },
+  "billingAddress": {
+    "line1": "101 Audit Ave",
+    "city": "Bengaluru",
+    "state": "Karnataka",
+    "pin": "560001",
+    "country": "India"
+  },
+  "subtotal": 180000,
+  "couponDiscount": 18000,
+  "total": 162000,
+  "status": "Shipped",
+  "couponCode": "SAVE10",
+  "paymentStatus": "Paid",
+  "createdAt": {
+    "_seconds": 1721000000,
+    "_nanoseconds": 0
+  }
+}

@@ -1,0 +1,53 @@
+{
+  "id": "ORD-002",
+  "userId": "patient-02",
+  "customerName": "Audit Patient",
+  "customerPhone": "9876543217",
+  "items": [
+    {
+      "sku": "CV-WLK-01",
+      "name": "Curevan Foldable Walker",
+      "qty": 1,
+      "price": 280000,
+      "mrp": 350000,
+      "hsnCode": "902110",
+      "taxRatePct": 12,
+      "featuredImage": "https://placehold.co/400x400.png"
+    }
+  ],
+  "shippingAddress": {
+    "line1": "101 Audit Ave",
+    "city": "Bengaluru",
+    "state": "Karnataka",
+    "pin": "560001",
+    "country": "India"
+  },
+  "billingAddress": {
+    "line1": "101 Audit Ave",
+    "city": "Bengaluru",
+    "state": "Karnataka",
+    "pin": "560001",
+    "country": "India"
+  },
+  "subtotal": 280000,
+  "couponDiscount": 0,
+  "taxableValue": 250000,
+  "cgst": 0,
+  "sgst": 0,
+  "igst": 30000,
+  "totalTax": 30000,
+  "total": 280000,
+  "commissionAmount": 0,
+  "commissionState": "na",
+  "status": "Packed",
+  "paymentStatus": "Paid",
+  "paymentTxnId": "pay_def789",
+  "couponCode": null,
+  "couponId": null,
+  "referredTherapistId": null,
+  "deliveredAt": null,
+  "createdAt": {
+    "_seconds": 1724490000,
+    "_nanoseconds": 0
+  }
+}

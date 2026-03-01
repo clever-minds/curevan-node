@@ -1,0 +1,14 @@
+{
+  "id": "txn-001",
+  "ref": "pay_xyz123",
+  "userId": "patient-01",
+  "orderId": "ORD-001",
+  "amount": 712500,
+  "currency": "INR",
+  "status": "paid",
+  "gateway": "razorpay",
+  "createdAt": {
+    "_seconds": 1721999900,
+    "_nanoseconds": 0
+  }
+}

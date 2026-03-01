@@ -1,0 +1,12 @@
+{
+  "id": "SHP-004",
+  "orderId": "ORD-005",
+  "awb": "EKART987654",
+  "carrier": "EKart",
+  "createdAt": "2024-07-12T09:00:00.000Z",
+  "customerName": "Audit Patient",
+  "cityState": "Bengaluru, Karnataka",
+  "status": "RTO",
+  "eta": "2024-07-15T18:00:00.000Z",
+  "slaBreached": true
+}

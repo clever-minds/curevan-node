@@ -1,0 +1,7 @@
+{
+  "id": "nursing-care",
+  "name": "Nursing Care",
+  "description": "Supplies and tools for nursing staff.",
+  "image": "https://placehold.co/600x400.png",
+  "isActive": true
+}

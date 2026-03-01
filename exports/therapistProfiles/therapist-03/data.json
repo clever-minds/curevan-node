@@ -1,0 +1,121 @@
+{
+  "image": "https://placehold.co/100x100.png",
+  "specialty": "Speech Therapy",
+  "address": {
+    "country": "India",
+    "pin": "390020",
+    "city": "Vadodara",
+    "state": "Gujarat",
+    "line1": "45 Speak Well Ln"
+  },
+  "rating": 4.7,
+  "bio": "Dr. Priya Desai helps children and adults overcome speech and language challenges with personalized and effective therapy techniques.",
+  "isProfilePublic": true,
+  "referralDiscountRate": 0.05,
+  "tax": {
+    "panVerified": true,
+    "pan": "LMNOP1234Q"
+  },
+  "availability": {
+    "windows": {
+      "thu": {
+        "evening": {
+          "start": "16:00",
+          "end": "19:00"
+        },
+        "enabled": true,
+        "morning": {
+          "start": "10:00",
+          "end": "13:00"
+        }
+      },
+      "tue": {
+        "evening": {
+          "start": "16:00",
+          "end": "19:00"
+        },
+        "enabled": true,
+        "morning": {
+          "start": "10:00",
+          "end": "13:00"
+        }
+      },
+      "sat": {
+        "evening": {
+          "start": "16:00",
+          "end": "18:00"
+        },
+        "enabled": true,
+        "morning": {
+          "start": "10:00",
+          "end": "14:00"
+        }
+      },
+      "wed": {
+        "evening": {
+          "start": "16:00",
+          "end": "19:00"
+        },
+        "enabled": true,
+        "morning": {
+          "start": "10:00",
+          "end": "13:00"
+        }
+      },
+      "fri": {
+        "evening": {
+          "start": "16:00",
+          "end": "19:00"
+        },
+        "enabled": true,
+        "morning": {
+          "start": "10:00",
+          "end": "13:00"
+        }
+      },
+      "mon": {
+        "evening": {
+          "start": "16:00",
+          "end": "19:00"
+        },
+        "enabled": true,
+        "morning": {
+          "start": "10:00",
+          "end": "13:00"
+        }
+      },
+      "sun": {
+        "evening": {
+          "start": "16:00",
+          "end": "18:00"
+        },
+        "enabled": false,
+        "morning": {
+          "start": "09:00",
+          "end": "13:00"
+        }
+      }
+    },
+    "slotMinutes": 60
+  },
+  "experience": 6,
+  "referralActive": true,
+  "membershipPlan": "standard",
+  "qualifications": [
+    "MASLP (Master of Audiology and Speech-Language Pathology)"
+  ],
+  "referralCommissionRate": 0.1,
+  "reviews": 75,
+  "referralCode": "DRPRIYA15",
+  "name": "Dr. Priya Desai",
+  "serviceTypes": [
+    "Speech Therapy"
+  ],
+  "id": "therapist-03",
+  "profileViewCount": 1500,
+  "position": {
+    "lng": 73.185,
+    "lat": 22.315
+  },
+  "hourlyRate": 800
+}

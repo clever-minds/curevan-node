@@ -1,0 +1,24 @@
+{
+  "id": "4",
+  "title": "My New Draft Post",
+  "slug": "my-new-draft-post",
+  "excerpt": "This is a draft post that is not yet ready for publication.",
+  "content": "This is the content of the draft post. I'm still working on it.",
+  "featuredImage": "https://placehold.co/600x400.png",
+  "aiHint": "person writing at a desk",
+  "authorId": "therapist-01",
+  "authorName": "Dr. Evelyn Reed",
+  "status": "draft",
+  "stats": {
+    "totalViews": 0,
+    "uniqueViews": 0
+  },
+  "createdAt": {
+    "_seconds": 1698832800,
+    "_nanoseconds": 0
+  },
+  "updatedAt": {
+    "_seconds": 1698832800,
+    "_nanoseconds": 0
+  }
+}

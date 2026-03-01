@@ -1,0 +1,13 @@
+{
+  "id": "4",
+  "userId": "admin-super-01",
+  "type": "profile_approved",
+  "title": "Profile Change Approved",
+  "message": "Your changes to the therapist profile for Dr. Samuel Chen have been approved.",
+  "read": true,
+  "link": "/dashboard/admin/users",
+  "createdAt": {
+    "_seconds": 1724322600,
+    "_nanoseconds": 0
+  }
+}

@@ -1,0 +1,10 @@
+{
+  "uid": "patient-02",
+  "role": "patient",
+  "phone": "9876543217",
+  "roles": [
+    "patient"
+  ],
+  "name": "Audit Patient",
+  "email": "patient2@curevan.com"
+}

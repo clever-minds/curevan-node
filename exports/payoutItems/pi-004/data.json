@@ -1,0 +1,26 @@
+{
+  "id": "pi-004",
+  "type": "service",
+  "sourceId": "BK-004",
+  "therapistId": "therapist-03",
+  "patientId": "patient-02",
+  "serviceTypeId": "speech-therapy",
+  "grossAmount": 80000,
+  "platformFeePct": 0,
+  "platformFeeAmount": 0,
+  "gstOnPlatformFee": 0,
+  "preTdsPayable": 80000,
+  "tdsDeducted": 8000,
+  "netAmount": 72000,
+  "currency": "INR",
+  "state": "onHold",
+  "membershipPlanSnapshot": "standard",
+  "createdAt": {
+    "_seconds": 1724226000,
+    "_nanoseconds": 0
+  },
+  "weekStart": {
+    "_seconds": 1724025600,
+    "_nanoseconds": 0
+  }
+}

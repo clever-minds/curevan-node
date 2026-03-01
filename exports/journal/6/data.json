@@ -1,0 +1,33 @@
+{
+  "id": "6",
+  "title": "Recovering at Home: 5 Key Benefits of Post-Surgery Physiotherapy",
+  "slug": "recovering-at-home-post-surgery-physiotherapy",
+  "excerpt": "Don't let travel hinder your recovery. Discover how receiving expert physiotherapy at home after surgery can speed up healing, improve safety, and provide personalized care when you need it most.",
+  "content": "Detailed content about the benefits of at-home physiotherapy, covering convenience, personalized one-on-one attention, reduced risk of infection, family involvement, and a comfortable environment for recovery. This post would internally link to the Physiotherapy service page and the main booking page.",
+  "featuredImage": "https://placehold.co/600x400.png",
+  "aiHint": "physiotherapist helping patient at home",
+  "authorId": "therapist-01",
+  "authorName": "Dr. Evelyn Reed",
+  "status": "published",
+  "tags": [
+    "physiotherapy",
+    "recovery",
+    "post-surgery"
+  ],
+  "stats": {
+    "totalViews": 1204,
+    "uniqueViews": 980
+  },
+  "createdAt": {
+    "_seconds": 1724490000,
+    "_nanoseconds": 0
+  },
+  "publishedAt": {
+    "_seconds": 1724490000,
+    "_nanoseconds": 0
+  },
+  "updatedAt": {
+    "_seconds": 1724490000,
+    "_nanoseconds": 0
+  }
+}

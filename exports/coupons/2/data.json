@@ -1,0 +1,8 @@
+{
+  "id": "2",
+  "code": "SAVE10",
+  "discountType": "percent",
+  "value": 0.1,
+  "active": true,
+  "status": "Active"
+}

@@ -1,0 +1,24 @@
+{
+  "id": "BK-006",
+  "patientId": "patient-02",
+  "patientName": "Audit Patient",
+  "therapistId": "therapist-05",
+  "therapist": "Dr. Meena Iyer",
+  "serviceTypeId": "nursing-care",
+  "therapyType": "Nursing Care",
+  "serviceAmount": 90000,
+  "totalAmount": 90000,
+  "time": "11:00",
+  "mode": "online",
+  "status": "Completed",
+  "paymentStatus": "Paid",
+  "pcrStatus": "locked",
+  "date": {
+    "_seconds": 1721606400,
+    "_nanoseconds": 0
+  },
+  "createdAt": {
+    "_seconds": 1721433600,
+    "_nanoseconds": 0
+  }
+}

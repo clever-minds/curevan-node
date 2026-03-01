@@ -1,0 +1,45 @@
+{
+  "id": "BK-002",
+  "patientId": "patient-01",
+  "patientName": "Patient User",
+  "patientPhone": "9876543214",
+  "therapistId": "therapist-01",
+  "therapist": "Dr. Evelyn Reed",
+  "therapistPhone": "9876543213",
+  "serviceTypeId": "physiotherapy",
+  "therapyType": "Physiotherapy",
+  "serviceAmount": 110000,
+  "totalAmount": 110000,
+  "time": "11:00",
+  "mode": "home",
+  "status": "Confirmed",
+  "cancellationReason": null,
+  "notes": "Follow-up session for knee pain.",
+  "serviceAddress": {
+    "line1": "456 Health St",
+    "city": "Vadodara",
+    "state": "Gujarat",
+    "pin": "390007",
+    "country": "India"
+  },
+  "paymentStatus": "Paid",
+  "pcrStatus": "not_started",
+  "verificationStatus": "Not Verified",
+  "clinicId": null,
+  "date": {
+    "_seconds": 1724025600,
+    "_nanoseconds": 0
+  },
+  "createdAt": {
+    "_seconds": 1723420800,
+    "_nanoseconds": 0
+  },
+  "startTime": {
+    "_seconds": 1724065200,
+    "_nanoseconds": 0
+  },
+  "endTime": {
+    "_seconds": 1724068800,
+    "_nanoseconds": 0
+  }
+}

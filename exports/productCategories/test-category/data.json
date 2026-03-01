@@ -1,0 +1,7 @@
+{
+  "name": "Test Category",
+  "description": "Test category Description",
+  "image": "https://placehold.co/600x400.png",
+  "isActive": true,
+  "id": "test-category"
+}

@@ -1,0 +1,25 @@
+{
+  "id": "BK-007",
+  "patientId": "patient-01",
+  "patientName": "Patient User",
+  "therapistId": "therapist-01",
+  "therapist": "Dr. Evelyn Reed",
+  "serviceTypeId": "physiotherapy",
+  "therapyType": "Physiotherapy",
+  "serviceAmount": 110000,
+  "totalAmount": 110000,
+  "time": "16:00",
+  "mode": "home",
+  "status": "Cancelled",
+  "cancellationReason": "Patient rescheduled",
+  "paymentStatus": "Refunded",
+  "pcrStatus": "not_started",
+  "date": {
+    "_seconds": 1719273600,
+    "_nanoseconds": 0
+  },
+  "createdAt": {
+    "_seconds": 1719014400,
+    "_nanoseconds": 0
+  }
+}

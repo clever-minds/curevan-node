@@ -1,0 +1,21 @@
+{
+  "uid": "new-admin-ecom-01",
+  "email": "ecom-admin@curevan.com",
+  "role": "ecom-admin",
+  "roles": [
+    "ecom-admin"
+  ],
+  "name": "New E-commerce Admin",
+  "phone": "9876543216",
+  "createdAt": {
+    "_seconds": 1672531200,
+    "_nanoseconds": 0
+  },
+  "address": {
+    "line1": "New E-commerce Dept.",
+    "city": "Vadodara",
+    "state": "Gujarat",
+    "pin": "390012",
+    "country": "India"
+  }
+}

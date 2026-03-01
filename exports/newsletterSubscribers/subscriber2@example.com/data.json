@@ -1,0 +1,12 @@
+{
+  "email": "subscriber2@example.com",
+  "status": "pending",
+  "source": "journal_popup",
+  "consentVersion": "v1.0",
+  "unsubToken": "token-for-subscriber2",
+  "segments": [],
+  "createdAt": {
+    "_seconds": 1724580000,
+    "_nanoseconds": 0
+  }
+}

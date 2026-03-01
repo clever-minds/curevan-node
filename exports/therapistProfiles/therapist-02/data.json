@@ -1,0 +1,123 @@
+{
+  "id": "therapist-02",
+  "name": "Dr. Samuel Chen",
+  "specialty": "Acupuncture",
+  "address": {
+    "line1": "789 Wellness Clinic",
+    "city": "Vadodara",
+    "state": "Gujarat",
+    "pin": "390005",
+    "country": "India"
+  },
+  "position": {
+    "lat": 22.2981,
+    "lng": 73.1957
+  },
+  "rating": 4.8,
+  "reviews": 95,
+  "image": "https://placehold.co/100x100.png",
+  "experience": 8,
+  "hourlyRate": 950,
+  "membershipPlan": "standard",
+  "bio": "Dr. Samuel Chen is an expert in traditional acupuncture techniques for pain management and stress relief, blending ancient practices with modern science.",
+  "qualifications": [
+    "Licensed Acupuncturist (L.Ac.)",
+    "M.S. in Traditional Chinese Medicine"
+  ],
+  "isProfilePublic": true,
+  "profileViewCount": 1890,
+  "serviceTypes": [
+    "Acupuncture",
+    "Mental Health Counseling"
+  ],
+  "referralCode": "DRSAMUEL10",
+  "referralDiscountRate": 0.05,
+  "referralCommissionRate": 0.1,
+  "referralActive": true,
+  "tax": {
+    "pan": "FGHIJ5678K",
+    "panVerified": false
+  },
+  "availability": {
+    "slotMinutes": 60,
+    "windows": {
+      "mon": {
+        "enabled": false,
+        "morning": {
+          "start": "09:00",
+          "end": "13:00"
+        },
+        "evening": {
+          "start": "16:00",
+          "end": "18:00"
+        }
+      },
+      "tue": {
+        "enabled": true,
+        "morning": {
+          "start": "10:00",
+          "end": "13:00"
+        },
+        "evening": {
+          "start": "15:00",
+          "end": "19:00"
+        }
+      },
+      "wed": {
+        "enabled": true,
+        "morning": {
+          "start": "10:00",
+          "end": "13:00"
+        },
+        "evening": {
+          "start": "15:00",
+          "end": "19:00"
+        }
+      },
+      "thu": {
+        "enabled": true,
+        "morning": {
+          "start": "10:00",
+          "end": "13:00"
+        },
+        "evening": {
+          "start": "15:00",
+          "end": "19:00"
+        }
+      },
+      "fri": {
+        "enabled": true,
+        "morning": {
+          "start": "10:00",
+          "end": "13:00"
+        },
+        "evening": {
+          "start": "15:00",
+          "end": "19:00"
+        }
+      },
+      "sat": {
+        "enabled": true,
+        "morning": {
+          "start": "10:00",
+          "end": "14:00"
+        },
+        "evening": {
+          "start": "15:00",
+          "end": "17:00"
+        }
+      },
+      "sun": {
+        "enabled": false,
+        "morning": {
+          "start": "09:00",
+          "end": "13:00"
+        },
+        "evening": {
+          "start": "16:00",
+          "end": "18:00"
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,14 @@
+{
+  "id": "txn-002",
+  "ref": "pay_abc456",
+  "userId": "patient-01",
+  "bookingId": "BK-001",
+  "amount": 110000,
+  "currency": "INR",
+  "status": "paid",
+  "gateway": "razorpay",
+  "createdAt": {
+    "_seconds": 1722854300,
+    "_nanoseconds": 0
+  }
+}

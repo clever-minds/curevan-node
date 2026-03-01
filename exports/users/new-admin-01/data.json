@@ -1,0 +1,21 @@
+{
+  "uid": "new-admin-01",
+  "email": "admin@curevan.com",
+  "role": "admin",
+  "roles": [
+    "admin"
+  ],
+  "name": "New Admin",
+  "phone": "9876543217",
+  "createdAt": {
+    "_seconds": 1672531200,
+    "_nanoseconds": 0
+  },
+  "address": {
+    "line1": "New Admin HQ",
+    "city": "Vadodara",
+    "state": "Gujarat",
+    "pin": "390012",
+    "country": "India"
+  }
+}

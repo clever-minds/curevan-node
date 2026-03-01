@@ -1,0 +1,23 @@
+{
+  "id": "P4",
+  "name": "Hot & Cold Gel Pack with Reusable Wrap",
+  "description": "Versatile gel pack for both hot and cold therapy to treat injuries, reduce swelling, and soothe muscle pain.",
+  "longDescription": "Comes with a soft, adjustable wrap to comfortably secure the pack to any body part. Microwave and freezer safe.",
+  "categoryId": "physiotherapy",
+  "brand": "CureFlex",
+  "sku": "CF-GEL-HC1",
+  "price": 499,
+  "mrp": 750,
+  "featuredImage": "https://placehold.co/400x400.png",
+  "isActive": true,
+  "isCouponExcluded": true,
+  "rating": 4.4,
+  "stock": 500,
+  "reorderPoint": 100,
+  "hsnCode": "300510",
+  "countryOfOrigin": "India",
+  "manufacturer": "Himaya Care Pvt. Ltd.",
+  "batchNumber": "GEL24-003",
+  "mfgDate": "2024-07-01",
+  "expiryDate": "2026-06-30"
+}

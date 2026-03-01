@@ -1,0 +1,44 @@
+{
+  "id": "ORD-004",
+  "userId": "patient-01",
+  "customerName": "Patient User",
+  "items": [
+    {
+      "sku": "P4",
+      "name": "Hot & Cold Gel Pack",
+      "qty": 1,
+      "price": 49900,
+      "mrp": 75000,
+      "hsnCode": "300510",
+      "taxRatePct": 12,
+      "featuredImage": "https://placehold.co/400x400.png"
+    }
+  ],
+  "shippingAddress": {
+    "line1": "456 Health St",
+    "city": "Vadodara",
+    "state": "Gujarat",
+    "pin": "390007",
+    "country": "India"
+  },
+  "billingAddress": {
+    "line1": "456 Health St",
+    "city": "Vadodara",
+    "state": "Gujarat",
+    "pin": "390007",
+    "country": "India"
+  },
+  "subtotal": 49900,
+  "couponDiscount": 0,
+  "total": 49900,
+  "status": "Delivered",
+  "paymentStatus": "Paid",
+  "createdAt": {
+    "_seconds": 1720000000,
+    "_nanoseconds": 0
+  },
+  "deliveredAt": {
+    "_seconds": 1720259200,
+    "_nanoseconds": 0
+  }
+}

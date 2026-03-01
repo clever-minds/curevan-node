@@ -1,0 +1,14 @@
+{
+  "id": "INV-BK-001",
+  "invoiceNumber": "INV-BK-001",
+  "status": "issued",
+  "userId": "patient-01",
+  "source": {
+    "bookingId": "BK-001"
+  },
+  "totalAmountPaise": 110000,
+  "issuedAt": {
+    "_seconds": 1722930000,
+    "_nanoseconds": 0
+  }
+}

@@ -1,0 +1,19 @@
+{
+  "userId": "patient-01",
+  "mrn": "MRN00001",
+  "gender": "male",
+  "allergies": [
+    "Peanuts"
+  ],
+  "conditions": [
+    "Post-operative TKR (Right Knee)"
+  ],
+  "meds": [
+    "Ibuprofen 400mg as needed"
+  ],
+  "lastVisitSummary": "Post-operative knee stiffness and pain. Improvement in range of motion after last physiotherapy session.",
+  "dob": {
+    "_seconds": 631152000,
+    "_nanoseconds": 0
+  }
+}

@@ -1,0 +1,45 @@
+{
+  "id": "BK-003",
+  "patientId": "patient-01",
+  "patientName": "Patient User",
+  "patientPhone": "9876543214",
+  "therapistId": "therapist-02",
+  "therapist": "Dr. Samuel Chen",
+  "therapistPhone": "9876543215",
+  "serviceTypeId": "acupuncture",
+  "therapyType": "Acupuncture",
+  "serviceAmount": 95000,
+  "totalAmount": 95000,
+  "time": "14:00",
+  "mode": "clinic",
+  "status": "Completed",
+  "cancellationReason": null,
+  "notes": "Initial consultation for chronic migraine.",
+  "serviceAddress": {
+    "line1": "789 Wellness Clinic",
+    "city": "Vadodara",
+    "state": "Gujarat",
+    "pin": "390005",
+    "country": "India"
+  },
+  "paymentStatus": "Paid",
+  "pcrStatus": "locked",
+  "verificationStatus": "Verified",
+  "clinicId": "clinic-01",
+  "date": {
+    "_seconds": 1723248000,
+    "_nanoseconds": 0
+  },
+  "createdAt": {
+    "_seconds": 1722470400,
+    "_nanoseconds": 0
+  },
+  "startTime": {
+    "_seconds": 1723298400,
+    "_nanoseconds": 0
+  },
+  "endTime": {
+    "_seconds": 1723302000,
+    "_nanoseconds": 0
+  }
+}

@@ -1,0 +1,24 @@
+{
+  "id": "BK-005",
+  "patientId": "patient-01",
+  "patientName": "Patient User",
+  "therapistId": "therapist-04",
+  "therapist": "Dr. Arjun Kumar",
+  "serviceTypeId": "geri-care-therapy",
+  "therapyType": "Geri care Therapy",
+  "serviceAmount": 130000,
+  "totalAmount": 130000,
+  "time": "10:00",
+  "mode": "home",
+  "status": "Completed",
+  "paymentStatus": "Paid",
+  "pcrStatus": "locked",
+  "date": {
+    "_seconds": 1721001600,
+    "_nanoseconds": 0
+  },
+  "createdAt": {
+    "_seconds": 1720569600,
+    "_nanoseconds": 0
+  }
+}

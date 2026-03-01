@@ -1,0 +1,15 @@
+{
+  "userId": "patient-02",
+  "mrn": "MRN00002",
+  "gender": "female",
+  "allergies": [],
+  "conditions": [
+    "Cervical Spondylosis"
+  ],
+  "meds": [],
+  "lastVisitSummary": "",
+  "dob": {
+    "_seconds": 725846400,
+    "_nanoseconds": 0
+  }
+}

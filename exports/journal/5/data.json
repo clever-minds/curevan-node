@@ -1,0 +1,24 @@
+{
+  "id": "5",
+  "title": "A Post Pending Review",
+  "slug": "a-post-pending-review",
+  "excerpt": "This post has been submitted by a therapist and is waiting for an admin to approve it.",
+  "content": "This is the full content of the post pending review. It covers important topics about mental health.",
+  "featuredImage": "https://placehold.co/600x400.png",
+  "aiHint": "document with a checkmark",
+  "authorId": "therapist-02",
+  "authorName": "Dr. Samuel Chen",
+  "status": "pending_review",
+  "stats": {
+    "totalViews": 0,
+    "uniqueViews": 0
+  },
+  "createdAt": {
+    "_seconds": 1698919200,
+    "_nanoseconds": 0
+  },
+  "updatedAt": {
+    "_seconds": 1698919200,
+    "_nanoseconds": 0
+  }
+}
