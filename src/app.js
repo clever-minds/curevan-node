@@ -15,6 +15,7 @@ app.use(cors({
     "https://your-app.vercel.app",
     "https://13.235.132.236",
     "http://localhost:3000",
+    "https://curevan-dev-qsmc.vercel.app/"
   ],
   credentials: true
 }));
