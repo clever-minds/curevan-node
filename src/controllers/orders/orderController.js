@@ -866,8 +866,15 @@ exports.myOrders = async (req, res) => {
     let query = `
       SELECT 
         o.id,
-        o.order_number AS "orderNumber",
+        u.name AS "customerName",
+        o.order_number AS "number",
         o.total,
+        o.cgst,
+        o.sgst,
+        o.igst,
+        o.taxable_value AS "taxableValue",
+        o.coupon_discount AS "couponDiscount",
+        o.subtotal,
         o.status,
         o.payment_status AS "paymentStatus",
         o.created_at AS "createdAt",
@@ -913,13 +920,14 @@ exports.myOrders = async (req, res) => {
         ON o.shipping_address_id = oa_shipping.id
       -- Join invoices
       LEFT JOIN invoices i ON o.id = i.order_id
+       LEFT JOIN users u ON o.user_id = u.id
     `;
 
     // Role based filtering
     if (userRole === 'admin') {
-      query += ` GROUP BY o.id, oa_billing.id, oa_shipping.id, i.id ORDER BY o.id DESC`;
+      query += ` GROUP BY o.id, oa_billing.id, oa_shipping.id, i.id,u.name ORDER BY o.id DESC`;
     } else {
-      query += ` WHERE o.user_id = :userId GROUP BY o.id, oa_billing.id, oa_shipping.id, i.id ORDER BY o.id DESC`;
+      query += ` WHERE o.user_id = :userId GROUP BY o.id, oa_billing.id, oa_shipping.id, i.id,u.name ORDER BY o.id DESC`;
     }
 
     const orders = await sequelize.query(query, {

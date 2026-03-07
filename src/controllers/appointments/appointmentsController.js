@@ -48,7 +48,7 @@ exports.listAppointments = async (req, res) => {
          a.cancellation_reason AS "cancellationReason",
          a.notes,
          a.created_at AS "createdAt",
-         a.service_address AS "serviceAddress",
+         a.service_address_id AS "serviceAddress",
          a.payment_status AS "paymentStatus",
          a.pcr_status AS "pcrStatus",
          a.verification_status AS "verificationStatus"
@@ -94,7 +94,7 @@ exports.getAppointmentById = async (req, res) => {
          a.cancellation_reason AS "cancellationReason",
          a.notes,
          a.created_at AS "createdAt",
-         a.service_address AS "serviceAddress",
+         a.service_address_id AS "serviceAddress",
          a.payment_status AS "paymentStatus",
          a.pcr_status AS "pcrStatus",
          a.verification_status AS "verificationStatus"
@@ -288,94 +288,264 @@ exports.createBookingAndInvoice = async (req, res) => {
   }
 };
 
+// exports.getPCRByBookingId = async (req, res) => {
+//   const { appointmentId } = req.params;
+
+//   if (!appointmentId) {
+//     return res.error("appointmentId is required", 400); // 400 Bad Request
+//   }
+
+//     try {
+//       // Fetch PCR along with patient and therapist names
+//     const rows = await sequelize.query(
+//     `SELECT 
+//       pcr.*, 
+//       a.patient_name AS "patientFullName",
+//       a.date_of_birth AS "dob",   -- if you store DOB in appointments
+//       a.therapist_name AS "therapistFullName"
+//     FROM pcr
+//     JOIN appointments a ON a.id = pcr.appointment_id
+//     WHERE pcr.appointment_id = :appointmentId
+//     LIMIT 1`,
+//     {
+//       replacements: { appointmentId },
+//       type: sequelize.QueryTypes.SELECT,
+//     }
+//   );
+
+//     if (!rows || rows.length === 0) {
+//       return res.error("PCR not found", 404); // 404 Not Found
+//     }
+
+//     return res.success(rows[0], "PCR fetched successfully"); // 200 OK
+//   } catch (error) {
+//     console.error("Error fetching PCR:", error);
+//     return res.error("Failed to fetch PCR", 500); // 500 Internal Server Error
+//   }
+// };
+
+// exports.updatePcr = async (req, res) => {
+//   const { appointmentId } = req.params;
+//   const data = req.body;
+
+//   if (!appointmentId) return res.error("Pcr Id is required", 400);;
+
+//   try {
+//     // 1️⃣ Fetch current PCR to track version and history
+//     const [current] = await sequelize.query(
+//       `SELECT * FROM pcr WHERE appointment_id = :appointmentId LIMIT 1`,
+//       { replacements: { appointmentId }, type: QueryTypes.SELECT }
+//     );
+
+//     if (!current) return res.status(404).json({ success: false, error: "PCR not found" });
+
+//     // 2️⃣ Prepare new values
+//     const updatedData = {
+//       chief_complaint: data.chiefComplaint ?? current.chief_complaint,
+//       assessment: data.assessment ?? current.assessment,
+//       diagnosis: data.diagnosis ?? current.diagnosis,
+//       treatment_provided: data.treatmentProvided ?? current.treatment_provided,
+//       plan_of_care: data.planOfCare ?? current.plan_of_care,
+//       bp: data.vitals?.bp ?? current.bp,
+//       hr: data.vitals?.hr ?? current.hr,
+//       rr: data.vitals?.rr ?? current.rr,
+//       temp: data.vitals?.temp ?? current.temp,
+//       status: data.status ?? current.status,
+//       locked_by: data.lockedBy ?? current.locked_by,
+//       locked_at: data.lockedAt ?? current.locked_at,
+//       version: (current.version || 1) + 1,
+//       history: JSON.stringify([
+//         ...(current.history || []),
+//         {
+//           version: current.version,
+//           chief_complaint: current.chief_complaint,
+//           assessment: current.assessment,
+//           diagnosis: current.diagnosis,
+//           treatment_provided: current.treatment_provided,
+//           plan_of_care: current.plan_of_care,
+//           bp: current.bp,
+//           hr: current.hr,
+//           rr: current.rr,
+//           temp: current.temp,
+//           status: current.status,
+//           locked_by: current.locked_by,
+//           locked_at: current.locked_at,
+//           updated_at: new Date(),
+//         },
+//       ]),
+//     };
+
+//     // 3️⃣ Update PCR
+//     await sequelize.query(
+//       `UPDATE pcr
+//        SET
+//          chief_complaint = :chief_complaint,
+//          assessment = :assessment,
+//          diagnosis = :diagnosis,
+//          treatment_provided = :treatment_provided,
+//          plan_of_care = :plan_of_care,
+//          bp = :bp,
+//          hr = :hr,
+//          rr = :rr,
+//          temp = :temp,
+//          status = :status,
+//          locked_by = :locked_by,
+//          locked_at = :locked_at,
+//          version = :version,
+//          history = :history
+//        WHERE appointment_id = :appointmentId`,
+//       {
+//         replacements: { ...updatedData, appointmentId },
+//         type: QueryTypes.UPDATE,
+//       }
+//     );
+
+//      return res.success("PCR updated successfully"); // 200 OK
+//   } catch (error) {
+//     console.error("Error updating PCR:", error);
+//     return res.error("Failed to fetch PCR", 500);
+//   }
+// };
+
 exports.getPCRByBookingId = async (req, res) => {
   const { appointmentId } = req.params;
 
   if (!appointmentId) {
-    return res.error("appointmentId is required", 400); // 400 Bad Request
+    return res.error("appointmentId is required", 400);
   }
 
-    try {
-      // Fetch PCR along with patient and therapist names
+  try {
     const rows = await sequelize.query(
-    `SELECT 
-      pcr.*, 
-      a.patient_name AS "patientFullName",
-      a.date_of_birth AS "dob",   -- if you store DOB in appointments
-      a.therapist_name AS "therapistFullName"
-    FROM pcr
-    JOIN appointments a ON a.id = pcr.appointment_id
-    WHERE pcr.appointment_id = :appointmentId
-    LIMIT 1`,
-    {
-      replacements: { appointmentId },
-      type: sequelize.QueryTypes.SELECT,
-    }
-  );
+      `SELECT 
+        pcr.*, 
+        a.patient_name       AS "patientFullName",
+        a.date_of_birth      AS "dob",
+        a.therapist_name     AS "therapistFullName",
+        pcr.incident_date    AS "incidentDate",
+        pcr.incident_location AS "incidentLocation",
+        pcr.next_treatment_date AS "nextTreatmentDate",
+        pcr.therapist_name   AS "therapistName",
+        pcr.chief_complaint  AS "chiefComplaint",
+        pcr.treatment_provided AS "treatmentProvided",
+        pcr.plan_of_care     AS "planOfCare",
+        pcr.service_type_id  AS "therapyType",
+        pcr.upload_attachment_id AS "uploadAttachmentId",
+        pcr.signature_confirmation AS "signatureConfirmation",
+        m.file_path          AS attachment
+      FROM pcr
+      JOIN appointments a ON a.id = pcr.appointment_id
+      LEFT JOIN media m ON m.id = pcr.upload_attachment_id
+      WHERE pcr.appointment_id = :appointmentId
+      LIMIT 1`,
+      {
+        replacements: { appointmentId },
+        type: QueryTypes.SELECT,
+      }
+    );
 
     if (!rows || rows.length === 0) {
-      return res.error("PCR not found", 404); // 404 Not Found
+      return res.error("PCR not found", 404);
     }
 
-    return res.success(rows[0], "PCR fetched successfully"); // 200 OK
+    const pcr = rows[0];
+
+    const response = {
+      ...pcr,
+      bp:   pcr.bp   ?? '',
+      hr:   pcr.hr   ?? '',
+      rr:   pcr.rr   ?? '',
+      temp: pcr.temp ?? '',
+      signatureConfirmation: pcr.signatureConfirmation ?? false,
+      attachment: pcr.uploadAttachmentId
+        ? [{ id: pcr.uploadAttachmentId, url: pcr.attachment }]
+        : [],
+    };
+
+    return res.success(response, "PCR fetched successfully");
   } catch (error) {
     console.error("Error fetching PCR:", error);
-    return res.error("Failed to fetch PCR", 500); // 500 Internal Server Error
+    return res.error("Failed to fetch PCR", 500);
   }
 };
 
+
+
+// ==========================================
+// UPDATE PCR
+// ==========================================
 exports.updatePcr = async (req, res) => {
   const { appointmentId } = req.params;
   const data = req.body;
 
-  if (!appointmentId) return res.error("Pcr Id is required", 400);;
+  if (!appointmentId) {
+    return res.error("PCR Id is required", 400);
+  }
+
+  const t = await sequelize.transaction();
 
   try {
-    // 1️⃣ Fetch current PCR to track version and history
-    const [current] = await sequelize.query(
+    const current = await sequelize.query(
       `SELECT * FROM pcr WHERE appointment_id = :appointmentId LIMIT 1`,
-      { replacements: { appointmentId }, type: QueryTypes.SELECT }
+      {
+        replacements: { appointmentId },
+        type: QueryTypes.SELECT,
+        transaction: t
+      }
     );
 
-    if (!current) return res.status(404).json({ success: false, error: "PCR not found" });
+    if (!current || current.length === 0) {
+      await t.rollback();
+      return res.status(404).json({ success: false, error: "PCR not found" });
+    }
 
-    // 2️⃣ Prepare new values
+    const existing = current[0];
+
     const updatedData = {
-      chief_complaint: data.chiefComplaint ?? current.chief_complaint,
-      assessment: data.assessment ?? current.assessment,
-      diagnosis: data.diagnosis ?? current.diagnosis,
-      treatment_provided: data.treatmentProvided ?? current.treatment_provided,
-      plan_of_care: data.planOfCare ?? current.plan_of_care,
-      bp: data.vitals?.bp ?? current.bp,
-      hr: data.vitals?.hr ?? current.hr,
-      rr: data.vitals?.rr ?? current.rr,
-      temp: data.vitals?.temp ?? current.temp,
-      status: data.status ?? current.status,
-      locked_by: data.lockedBy ?? current.locked_by,
-      locked_at: data.lockedAt ?? current.locked_at,
-      version: (current.version || 1) + 1,
+      chief_complaint: data.chiefComplaint ?? existing.chief_complaint,
+      assessment: data.assessment ?? existing.assessment,
+      diagnosis: data.diagnosis ?? existing.diagnosis,
+      treatment_provided: data.treatmentProvided ?? existing.treatment_provided,
+      plan_of_care: data.planOfCare ?? existing.plan_of_care,
+      bp: data?.bp ?? existing.bp,
+      hr: data?.hr ?? existing.hr,
+      rr: data?.rr ?? existing.rr,
+      temp: data?.temp ?? existing.temp,
+      status: data.status ?? existing.status,
+      locked_by: data.lockedBy ?? existing.locked_by,
+      locked_at: data.lockedAt ?? existing.locked_at,
+      incident_date: data.incidentDate ?? existing.incident_date,
+      incident_location: data.incidentLocation ?? existing.incident_location,
+      next_treatment_date: data.nextTreatmentDate ?? existing.next_treatment_date,
+      upload_attachment_id: data.upload_attachment_id ?? existing.upload_attachment_id,
+      therapist_name: data.therapistName ?? existing.therapist_name,
+      signature_confirmation: data.signatureConfirmation ?? existing.signature_confirmation,
+      version: (existing.version || 1) + 1,
       history: JSON.stringify([
-        ...(current.history || []),
+        ...(existing.history || []),
         {
-          version: current.version,
-          chief_complaint: current.chief_complaint,
-          assessment: current.assessment,
-          diagnosis: current.diagnosis,
-          treatment_provided: current.treatment_provided,
-          plan_of_care: current.plan_of_care,
-          bp: current.bp,
-          hr: current.hr,
-          rr: current.rr,
-          temp: current.temp,
-          status: current.status,
-          locked_by: current.locked_by,
-          locked_at: current.locked_at,
+          version: existing.version,
+          assessment: data.assessment ?? existing.assessment,
+          diagnosis: data.diagnosis ?? existing.diagnosis,
+          treatment_provided: data.treatmentProvided ?? existing.treatment_provided,
+          plan_of_care: data.planOfCare ?? existing.plan_of_care,
+          bp: data?.bp ?? existing.bp,
+          hr: data?.hr ?? existing.hr,
+          rr: data?.rr ?? existing.rr,
+          temp: data?.temp ?? existing.temp,
+          status: data.status ?? existing.status,
+          locked_by: data.lockedBy ?? existing.locked_by,
+          locked_at: data.lockedAt ?? existing.locked_at,
+          incident_date: data.incidentDate ?? existing.incident_date,
+          incident_location: data.incidentLocation ?? existing.incident_location,
+          next_treatment_date: data.nextTreatmentDate ?? existing.next_treatment_date,
+          upload_attachment_id: data.upload_attachment_id ?? existing.upload_attachment_id,
+          therapist_name: data.therapistName ?? existing.therapist_name,
+          signature_confirmation: data.signatureConfirmation ?? existing.signature_confirmation,
           updated_at: new Date(),
         },
       ]),
     };
 
-    // 3️⃣ Update PCR
     await sequelize.query(
       `UPDATE pcr
        SET
@@ -391,18 +561,39 @@ exports.updatePcr = async (req, res) => {
          status = :status,
          locked_by = :locked_by,
          locked_at = :locked_at,
+         incident_date = :incident_date,
+         incident_location = :incident_location,
+         next_treatment_date = :next_treatment_date,
+         upload_attachment_id = :upload_attachment_id,
+         therapist_name = :therapist_name,
+         signature_confirmation = :signature_confirmation,
          version = :version,
          history = :history
        WHERE appointment_id = :appointmentId`,
       {
         replacements: { ...updatedData, appointmentId },
         type: QueryTypes.UPDATE,
+        transaction: t
       }
     );
 
-     return res.success("PCR updated successfully"); // 200 OK
+    await sequelize.query(
+      `UPDATE appointments
+       SET pcr_status = :status
+       WHERE id = :appointmentId`,
+      {
+        replacements: { status: updatedData.status, appointmentId },
+        type: QueryTypes.UPDATE,
+        transaction: t
+      }
+    );
+
+    await t.commit();
+    return res.success("PCR updated successfully");
+
   } catch (error) {
+    await t.rollback();
     console.error("Error updating PCR:", error);
-    return res.error("Failed to fetch PCR", 500);
+    return res.error("Failed to update PCR", 500);
   }
 };
