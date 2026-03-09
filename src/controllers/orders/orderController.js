@@ -872,6 +872,7 @@ exports.myOrders = async (req, res) => {
         o.cgst,
         o.sgst,
         o.igst,
+        o.coupon_code AS "couponCode",
         o.taxable_value AS "taxableValue",
         o.coupon_discount AS "couponDiscount",
         o.subtotal,

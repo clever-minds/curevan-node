@@ -251,7 +251,94 @@ exports.updatePayoutState = async (req, res) => {
 
 // ✅ Add new journal entry
 // Add a new journal (authorId/name from logged-in user)
-exports.addJournal = async (req, res) => {
+// exports.addJournal = async (req, res) => {
+//   try {
+//     const {
+//       title,
+//       slug,
+//       excerpt,
+//       content,
+//       featuredImage,
+//       aiHint,
+//       status = "draft",
+//       tags = [],
+//       metaDescription,
+//       videoUrl, // ✅ NEW FIELD
+//       createdAt = new Date(),
+//       publishedAt = null,
+//       updatedAt = new Date(),
+//     } = req.body;
+
+//     const authorId = req.user?.id;
+
+//     if (!title || !slug || !authorId) {
+//       return res
+//         .status(400)
+//         .json({ message: "title, slug, and author info required" });
+//     }
+
+//     // Fetch author name
+//     const [user] = await sequelize.query(
+//       `SELECT name FROM users WHERE id = :authorId`,
+//       {
+//         replacements: { authorId },
+//         type: QueryTypes.SELECT,
+//       }
+//     );
+
+//     const authorName = user?.name || "Unknown Author";
+
+//     const replacements = {
+//       title,
+//       slug,
+//       excerpt: excerpt ?? null,
+//       content: content ?? null,
+//       featuredImage: featuredImage ?? null,
+//       aiHint: aiHint ?? null,
+//       videoUrl: videoUrl ?? null, // ✅ ADD
+//       authorId,
+//       authorName,
+//       status,
+//       tags: tags.length ? tags : null,
+//       metaDescription: metaDescription ?? null,
+//       createdAt,
+//       publishedAt,
+//       updatedAt,
+//     };
+
+//     const [result] = await sequelize.query(
+//       `
+//       INSERT INTO journal
+//       (
+//         title, slug, excerpt, content, featured_image, ai_hint,
+//         youtube_video_url, -- ✅ NEW FIELD
+//         author_id, author_name, status, tags, meta_description,
+//         total_views, unique_views, created_at, published_at, updated_at
+//       )
+//       VALUES
+//       (
+//         :title, :slug, :excerpt, :content, :featuredImage, :aiHint,
+//         :videoUrl, -- ✅ NEW FIELD
+//         :authorId, :authorName, :status, :tags, :metaDescription,
+//         0, 0, :createdAt, :publishedAt, :updatedAt
+//       )
+//       RETURNING id
+//       `,
+//       { replacements, type: QueryTypes.INSERT }
+//     );
+
+//     res.status(201).json({
+//       message: "Journal entry added successfully",
+//       id: result[0].id,
+//     });
+
+//   } catch (error) {
+//     console.error("addJournal error:", error);
+//     res.status(500).json({ message: "Server error" });
+//   }
+// };
+
+exports.addKnowledgeBase = async (req, res) => {
   try {
     const {
       title,
@@ -260,10 +347,14 @@ exports.addJournal = async (req, res) => {
       content,
       featuredImage,
       aiHint,
+      contentType = "post",
       status = "draft",
       tags = [],
       metaDescription,
-      videoUrl, // ✅ NEW FIELD
+      videoUrl,
+      difficulty,
+      durationMin,
+      sopVersion,
       createdAt = new Date(),
       publishedAt = null,
       updatedAt = new Date(),
@@ -277,7 +368,6 @@ exports.addJournal = async (req, res) => {
         .json({ message: "title, slug, and author info required" });
     }
 
-    // Fetch author name
     const [user] = await sequelize.query(
       `SELECT name FROM users WHERE id = :authorId`,
       {
@@ -295,12 +385,16 @@ exports.addJournal = async (req, res) => {
       content: content ?? null,
       featuredImage: featuredImage ?? null,
       aiHint: aiHint ?? null,
-      videoUrl: videoUrl ?? null, // ✅ ADD
+      videoUrl: videoUrl ?? null,
+      contentType,
       authorId,
       authorName,
       status,
-      tags: tags.length ? tags : null,
+      tags: tags?.length ? `{${tags.join(",")}}` : null,
       metaDescription: metaDescription ?? null,
+      difficulty: difficulty ?? null,
+      durationMin: durationMin ?? null,
+      sopVersion: sopVersion ?? null,
       createdAt,
       publishedAt,
       updatedAt,
@@ -308,18 +402,22 @@ exports.addJournal = async (req, res) => {
 
     const [result] = await sequelize.query(
       `
-      INSERT INTO journal
+      INSERT INTO knowledge_base
       (
         title, slug, excerpt, content, featured_image, ai_hint,
-        youtube_video_url, -- ✅ NEW FIELD
+        youtube_video_url,
+        content_type,
         author_id, author_name, status, tags, meta_description,
+        difficulty, duration_min, sop_version,
         total_views, unique_views, created_at, published_at, updated_at
       )
       VALUES
       (
         :title, :slug, :excerpt, :content, :featuredImage, :aiHint,
-        :videoUrl, -- ✅ NEW FIELD
+        :videoUrl,
+        :contentType,
         :authorId, :authorName, :status, :tags, :metaDescription,
+        :difficulty, :durationMin, :sopVersion,
         0, 0, :createdAt, :publishedAt, :updatedAt
       )
       RETURNING id
@@ -327,96 +425,115 @@ exports.addJournal = async (req, res) => {
       { replacements, type: QueryTypes.INSERT }
     );
 
-    res.status(201).json({
-      message: "Journal entry added successfully",
-      id: result[0].id,
-    });
-
+    const typeLabel = contentType === "post" ? "journal" : contentType;
+    return res.success(null, `${typeLabel} aDDED successfully`);  
   } catch (error) {
-    console.error("addJournal error:", error);
-    res.status(500).json({ message: "Server error" });
+    return res.error("Failed to update Knowledge Base");
   }
 };
 
 
-// List journals for logged-in user only
-exports.listJournals = async (req, res) => {
+exports.listKnowledgeBase = async (req, res) => {
   try {
     const authorId = req.user?.id;
     const userRole = req.user?.role;
+    const { contentType } = req.query;
 
-    let journals;
+    let query = `
+      SELECT 
+        *,
+        tags AS categories,
+        duration_min AS "durationMin",
+        sop_version AS "sopVersion"
+      FROM knowledge_base
+      WHERE 1=1
+    `;
 
-    if (userRole === "admin") {
-      // Admin ko sab journals dikhenge
-      journals = await sequelize.query(
-        `SELECT * FROM journal ORDER BY created_at DESC`,
-        {
-          type: QueryTypes.SELECT
-        }
-      );
-    } else {
-      // Normal user ko sirf apne journals
-      journals = await sequelize.query(
-        `SELECT * FROM journal WHERE author_id = :authorId ORDER BY created_at DESC`,
-        {
-          replacements: { authorId },
-          type: QueryTypes.SELECT
-        }
-      );
+    const replacements = {};
+
+    if (contentType) {
+      query += ` AND content_type = :contentType`;
+      replacements.contentType = contentType;
     }
 
-    return res.success(journals, "Journals fetched successfully");
+    if (userRole !== "admin") {
+      query += ` AND author_id = :authorId`;
+      replacements.authorId = authorId;
+    }
 
+    query += ` ORDER BY created_at DESC`;
+
+    const items = await sequelize.query(query, {
+      replacements,
+      type: QueryTypes.SELECT,
+    });
+
+   const typeLabel = contentType === "post" ? "journal" : contentType;
+    return res.success(items, `${typeLabel} fetched successfully`);  
   } catch (error) {
-    console.error("listJournals error:", error);
-    return res.error("Failed to fetch Journals");
+    return res.error("Failed to fetch");
   }
 };
 
 
-exports.getJournalById = async (req, res) => {
+exports.getKnowledgeBaseById = async (req, res) => {
   try {
-    const id = parseInt(req.params.id, 10); // journal numeric ID
-    const authorId = req.user?.id; // UUID/text from decoded token
+    const id = parseInt(req.params.id, 10);
+    const authorId = req.user?.id;
 
     if (isNaN(id) || !authorId) {
       return res.status(400).json({ message: "Invalid ID or author" });
     }
 
     const journals = await sequelize.query(
-        `
-        SELECT 
-          j.title, j.slug,j.tags as categories, j.excerpt, j.content, j.ai_hint AS "aiHint", j.tags, j.meta_description AS "metaDescription",
-          j.youtube_video_url AS "videoUrl", j.status, j.created_at AS "createdAt", j.published_at AS "publishedAt",
-          m.file_path AS "featuredImage",j.featured_image AS "featuredImageId"
-        FROM journal j
-        LEFT JOIN media m 
-          ON m.id = j.featured_image
-        WHERE j.id = :id
-        AND j.author_id::int = :authorId
-        LIMIT 1
-        `,
-        {
-          replacements: { id, authorId: Number(authorId) },
-          type: QueryTypes.SELECT,
-        }
-      );
+      `
+      SELECT 
+        kb.title,
+        kb.slug,
+        kb.tags AS categories,
+        kb.excerpt,
+        kb.content,
+        kb.ai_hint AS "aiHint",
+        kb.tags,
+        kb.meta_description AS "metaDescription",
+        kb.youtube_video_url AS "videoUrl",
+        kb.status,
+        kb.difficulty,
+        kb.duration_min AS "durationMin",
+        kb.sop_version AS "sopVersion",
+        kb.created_at AS "createdAt",
+        kb.published_at AS "publishedAt",
+        m.file_path AS "featuredImage",
+        kb.featured_image AS "featuredImageId"
+      FROM knowledge_base kb
+      LEFT JOIN media m 
+        ON m.id = kb.featured_image
+      WHERE kb.id = :id
+      ${req.user.role !== 'admin' ? 'AND kb.author_id::int = :authorId' : ''}
+      LIMIT 1
+      `,
+      {
+        replacements: { id, authorId: Number(authorId) },
+        type: QueryTypes.SELECT,
+      }
+    );
 
     if (!journals || journals.length === 0) {
-      return res.status(404).json({ message: "Journal not found" });
+       return res.error("No Data Found", 404);
     }
 
-    return res.status(200).json({
-      data: journals[0],
-      message: "Journal fetched successfully",
-    });
+    return res.success(journals[0], `fetched successfully`);  
+
+
   } catch (error) {
-    console.error("getJournalById error:", error);
-    return res.status(500).json({ message: "Failed to fetch journal" });
+    console.error("getKnowledgeBaseById error:", error);
+       return res.error("Failed to fetch ", 500);
+
   }
 };
-  exports.updateJournal = async (req, res) => { 
+
+
+exports.updateKnowledgeBase = async (req, res) => {
   try {
     const { id } = req.params;
 
@@ -430,17 +547,20 @@ exports.getJournalById = async (req, res) => {
       status,
       tags = [],
       metaDescription,
-      videoUrl, // ✅ NEW FIELD
+      videoUrl,
+      difficulty,
+      durationMin,
+      sopVersion,
       publishedAt = null,
       updatedAt = new Date(),
+      contentType = "post",
     } = req.body;
 
     if (!id) {
       return res.status(400).json({ message: "Journal ID required" });
     }
 
-    // Convert JS array to Postgres array literal
-    const formattedTags = tags.length ? `{${tags.join(',')}}` : null;
+    const formattedTags = tags.length ? `{${tags.join(",")}}` : null;
 
     const replacements = {
       id,
@@ -450,17 +570,20 @@ exports.getJournalById = async (req, res) => {
       content: content ?? null,
       featuredImage: featuredImage ?? null,
       aiHint: aiHint ?? null,
-      videoUrl: videoUrl ?? null, // ✅ ADD
+      videoUrl: videoUrl ?? null,
       status,
       tags: formattedTags,
       metaDescription: metaDescription ?? null,
+      difficulty: difficulty ?? null,
+      durationMin: durationMin ?? null,
+      sopVersion: sopVersion ?? null,
       publishedAt,
       updatedAt,
     };
 
     await sequelize.query(
       `
-      UPDATE journal
+      UPDATE knowledge_base
       SET
         title = :title,
         slug = :slug,
@@ -468,35 +591,35 @@ exports.getJournalById = async (req, res) => {
         content = :content,
         featured_image = :featuredImage,
         ai_hint = :aiHint,
-        youtube_video_url = :videoUrl, -- ✅ NEW FIELD
+        youtube_video_url = :videoUrl,
         status = :status,
         tags = :tags,
         meta_description = :metaDescription,
+        difficulty = :difficulty,
+        duration_min = :durationMin,
+        sop_version = :sopVersion,
         published_at = :publishedAt,
         updated_at = :updatedAt
       WHERE id = :id
       `,
       { replacements, type: QueryTypes.UPDATE }
     );
-
-    res.json({ message: "Journal updated successfully" });
-
+    const typeLabel = contentType === "post" ? "journal" : contentType;
+    return res.success(null, `${typeLabel} updated successfully`);  
   } catch (error) {
-    console.error("updateJournal error:", error);
-    res.status(500).json({ message: "Server error" });
+    return res.error("Failed to update Knowledge Base");
   }
 };
-
-exports.deleteJournal = async (req, res) => {
+exports.deleteKnowledgeBase = async (req, res) => {
   try {
     const { id } = req.params;
 
     if (!id) {
-      return res.status(400).json({ message: "Journal ID required" });
+      return res.status(400).json({ message: "Knowledge Base ID required" });
     }
 
     await sequelize.query(
-      `DELETE FROM journal WHERE id = :id`,
+      `DELETE FROM knowledge_base WHERE id = :id`,
       {
         replacements: { id },
         type: QueryTypes.DELETE,
@@ -504,11 +627,11 @@ exports.deleteJournal = async (req, res) => {
     );
 
     res.json({
-      message: "Journal deleted successfully",
+      message: "Knowledge Base deleted successfully",
     });
 
   } catch (error) {
-    console.error("deleteJournal error:", error);
+    console.error("deleteKnowledgeBase error:", error);
     res.status(500).json({ message: "Server error" });
   }
 };

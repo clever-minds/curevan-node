@@ -10,11 +10,11 @@ router.post("/payout-items/add",authMiddleware,responseHandler,general.addPayout
 router.get("/payout-items/source/:sourceId",authMiddleware,responseHandler,general.getPayoutItemBySourceId);
 router.get("/payout-items/list",authMiddleware,responseHandler,general.listPayoutItems);
 
-router.post("/journal/add",authMiddleware,responseHandler,general.addJournal);
-router.get("/journal/get-by-id/:id",authMiddleware,responseHandler,general.getJournalById);
-router.get("/journal/list",authMiddleware,responseHandler,general.listJournals);
-router.put("/journal/update/:id",authMiddleware,responseHandler,general.updateJournal);
-router.delete("/journal/delete/:id",authMiddleware,responseHandler,general.deleteJournal);
-router.delete("/journal/delete/:id",authMiddleware,responseHandler,general.deleteJournal);
+// Knowledge Base routes
+router.post("/knowledge-base/add",authMiddleware,responseHandler,general.addKnowledgeBase);
+router.get("/knowledge-base/get-by-id/:id",authMiddleware,responseHandler,general.getKnowledgeBaseById);
+router.get("/knowledge-base/list",authMiddleware,responseHandler,general.listKnowledgeBase);
+router.put("/knowledge-base/update/:id",authMiddleware,responseHandler,general.updateKnowledgeBase);
+router.delete("/knowledge-base/delete/:id",authMiddleware,responseHandler,general.deleteKnowledgeBase);
 
 module.exports = router;   
