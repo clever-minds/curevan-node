@@ -252,31 +252,35 @@ exports.updateOrderAddress = async (req, res) => {
 ===================================================== */
 exports.deleteOrderAddress = async (req, res) => {
   try {
-
     const id = Number(req.params.addressId);
     const userId = req.user?.id;
 
-    const result = await sequelize.query(
+    if (!id || !userId) {
+      return res.error("Invalid request");
+    }
+
+    // DELETE query with RETURNING
+    const [deletedRows] = await sequelize.query(
       `DELETE FROM order_addresses
        WHERE id = :id
        AND user_id = :userId
        RETURNING id`,
       {
         replacements: { id, userId },
-        type: QueryTypes.DELETE
+        type: QueryTypes.RAW // RAW use karenge taaki array mile
       }
     );
 
-    if (!result[0].length) {
+    // Agar koi row delete nahi hui
+    if (!deletedRows || deletedRows.length === 0) {
       return res.error("Order address not found");
     }
 
+    // Success
     return res.success(null, "Order address deleted successfully");
 
   } catch (error) {
-
-    console.error(error);
+    console.error("Delete order address error:", error);
     return res.error("Server error");
-
   }
 };
