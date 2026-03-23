@@ -2,10 +2,13 @@ const { QueryTypes } = require("sequelize");
 const { sequelize } = require("../../config/db");
 
 /* =====================================================
-   LIST ORDER ADDRESSES
+   LIST ORDER ADDRESSES (LOGIN USER)
 ===================================================== */
 exports.listOrderAddresses = async (req, res) => {
   try {
+
+    const userId = req.user?.id;
+
     const result = await sequelize.query(
       `SELECT 
         id,
@@ -21,24 +24,31 @@ exports.listOrderAddresses = async (req, res) => {
         created_at AS "createdAt",
         updated_at AS "updatedAt"
       FROM order_addresses
+      WHERE user_id = :userId
       ORDER BY id DESC`,
-      { type: QueryTypes.SELECT }
+      {
+        replacements: { userId },
+        type: QueryTypes.SELECT
+      }
     );
 
     return res.success(result, "Order addresses fetched successfully");
+
   } catch (error) {
-    console.error("listOrderAddresses error:", error);
+    console.error(error);
     return res.error("Server error");
   }
 };
 
 
 /* =====================================================
-   GET ORDER ADDRESS BY ID
+   GET ORDER ADDRESS BY ID (LOGIN USER)
 ===================================================== */
 exports.getOrderAddressById = async (req, res) => {
   try {
+
     const id = Number(req.params.addressId);
+    const userId = req.user?.id;
 
     if (!id) return res.error("Address ID is required");
 
@@ -57,10 +67,11 @@ exports.getOrderAddressById = async (req, res) => {
         created_at AS "createdAt",
         updated_at AS "updatedAt"
       FROM order_addresses
-      WHERE id = :id`,
+      WHERE id = :id
+      AND user_id = :userId`,
       {
-        replacements: { id },
-        type: QueryTypes.SELECT,
+        replacements: { id, userId },
+        type: QueryTypes.SELECT
       }
     );
 
@@ -69,22 +80,26 @@ exports.getOrderAddressById = async (req, res) => {
     }
 
     return res.success(result[0], "Order address fetched successfully");
+
   } catch (error) {
-    console.error("getOrderAddressById error:", error);
+    console.error(error);
     return res.error("Server error");
   }
 };
 
 
 /* =====================================================
-   ADD ORDER ADDRESS
+   ADD ORDER ADDRESS (LOGIN USER)
 ===================================================== */
 exports.addOrderAddress = async (req, res) => {
+
   const transaction = await sequelize.transaction();
 
   try {
+
+    const userId = req.user?.id;
+
     const {
-      user_id,
       address_type,
       full_name,
       phone,
@@ -97,23 +112,6 @@ exports.addOrderAddress = async (req, res) => {
     } = req.body;
 
     const finalType = same_as_shipping ? "both" : address_type || "shipping";
-    const validTypes = ["billing", "shipping", "both"];
-
-    if (!validTypes.includes(finalType)) {
-      await transaction.rollback();
-      return res.error("Invalid address_type");
-    }
-
-    const requiredFields = { full_name, phone, street, city, state, postal_code };
-
-    const missingFields = Object.entries(requiredFields)
-      .filter(([_, v]) => !v)
-      .map(([k]) => k);
-
-    if (missingFields.length) {
-      await transaction.rollback();
-      return res.error(`Required fields missing: ${missingFields.join(", ")}`);
-    }
 
     const result = await sequelize.query(
       `INSERT INTO order_addresses (
@@ -130,7 +128,7 @@ exports.addOrderAddress = async (req, res) => {
         updated_at
       )
       VALUES (
-        :user_id,
+        :userId,
         :address_type,
         :full_name,
         :email,
@@ -145,18 +143,18 @@ exports.addOrderAddress = async (req, res) => {
       RETURNING *`,
       {
         replacements: {
-          user_id: user_id ?? null,
+          userId,
           address_type: finalType,
           full_name,
-          email: email ?? null,
-          phone:customerPhone,
+          email,
+          phone,
           full_address: street,
           city,
           state,
-          pincode: postal_code,
+          pincode: postal_code
         },
         type: QueryTypes.INSERT,
-        transaction,
+        transaction
       }
     );
 
@@ -165,26 +163,28 @@ exports.addOrderAddress = async (req, res) => {
     return res.success(result[0][0], "Order address added successfully");
 
   } catch (error) {
+
     await transaction.rollback();
-    console.error("addOrderAddress error:", error);
+    console.error(error);
     return res.error("Server error");
+
   }
 };
 
 
 /* =====================================================
-   UPDATE ORDER ADDRESS
+   UPDATE ORDER ADDRESS (LOGIN USER)
 ===================================================== */
 exports.updateOrderAddress = async (req, res) => {
+
   const transaction = await sequelize.transaction();
 
   try {
-    const id = Number(req.params.addressId);
 
-    if (!id) return res.error("Address ID is required");
+    const id = Number(req.params.addressId);
+    const userId = req.user?.id;
 
     const {
-      user_id,
       address_type,
       full_name,
       phone,
@@ -192,59 +192,39 @@ exports.updateOrderAddress = async (req, res) => {
       city,
       state,
       postal_code,
-      email,
-      same_as_shipping
+      email
     } = req.body;
-
-    const finalType = same_as_shipping ? "both" : address_type || "shipping";
-    const validTypes = ["billing", "shipping", "both"];
-
-    if (!validTypes.includes(finalType)) {
-      await transaction.rollback();
-      return res.error("Invalid address_type");
-    }
-
-    const requiredFields = { full_name, phone, street, city, state, postal_code };
-
-    const missingFields = Object.entries(requiredFields)
-      .filter(([_, v]) => !v)
-      .map(([k]) => k);
-
-    if (missingFields.length) {
-      await transaction.rollback();
-      return res.error(`Required fields missing: ${missingFields.join(", ")}`);
-    }
 
     const result = await sequelize.query(
       `UPDATE order_addresses
        SET
-         user_id = :user_id,
-         address_type = :address_type,
-         full_name = :full_name,
-         email = :email,
-         phone = :phone,
-         full_address = :full_address,
-         city = :city,
-         state = :state,
-         pincode = :pincode,
-         updated_at = NOW()
+        address_type = :address_type,
+        full_name = :full_name,
+        email = :email,
+        phone = :phone,
+        full_address = :full_address,
+        city = :city,
+        state = :state,
+        pincode = :pincode,
+        updated_at = NOW()
        WHERE id = :id
+       AND user_id = :userId
        RETURNING *`,
       {
         replacements: {
           id,
-          user_id: user_id ?? null,
-          address_type: finalType,
+          userId,
+          address_type,
           full_name,
-          email: email ?? null,
+          email,
           phone,
           full_address: street,
           city,
           state,
-          pincode: postal_code,
+          pincode: postal_code
         },
         type: QueryTypes.UPDATE,
-        transaction,
+        transaction
       }
     );
 
@@ -258,29 +238,32 @@ exports.updateOrderAddress = async (req, res) => {
     return res.success(result[0][0], "Order address updated successfully");
 
   } catch (error) {
+
     await transaction.rollback();
-    console.error("updateOrderAddress error:", error);
+    console.error(error);
     return res.error("Server error");
+
   }
 };
 
 
 /* =====================================================
-   DELETE ORDER ADDRESS
+   DELETE ORDER ADDRESS (LOGIN USER)
 ===================================================== */
 exports.deleteOrderAddress = async (req, res) => {
   try {
-    const id = Number(req.params.addressId);
 
-    if (!id) return res.error("Address ID is required");
+    const id = Number(req.params.addressId);
+    const userId = req.user?.id;
 
     const result = await sequelize.query(
       `DELETE FROM order_addresses
        WHERE id = :id
+       AND user_id = :userId
        RETURNING id`,
       {
-        replacements: { id },
-        type: QueryTypes.DELETE,
+        replacements: { id, userId },
+        type: QueryTypes.DELETE
       }
     );
 
@@ -291,7 +274,9 @@ exports.deleteOrderAddress = async (req, res) => {
     return res.success(null, "Order address deleted successfully");
 
   } catch (error) {
-    console.error("deleteOrderAddress error:", error);
+
+    console.error(error);
     return res.error("Server error");
+
   }
 };
