@@ -476,6 +476,37 @@ exports.listKnowledgeBase = async (req, res) => {
 };
 
 
+
+exports.listKnowledgeBasepublic = async (req, res) => {
+  try {
+  console.log("listKnowledgeBasepublic called");
+
+    let query = `
+      SELECT 
+        *,
+        tags AS categories,
+        duration_min AS "durationMin",
+        sop_version AS "sopVersion"
+      FROM knowledge_base
+      WHERE content_type = 'post'
+      AND status = 'published'
+      ORDER BY created_at DESC
+    `;
+
+    const items = await sequelize.query(query, {
+      type: QueryTypes.SELECT,
+    });
+
+
+    return res.success(items, `fetched successfully`);
+
+  } catch (error) {
+    console.error("listKnowledgeBasepublic error:", error);
+    return res.error("Failed to fetch");
+  }
+};
+
+
 exports.getKnowledgeBaseById = async (req, res) => {
   try {
     const id = parseInt(req.params.id, 10);
@@ -532,7 +563,57 @@ exports.getKnowledgeBaseById = async (req, res) => {
   }
 };
 
+exports.getKnowledgeBaseBySlug = async (req, res) => {
+  try {
+    const slug = req.params.slug;
 
+    if (!slug) {
+      return res.status(400).json({ message: "Invalid slug" });
+    }
+
+    const journals = await sequelize.query(
+      `
+      SELECT 
+        kb.title,
+        kb.slug,
+        kb.tags AS categories,
+        kb.excerpt,
+        kb.content,
+        kb.ai_hint AS "aiHint",
+        kb.tags,
+        kb.meta_description AS "metaDescription",
+        kb.youtube_video_url AS "videoUrl",
+        kb.status,
+        kb.difficulty,
+        kb.duration_min AS "durationMin",
+        kb.sop_version AS "sopVersion",
+        kb.created_at AS "createdAt",
+        kb.published_at AS "publishedAt",
+        m.file_path AS "featuredImage",
+        kb.featured_image AS "featuredImageId"
+      FROM knowledge_base kb
+      LEFT JOIN media m 
+        ON m.id = kb.featured_image
+      WHERE kb.slug = :slug
+      LIMIT 1
+      `,
+      {
+        replacements: { slug },
+        type: QueryTypes.SELECT,
+      }
+    );
+
+    if (!journals || journals.length === 0) {
+      return res.error("No Data Found22", 404);
+    }
+
+    return res.success(journals[0], "Fetched successfully");
+
+  } catch (error) {
+    console.error("getKnowledgeBaseBySlug error:", error);
+    return res.error("Failed to fetch", 500);
+  }
+};
 exports.updateKnowledgeBase = async (req, res) => {
   try {
     const { id } = req.params;
@@ -610,6 +691,44 @@ exports.updateKnowledgeBase = async (req, res) => {
     return res.error("Failed to update Knowledge Base");
   }
 };
+
+exports.updateKnowledgeBaseStatus = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { status } = req.body;
+
+    if (!id) {
+      return res.status(400).json({ message: "Knowledge Base ID required" });
+    }
+
+    if (!status) {
+      return res.status(400).json({ message: "Status is required" });
+    }
+
+    await sequelize.query(
+      `
+      UPDATE knowledge_base
+      SET
+        status = :status,
+        updated_at = :updatedAt
+      WHERE id = :id
+      `,
+      {
+        replacements: {
+          id,
+          status,
+          updatedAt: new Date(),
+        },
+        type: QueryTypes.UPDATE,
+      }
+    );
+
+    return res.success(null, "Knowledge Base status updated successfully");
+  } catch (error) {
+    console.error(error);
+    return res.error("Failed to update Knowledge Base status");
+  }
+};
 exports.deleteKnowledgeBase = async (req, res) => {
   try {
     const { id } = req.params;
@@ -633,5 +752,147 @@ exports.deleteKnowledgeBase = async (req, res) => {
   } catch (error) {
     console.error("deleteKnowledgeBase error:", error);
     res.status(500).json({ message: "Server error" });
+  }
+};
+
+exports.createTicket = async (req, res) => {
+  try {
+    const userId = req.user?.id;
+    const { type, subject, message, priority, rating, item_id } = req.body;
+
+    if (!userId) return res.error("Unauthorized");
+    if (!type || !message) return res.error("Type and message required");
+
+    const [ticket] = await sequelize.query(
+      `INSERT INTO tickets
+      (user_id, item_id, type, subject, message, priority, rating)
+      VALUES (:userId, :item_id, :type, :subject, :message, :priority, :rating)
+      RETURNING *`,
+      {
+        replacements: {
+          userId,
+          item_id: item_id || null,
+          type,
+          subject,
+          message,
+          priority: priority || "medium",
+          rating: rating || null
+        },
+        type: QueryTypes.INSERT
+      }
+    );
+
+    return res.success(ticket[0], "Ticket created successfully");
+
+  } catch (error) {
+    console.error(error);
+    return res.error("Failed to create ticket");
+  }
+};
+
+exports.getTickets = async (req, res) => {
+  try {
+    const userId = req.user?.id;
+
+    const tickets = await sequelize.query(
+      `SELECT *
+       FROM tickets
+       WHERE user_id = :userId
+       ORDER BY created_at DESC`,
+      {
+        replacements: { userId },
+        type: QueryTypes.SELECT
+      }
+    );
+
+    return res.success(tickets);
+
+  } catch (error) {
+    console.error(error);
+    return res.error("Failed to fetch tickets");
+  }
+};
+
+exports.getTicket = async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    const [ticket] = await sequelize.query(
+      `SELECT * FROM tickets WHERE id = :id`,
+      {
+        replacements: { id },
+        type: QueryTypes.SELECT
+      }
+    );
+
+    if (!ticket) return res.error("Ticket not found");
+
+    const messages = await sequelize.query(
+      `SELECT tm.*, u.name
+       FROM ticket_messages tm
+       LEFT JOIN users u ON u.id = tm.sender_id
+       WHERE tm.ticket_id = :id
+       ORDER BY tm.created_at ASC`,
+      {
+        replacements: { id },
+        type: QueryTypes.SELECT
+      }
+    );
+
+    return res.success({ ticket, messages });
+
+  } catch (error) {
+    console.error(error);
+    return res.error("Failed to fetch ticket");
+  }
+};
+
+exports.replyTicket = async (req, res) => {
+  try {
+    const userId = req.user?.id;
+    const { ticket_id, message } = req.body;
+
+    if (!ticket_id || !message) {
+      return res.error("Ticket id and message required");
+    }
+
+    await sequelize.query(
+      `INSERT INTO ticket_messages
+       (ticket_id, sender_id, message)
+       VALUES (:ticket_id, :userId, :message)`,
+      {
+        replacements: { ticket_id, userId, message },
+        type: QueryTypes.INSERT
+      }
+    );
+
+    return res.success(null, "Reply added");
+
+  } catch (error) {
+    console.error(error);
+    return res.error("Failed to reply");
+  }
+};
+
+exports.closeTicket = async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    await sequelize.query(
+      `UPDATE tickets
+       SET status = 'closed',
+       updated_at = CURRENT_TIMESTAMP
+       WHERE id = :id`,
+      {
+        replacements: { id },
+        type: QueryTypes.UPDATE
+      }
+    );
+
+    return res.success(null, "Ticket closed");
+
+  } catch (error) {
+    console.error(error);
+    return res.error("Failed to close ticket");
   }
 };

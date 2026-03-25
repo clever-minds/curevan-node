@@ -13,8 +13,14 @@ router.get("/payout-items/list",authMiddleware,responseHandler,general.listPayou
 // Knowledge Base routes
 router.post("/knowledge-base/add",authMiddleware,responseHandler,general.addKnowledgeBase);
 router.get("/knowledge-base/get-by-id/:id",authMiddleware,responseHandler,general.getKnowledgeBaseById);
+
 router.get("/knowledge-base/list",authMiddleware,responseHandler,general.listKnowledgeBase);
+router.get("/knowledge-base/post-get-public",responseHandler,general.listKnowledgeBasepublic);
+
 router.put("/knowledge-base/update/:id",authMiddleware,responseHandler,general.updateKnowledgeBase);
+router.patch("/knowledge-base/:id/status", authMiddleware, responseHandler, general.updateKnowledgeBaseStatus);
 router.delete("/knowledge-base/delete/:id",authMiddleware,responseHandler,general.deleteKnowledgeBase);
+router.get("/knowledge-base/:slug", responseHandler,general.getKnowledgeBaseBySlug);
 
 module.exports = router;   
+

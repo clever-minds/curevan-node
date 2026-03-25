@@ -3,34 +3,161 @@ const { sequelize } = require('../../config/db');
 /* =========================
    ADD PRODUCT
 ========================= */
+// exports.addProduct = async (req, res) => {
+//   const t = await sequelize.transaction();
+//   try {
+//     const {
+//       productType, title, subtitle, shortDescription, longDescription,
+//       brand, sku, category, mrp, sellingPrice,
+//       isTaxInclusive, isCouponExcluded,
+//       hsnCode, sacCode, gstSlab, status,
+//       length_cm, width_cm, height_cm, weight_kg,
+//       manufacturer, country_of_origin, packer, importer, batch_number,
+//       manufacturing_date, expiry_date, tags, image_ids,
+//       stock, reorderPoint
+//     } = req.body;
+
+//     if (!title || !sku || !category) {
+//       return res.status(400).json({ message: 'Title, SKU and Category are required' });
+//     }
+
+//     // ✅ Ensure tags is valid JSON
+//     const tagsJSON = tags ? JSON.stringify(tags) : '[]'; // store empty array if no tags
+
+//     // ✅ Ensure image_ids is always an array - handle null/undefined
+//     let imageIdsArray = [];
+//     if (image_ids) {
+//       imageIdsArray = Array.isArray(image_ids) ? image_ids : [image_ids];
+//     }
+
+//     // Insert product
+//     const [product] = await sequelize.query(
+//       `INSERT INTO products (
+//           product_type, title, subtitle, short_description, long_description,
+//           brand, sku, category_id, mrp, selling_price,
+//           is_tax_inclusive, is_coupon_excluded,
+//           hsn_code, sac_code, gst_slab, status,
+//           length_cm, width_cm, height_cm, weight_kg,
+//           manufacturer, country_of_origin, packer, importer, batch_number,
+//           manufacturing_date, expiry_date, tags,
+//           image_ids
+//         ) VALUES (
+//           :productType, :title, :subtitle, :shortDescription, :longDescription,
+//           :brand, :sku, :category, :mrp, :sellingPrice,
+//           :isTaxInclusive, :isCouponExcluded,
+//           :hsnCode, :sacCode, :gstSlab, :status,
+//           :length_cm, :width_cm, :height_cm, :weight_kg,
+//           :manufacturer, :country_of_origin, :packer, :importer, :batch_number,
+//           :manufacturing_date, :expiry_date, :tags::json,
+//           ARRAY[:image_ids]::integer[]
+//         )
+//         RETURNING id`,
+//       {
+//         replacements: {
+//           productType, title, subtitle, shortDescription, longDescription,
+//           brand, sku, category, mrp, sellingPrice,
+//           isTaxInclusive, isCouponExcluded,
+//           hsnCode: hsnCode ?? null,
+//           sacCode: sacCode ?? null,
+//           gstSlab, status,
+//           length_cm, width_cm, height_cm, weight_kg,
+//           manufacturer, country_of_origin, packer, importer, batch_number,
+//           manufacturing_date, expiry_date,
+//           tags: tagsJSON,
+//           image_ids: imageIdsArray.length > 0 ? imageIdsArray.join(',') : ''
+//         },
+//         type: QueryTypes.INSERT,
+//         transaction: t
+//       }
+//     );
+
+//     const productId = product[0].id;
+
+//     // Insert inventory
+//     await sequelize.query(
+//       `INSERT INTO inventory (product_id, sku, warehouse_id, on_hand, reorder_point)
+//       VALUES (:productId, :sku, :warehouse_id, :stock, :reorderPoint)`,
+//       {
+//         replacements: {
+//           productId,
+//           sku,
+//           stock: stock || 0,
+//           warehouse_id: 0,
+//           reorderPoint: reorderPoint || 0
+//         },
+//         type: QueryTypes.INSERT,
+//         transaction: t
+//       }
+//     );
+
+//     await t.commit();
+//     res.status(201).json({ success: true, message: 'Product added successfully', productId });
+
+//   } catch (error) {
+//     await t.rollback();
+//     if (error.original?.code === '23505') {
+//       return res.status(409).json({ message: 'SKU already exists' });
+//     }
+//     console.error(error);
+//     res.status(500).json({ message: 'Failed to add product' });
+//   }
+
+// };
+
+
+
 exports.addProduct = async (req, res) => {
   const t = await sequelize.transaction();
+
   try {
+    // 1️⃣ Destructure body with defaults
     const {
-      productType, title, subtitle, shortDescription, longDescription,
-      brand, sku, category, mrp, sellingPrice,
-      isTaxInclusive, isCouponExcluded,
-      hsnCode, sacCode, gstSlab, status,
-      length_cm, width_cm, height_cm, weight_kg,
-      manufacturer, country_of_origin, packer, importer, batch_number,
-      manufacturing_date, expiry_date, tags, image_ids,
-      stock, reorderPoint
+      productType = null,
+      title,
+      subtitle = null,
+      shortDescription = null,
+      longDescription = null,
+      brand = null,
+      sku,
+      category,
+      mrp = null,
+      sellingPrice = null,
+      isTaxInclusive = false,
+      isCouponExcluded = false,
+      hsnCode = null,
+      sacCode = null,
+      gstSlab = null,
+      status = null,
+      length_cm = null,
+      width_cm = null,
+      height_cm = null,
+      weight_kg = null,
+      manufacturer = null,
+      country_of_origin = null,
+      packer = null,
+      importer = null,
+      batch_number = null,
+      manufacturing_date = null,
+      expiry_date = null,
+      tags = [],
+      image_ids = [],
+      stock = 0,
+      reorderPoint = 0
     } = req.body;
 
+    // 2️⃣ Validate required fields
     if (!title || !sku || !category) {
       return res.status(400).json({ message: 'Title, SKU and Category are required' });
     }
 
-    // ✅ Ensure tags is valid JSON
-    const tagsJSON = tags ? JSON.stringify(tags) : '[]'; // store empty array if no tags
+    // 3️⃣ Prepare tags JSON
+    const tagsJSON = Array.isArray(tags) ? JSON.stringify(tags) : '[]';
 
-    // ✅ Ensure image_ids is always an array - handle null/undefined
-    let imageIdsArray = [];
-    if (image_ids) {
-      imageIdsArray = Array.isArray(image_ids) ? image_ids : [image_ids];
-    }
+    // 4️⃣ Ensure image_ids is always an array
+    const imageIdsArray = Array.isArray(image_ids) ? image_ids : image_ids ? [image_ids] : [];
+    const imageIdsString = imageIdsArray.length > 0 ? imageIdsArray.join(',') : '';
 
-    // Insert product
+    // 5️⃣ Insert product
     const [product] = await sequelize.query(
       `INSERT INTO products (
           product_type, title, subtitle, short_description, long_description,
@@ -49,22 +176,40 @@ exports.addProduct = async (req, res) => {
           :length_cm, :width_cm, :height_cm, :weight_kg,
           :manufacturer, :country_of_origin, :packer, :importer, :batch_number,
           :manufacturing_date, :expiry_date, :tags::json,
-          ARRAY[:image_ids]::integer[]
+          ARRAY[:imageIds]::integer[]
         )
         RETURNING id`,
       {
         replacements: {
-          productType, title, subtitle, shortDescription, longDescription,
-          brand, sku, category, mrp, sellingPrice,
-          isTaxInclusive, isCouponExcluded,
-          hsnCode: hsnCode ?? null,
-          sacCode: sacCode ?? null,
-          gstSlab, status,
-          length_cm, width_cm, height_cm, weight_kg,
-          manufacturer, country_of_origin, packer, importer, batch_number,
-          manufacturing_date, expiry_date,
+          productType,
+          title,
+          subtitle,
+          shortDescription,
+          longDescription,
+          brand,
+          sku,
+          category,
+          mrp,
+          sellingPrice,
+          isTaxInclusive,
+          isCouponExcluded,
+          hsnCode,
+          sacCode,
+          gstSlab,
+          status,
+          length_cm,
+          width_cm,
+          height_cm,
+          weight_kg,
+          manufacturer,
+          country_of_origin,
+          packer,
+          importer,
+          batch_number,
+          manufacturing_date,
+          expiry_date,
           tags: tagsJSON,
-          image_ids: imageIdsArray.length > 0 ? imageIdsArray.join(',') : ''
+          imageIds: imageIdsArray
         },
         type: QueryTypes.INSERT,
         transaction: t
@@ -73,37 +218,44 @@ exports.addProduct = async (req, res) => {
 
     const productId = product[0].id;
 
-    // Insert inventory
+    // 6️⃣ Insert inventory
     await sequelize.query(
       `INSERT INTO inventory (product_id, sku, warehouse_id, on_hand, reorder_point)
-      VALUES (:productId, :sku, :warehouse_id, :stock, :reorderPoint)`,
+       VALUES (:productId, :sku, :warehouse_id, :stock, :reorderPoint)`,
       {
         replacements: {
           productId,
           sku,
-          stock: stock || 0,
-          warehouse_id: 0,
-          reorderPoint: reorderPoint || 0
+          stock,
+          warehouse_id: 0, // default warehouse
+          reorderPoint
         },
         type: QueryTypes.INSERT,
         transaction: t
       }
     );
 
+    // 7️⃣ Commit transaction
     await t.commit();
-    res.status(201).json({ success: true, message: 'Product added successfully', productId });
+
+    res.status(201).json({
+      success: true,
+      message: 'Product added successfully',
+      productId
+    });
 
   } catch (error) {
     await t.rollback();
+
+    // 8️⃣ Handle unique SKU error
     if (error.original?.code === '23505') {
       return res.status(409).json({ message: 'SKU already exists' });
     }
+
     console.error(error);
-    res.status(500).json({ message: 'Failed to add product' });
+    res.status(500).json({ message: 'Failed to add product', error: error.message });
   }
-
 };
-
 
 /* =========================
    LIST PRODUCTS

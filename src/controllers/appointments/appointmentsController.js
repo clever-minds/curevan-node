@@ -175,7 +175,6 @@ exports.createBookingAndInvoice = async (req, res) => {
     if (!bookingData || !paymentDetails) {
       return res.status(400).json({ success: false, error: "Booking data and payment details required" });
     }
-
     // --------------------------
     // 1️⃣ Insert appointment
     // --------------------------
@@ -473,17 +472,144 @@ exports.getPCRByBookingId = async (req, res) => {
 // ==========================================
 // UPDATE PCR
 // ==========================================
+// exports.updatePcr = async (req, res) => {
+//   const { appointmentId } = req.params;
+//   const data = req.body;
+
+//   if (!appointmentId) {
+//     return res.error("PCR Id is required", 400);
+//   }
+
+//   const t = await sequelize.transaction();
+
+//   try {
+//     const current = await sequelize.query(
+//       `SELECT * FROM pcr WHERE appointment_id = :appointmentId LIMIT 1`,
+//       {
+//         replacements: { appointmentId },
+//         type: QueryTypes.SELECT,
+//         transaction: t
+//       }
+//     );
+
+//     if (!current || current.length === 0) {
+//       await t.rollback();
+//       return res.status(404).json({ success: false, error: "PCR not found" });
+//     }
+
+//     const existing = current[0];
+
+//     const updatedData = {
+//       chief_complaint: data.chiefComplaint ?? existing.chief_complaint,
+//       assessment: data.assessment ?? existing.assessment,
+//       diagnosis: data.diagnosis ?? existing.diagnosis,
+//       treatment_provided: data.treatmentProvided ?? existing.treatment_provided,
+//       plan_of_care: data.planOfCare ?? existing.plan_of_care,
+//       bp: data?.bp ?? existing.bp,
+//       hr: data?.hr ?? existing.hr,
+//       rr: data?.rr ?? existing.rr,
+//       temp: data?.temp ?? existing.temp,
+//       status: data.status ?? existing.status,
+//       locked_by: data.lockedBy ?? existing.locked_by,
+//       locked_at: data.lockedAt ?? existing.locked_at,
+//       incident_date: data.incidentDate ?? existing.incident_date,
+//       incident_location: data.incidentLocation ?? existing.incident_location,
+//       next_treatment_date: data.nextTreatmentDate ?? existing.next_treatment_date,
+//       upload_attachment_id: data.upload_attachment_id ?? existing.upload_attachment_id,
+//       therapist_name: data.therapistName ?? existing.therapist_name,
+//       signature_confirmation: data.signatureConfirmation ?? existing.signature_confirmation,
+//       version: (existing.version || 1) + 1,
+//       history: JSON.stringify([
+//         ...(existing.history || []),
+//         {
+//           version: existing.version,
+//           assessment: data.assessment ?? existing.assessment,
+//           diagnosis: data.diagnosis ?? existing.diagnosis,
+//           treatment_provided: data.treatmentProvided ?? existing.treatment_provided,
+//           plan_of_care: data.planOfCare ?? existing.plan_of_care,
+//           bp: data?.bp ?? existing.bp,
+//           hr: data?.hr ?? existing.hr,
+//           rr: data?.rr ?? existing.rr,
+//           temp: data?.temp ?? existing.temp,
+//           status: data.status ?? existing.status,
+//           locked_by: data.lockedBy ?? existing.locked_by,
+//           locked_at: data.lockedAt ?? existing.locked_at,
+//           incident_date: data.incidentDate ?? existing.incident_date,
+//           incident_location: data.incidentLocation ?? existing.incident_location,
+//           next_treatment_date: data.nextTreatmentDate ?? existing.next_treatment_date,
+//           upload_attachment_id: data.upload_attachment_id ?? existing.upload_attachment_id,
+//           therapist_name: data.therapistName ?? existing.therapist_name,
+//           signature_confirmation: data.signatureConfirmation ?? existing.signature_confirmation,
+//           updated_at: new Date(),
+//         },
+//       ]),
+//     };
+
+//     await sequelize.query(
+//       `UPDATE pcr
+//        SET
+//          chief_complaint = :chief_complaint,
+//          assessment = :assessment,
+//          diagnosis = :diagnosis,
+//          treatment_provided = :treatment_provided,
+//          plan_of_care = :plan_of_care,
+//          bp = :bp,
+//          hr = :hr,
+//          rr = :rr,
+//          temp = :temp,
+//          status = :status,
+//          locked_by = :locked_by,
+//          locked_at = :locked_at,
+//          incident_date = :incident_date,
+//          incident_location = :incident_location,
+//          next_treatment_date = :next_treatment_date,
+//          upload_attachment_id = :upload_attachment_id,
+//          therapist_name = :therapist_name,
+//          signature_confirmation = :signature_confirmation,
+//          version = :version,
+//          history = :history
+//        WHERE appointment_id = :appointmentId`,
+//       {
+//         replacements: { ...updatedData, appointmentId },
+//         type: QueryTypes.UPDATE,
+//         transaction: t
+//       }
+//     );
+
+//     await sequelize.query(
+//       `UPDATE appointments
+//        SET pcr_status = :status
+//        WHERE id = :appointmentId`,
+//       {
+//         replacements: { status: updatedData.status, appointmentId },
+//         type: QueryTypes.UPDATE,
+//         transaction: t
+//       }
+//     );
+
+//     await t.commit();
+//     return res.success("PCR updated successfully");
+
+//   } catch (error) {
+//     await t.rollback();
+//     console.error("Error updating PCR:", error);
+//     return res.error("Failed to update PCR", 500);
+//   }
+// };
+
+
 exports.updatePcr = async (req, res) => {
   const { appointmentId } = req.params;
   const data = req.body;
 
   if (!appointmentId) {
-    return res.error("PCR Id is required", 400);
+    return res.status(400).json({ success: false, error: "PCR Id is required" });
   }
 
   const t = await sequelize.transaction();
 
   try {
+    // 1️⃣ Fetch current PCR record
     const current = await sequelize.query(
       `SELECT * FROM pcr WHERE appointment_id = :appointmentId LIMIT 1`,
       {
@@ -500,17 +626,29 @@ exports.updatePcr = async (req, res) => {
 
     const existing = current[0];
 
+    // 2️⃣ Normalize status ONLY for appointments table
+    let normalizedStatus = existing.status; // default
+    if (data.status) {
+      const statusLower = data.status.toLowerCase();
+      if (statusLower === "submitted") normalizedStatus = "Confirmed";
+      else if (statusLower === "locked") normalizedStatus = "Completed";
+    }
+
+    // 3️⃣ PCR table raw status
+    const pcrStatusToSave = data.status ?? existing.status;
+
+    // 4️⃣ Prepare updated data for PCR table
     const updatedData = {
       chief_complaint: data.chiefComplaint ?? existing.chief_complaint,
       assessment: data.assessment ?? existing.assessment,
       diagnosis: data.diagnosis ?? existing.diagnosis,
       treatment_provided: data.treatmentProvided ?? existing.treatment_provided,
       plan_of_care: data.planOfCare ?? existing.plan_of_care,
-      bp: data?.bp ?? existing.bp,
-      hr: data?.hr ?? existing.hr,
-      rr: data?.rr ?? existing.rr,
-      temp: data?.temp ?? existing.temp,
-      status: data.status ?? existing.status,
+      bp: data.bp ?? existing.bp,
+      hr: data.hr ?? existing.hr,
+      rr: data.rr ?? existing.rr,
+      temp: data.temp ?? existing.temp,
+      status: pcrStatusToSave, // raw PCR status
       locked_by: data.lockedBy ?? existing.locked_by,
       locked_at: data.lockedAt ?? existing.locked_at,
       incident_date: data.incidentDate ?? existing.incident_date,
@@ -524,15 +662,16 @@ exports.updatePcr = async (req, res) => {
         ...(existing.history || []),
         {
           version: existing.version,
+          chief_complaint: data.chiefComplaint ?? existing.chief_complaint,
           assessment: data.assessment ?? existing.assessment,
           diagnosis: data.diagnosis ?? existing.diagnosis,
           treatment_provided: data.treatmentProvided ?? existing.treatment_provided,
           plan_of_care: data.planOfCare ?? existing.plan_of_care,
-          bp: data?.bp ?? existing.bp,
-          hr: data?.hr ?? existing.hr,
-          rr: data?.rr ?? existing.rr,
-          temp: data?.temp ?? existing.temp,
-          status: data.status ?? existing.status,
+          bp: data.bp ?? existing.bp,
+          hr: data.hr ?? existing.hr,
+          rr: data.rr ?? existing.rr,
+          temp: data.temp ?? existing.temp,
+          status: pcrStatusToSave,
           locked_by: data.lockedBy ?? existing.locked_by,
           locked_at: data.lockedAt ?? existing.locked_at,
           incident_date: data.incidentDate ?? existing.incident_date,
@@ -546,6 +685,7 @@ exports.updatePcr = async (req, res) => {
       ]),
     };
 
+    // 5️⃣ Update PCR table
     await sequelize.query(
       `UPDATE pcr
        SET
@@ -577,23 +717,30 @@ exports.updatePcr = async (req, res) => {
       }
     );
 
+    // 6️⃣ Update appointments table
     await sequelize.query(
       `UPDATE appointments
-       SET pcr_status = :status
+       SET status = :status,
+           pcr_status = :pcr_status
        WHERE id = :appointmentId`,
       {
-        replacements: { status: updatedData.status, appointmentId },
+        replacements: { 
+          status: normalizedStatus,   // Confirmed / Completed
+          pcr_status: pcrStatusToSave, // submitted / locked
+          appointmentId 
+        },
         type: QueryTypes.UPDATE,
         transaction: t
       }
     );
 
+    // 7️⃣ Commit transaction
     await t.commit();
-    return res.success("PCR updated successfully");
+    return res.status(200).json({ success: true, message: "PCR updated successfully" });
 
   } catch (error) {
     await t.rollback();
     console.error("Error updating PCR:", error);
-    return res.error("Failed to update PCR", 500);
+    return res.status(500).json({ success: false, error: "Failed to update PCR" });
   }
 };

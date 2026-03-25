@@ -14,6 +14,16 @@ router.get('/me', authMiddleware, auth.getMe);
 router.post("/logout", auth.logout);
 router.post("/login-with-mobile",responseHandler, auth.loginWithMobile);
 
+router.post("/change-password",authMiddleware,responseHandler,auth.changePassword);
+
+router.post("/forgot-password",responseHandler,auth.forgotPassword);
+
+router.post("/reset-password",responseHandler,auth.resetPassword);
+
+router.put("/update-profile",authMiddleware,responseHandler,auth.updateUserProfile);
+
+router.post("/change-profile-request", authMiddleware,responseHandler,auth.createChangeRequest);
+
 router.get(
   '/google',
   passport.authenticate('google', { scope: ['profile', 'email'] })
