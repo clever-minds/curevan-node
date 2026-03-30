@@ -52,7 +52,9 @@ router.get(
     });
     console.log("Google OAuth successful, token set in cookie",);
 
-    return res.redirect(`${process.env.FRONTEND_URL}/dashboard/account`);
+      return res.redirect(
+        `${process.env.FRONTEND_URL}/dashboard/account?token=${token}`
+      );
   }
 );
 module.exports = router;
