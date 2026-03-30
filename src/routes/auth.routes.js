@@ -46,9 +46,9 @@ router.get(
     );
    res.cookie("token", token, {
       httpOnly: true,
-      secure: true,          // ✅ HTTPS के लिए जरूरी
-      sameSite: "none",      // ✅ cross-domain के लिए जरूरी
-      domain: ".curevan.com", // ✅ VERY IMPORTANT
+      secure: true,         
+      sameSite: "none",     
+      domain: ".curevan.com", 
       path: "/",
       maxAge: 24 * 60 * 60 * 1000,
     });
