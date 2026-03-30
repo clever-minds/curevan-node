@@ -46,15 +46,13 @@ router.get(
     );
    res.cookie("token", token, {
         httpOnly: true,
-        secure: false,
-        sameSite: "lax",  // ✅ CHANGE THIS
+        secure: true,
+        sameSite: "none",  // ✅ CHANGE THIS
         maxAge: 24 * 60 * 60 * 1000,
     });
     console.log("Google OAuth successful, token set in cookie",);
 
-      return res.redirect(
-        `${process.env.FRONTEND_URL}/dashboard/account?token=${token}`
-      );
+    return res.redirect(`${process.env.FRONTEND_URL}/dashboard/account`);
   }
 );
 module.exports = router;
