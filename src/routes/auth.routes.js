@@ -52,8 +52,7 @@ router.get(
     });
     console.log("Google OAuth successful, token set in cookie",);
 
-return res.redirect("http://localhost:3000/dashboard/account");
-
+    return res.redirect(`${process.env.FRONTEND_URL}/dashboard/account`);
   }
 );
 module.exports = router;
