@@ -45,10 +45,12 @@ router.get(
       { expiresIn: '1d' }
     );
    res.cookie("token", token, {
-        httpOnly: true,
-        secure: true,
-        sameSite: "none",  // ✅ CHANGE THIS
-        maxAge: 24 * 60 * 60 * 1000,
+      httpOnly: true,
+      secure: true,          // ✅ HTTPS के लिए जरूरी
+      sameSite: "none",      // ✅ cross-domain के लिए जरूरी
+      domain: ".curevan.com", // ✅ VERY IMPORTANT
+      path: "/",
+      maxAge: 24 * 60 * 60 * 1000,
     });
     console.log("Google OAuth successful, token set in cookie",);
 
