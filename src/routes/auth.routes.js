@@ -47,7 +47,7 @@ router.get(
    res.cookie("token", token, {
       httpOnly: true,
       secure: true,         
-      sameSite: "none",     
+      sameSite: "lax",     
       domain: ".curevan.com", 
       path: "/",
       maxAge: 24 * 60 * 60 * 1000,
