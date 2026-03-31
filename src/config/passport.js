@@ -9,7 +9,7 @@ passport.use(
     {
       clientID: process.env.GOOGLE_CLIENT_ID,
       clientSecret: process.env.GOOGLE_CLIENT_SECRET,
-      callbackURL: 'https://13.234.126.66/api/auth/google/callback',
+      callbackURL: 'https://api.curevan.com/api/auth/google/callback',
     },
    async (accessToken, refreshToken, profile, done) => {
         const transaction = await sequelize.transaction();
