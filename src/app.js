@@ -17,7 +17,8 @@ app.use(cors({
     "http://localhost:3000",
     "https://curevan-dev.vercel.app/",
     "https://curevan-dev.vercel.app/",
-    "http://192.168.29.237:3000"
+    "http://192.168.29.237:3000",
+    "https://api.curevan.com"
   ],
   credentials: true
 }));
@@ -39,6 +40,7 @@ app.use('/api/therapists', require('./routes/therapist.routes'));
 app.use('/api/appointments', require('./routes/appointments.routes'));
 app.use('/api/general', require('./routes/general.routes'));
 app.use('/api/support', require('./routes/support.routes'));
+app.use('/api/shipment', require('./routes/shipment.routes'));
 
 
 app.get("/", (req, res) => {

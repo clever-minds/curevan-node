@@ -260,26 +260,58 @@ exports.addProduct = async (req, res) => {
 /* =========================
    LIST PRODUCTS
 ========================= */
+// exports.listProducts = async (req, res) => {
+//   try {
+//     const products = await sequelize.query(
+//       ` SELECT 
+//       p.*,
+//       p.title AS name,p.selling_price as price,
+//       p.category_id AS "categoryId",
+//       c.name AS category_name,
+//       i.on_hand AS "onHand",
+//       i.reserved,
+//       i.reorder_point,
+//       m.file_path AS "featuredImage"
+//   FROM products p
+//   LEFT JOIN categories c ON c.id = p.category_id
+//   LEFT JOIN inventory i ON i.product_id = p.id
+//   LEFT JOIN media m 
+//       ON m.id = p.image_ids[1]
+//   ORDER BY p.created_at DESC`,
+//       { type: QueryTypes.SELECT }
+//     );
+//     res.json(products);
+//   } catch (error) {
+//     console.error(error);
+//     res.status(500).json({ message: 'Failed to fetch products' });
+//   }
+// };
+
 exports.listProducts = async (req, res) => {
   try {
     const products = await sequelize.query(
-      ` SELECT 
-      p.*,
-      p.title AS name,p.selling_price as price,
-      p.category_id AS "categoryId",
-      c.name AS category_name,
-      i.on_hand AS "onHand",
-      i.reserved,
-      i.reorder_point,
-      m.file_path AS "featuredImage"
-  FROM products p
-  LEFT JOIN categories c ON c.id = p.category_id
-  LEFT JOIN inventory i ON i.product_id = p.id
-  LEFT JOIN media m 
-      ON m.id = p.image_ids[1]
-  ORDER BY p.created_at DESC`,
+      `SELECT 
+          p.*,
+          p.title AS name,
+          -- Selling price GST-inclusive
+          CASE 
+              WHEN p.is_tax_inclusive THEN  ROUND(p.selling_price * (1 + COALESCE(p.gst_slab,0)/100.0), 2)
+              ELSE  p.selling_price
+          END AS price,
+          p.category_id AS "categoryId",
+          c.name AS category_name,
+          i.on_hand AS "onHand",
+          i.reserved,
+          i.reorder_point,
+          m.file_path AS "featuredImage"
+      FROM products p
+      LEFT JOIN categories c ON c.id = p.category_id
+      LEFT JOIN inventory i ON i.product_id = p.id
+      LEFT JOIN media m ON m.id = p.image_ids[1]
+      ORDER BY p.created_at DESC`,
       { type: QueryTypes.SELECT }
     );
+
     res.json(products);
   } catch (error) {
     console.error(error);
@@ -567,7 +599,10 @@ exports.getProduct = async (req, res) => {
       `SELECT 
         p.*,
         p.title AS name,
-        p.selling_price AS price,
+          CASE 
+              WHEN p.is_tax_inclusive THEN  ROUND(p.selling_price * (1 + COALESCE(p.gst_slab,0)/100.0), 2)
+              ELSE  p.selling_price
+          END AS price,
         p.category_id AS "categoryId",
         c.name AS categoryname,
         i.on_hand AS "onHand",
