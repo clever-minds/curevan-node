@@ -1238,6 +1238,49 @@ exports.createOrderFromCart = async (req, res) => {
 };
 
 
+exports.validateCartStock = async (req, res) => {
+  const userId = req.user.id;
+
+  const cartItems = await sequelize.query(
+    `SELECT c.product_id, c.quantity, p.title
+     FROM cart c
+     JOIN products p ON c.product_id = p.id
+     WHERE c.user_id = :userId`,
+    {
+      replacements: { userId },
+      type: QueryTypes.SELECT
+    }
+  );
+
+  const productIds = cartItems.map(i => i.product_id);
+
+  const inventories = await sequelize.query(
+    `SELECT product_id, on_hand, reserved
+     FROM inventory
+     WHERE product_id IN (:productIds)`,
+    {
+      replacements: { productIds },
+      type: QueryTypes.SELECT
+    }
+  );
+
+  const inventoryMap = {};
+  inventories.forEach(i => inventoryMap[i.product_id] = i);
+
+  for (let item of cartItems) {
+    const inv = inventoryMap[item.product_id];
+
+    if (!inv || (inv.on_hand - inv.reserved) < item.quantity) {
+      return res.status(400).json({
+        success: false,
+        message: `Out of stock: ${item.title}`
+      });
+    }
+  }
+
+  return res.json({ success: true });
+};
+
 
 exports.cancelOrder = async (req, res) => {
   const transaction = await sequelize.transaction();
