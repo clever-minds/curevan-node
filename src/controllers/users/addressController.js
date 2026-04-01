@@ -176,16 +176,14 @@ exports.addOrderAddress = async (req, res) => {
    UPDATE ORDER ADDRESS (LOGIN USER)
 ===================================================== */
 exports.updateOrderAddress = async (req, res) => {
-
   const transaction = await sequelize.transaction();
 
   try {
-
     const id = Number(req.params.addressId);
     const userId = req.user?.id;
 
+    // Destructure the fields from request body
     const {
-      address_type,
       full_name,
       phone,
       street,
@@ -195,10 +193,16 @@ exports.updateOrderAddress = async (req, res) => {
       email
     } = req.body;
 
+    // Check required fields (optional but recommended)
+    if (!full_name || !phone || !street || !city || !state || !postal_code || !email) {
+      await transaction.rollback();
+      return res.error("All fields are required");
+    }
+
+    // Run the update query
     const result = await sequelize.query(
       `UPDATE order_addresses
        SET
-        address_type = :address_type,
         full_name = :full_name,
         email = :email,
         phone = :phone,
@@ -214,7 +218,6 @@ exports.updateOrderAddress = async (req, res) => {
         replacements: {
           id,
           userId,
-          address_type,
           full_name,
           email,
           phone,
@@ -228,21 +231,19 @@ exports.updateOrderAddress = async (req, res) => {
       }
     );
 
+    // If no rows updated
     if (!result[0].length) {
       await transaction.rollback();
       return res.error("Order address not found");
     }
 
     await transaction.commit();
-
     return res.success(result[0][0], "Order address updated successfully");
 
   } catch (error) {
-
     await transaction.rollback();
     console.error(error);
     return res.error("Server error");
-
   }
 };
 
