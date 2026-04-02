@@ -118,14 +118,14 @@ exports.register = async (req, res) => {
     }
 
     const hash = await bcrypt.hash(password, 10);
-    const verificationCode = Math.floor(100000 + Math.random() * 900000).toString();
+    const verificationToken = uuidv4();
 
     const [user] = await sequelize.query(
       `INSERT INTO users (uid,email,password,name,phone,role,is_verified,verification_code)
-       VALUES (:uid,:email,:password,:name,:phone,:role,false,:verificationCode)
+       VALUES (:uid,:email,:password,:name,:phone,:role,false,:verificationToken)
        RETURNING id`,
       {
-        replacements: { uid, email, password: hash, name, phone, role, verificationCode },
+        replacements: { uid, email, password: hash, name, phone, role, verificationToken },
         type: QueryTypes.INSERT,
         transaction
       }
@@ -168,8 +168,9 @@ exports.register = async (req, res) => {
         html: `
           <h2>Email Verification</h2>
           <p>Hi ${name},</p>
-          <p>Your verification code is: <strong>${verificationCode}</strong></p>
-          <p>Please enter this code to verify your account.</p>
+          <p>Please click the link below to verify your email address:</p>
+          <br>
+          <a href="${process.env.FRONTEND_URL}/verify-email?token=${verificationToken}" style="display:inline-block;padding:10px 20px;background:#007bff;color:#fff;text-decoration:none;border-radius:5px;">Verify Email</a>
         `
       });
     } catch (mailError) {
@@ -844,26 +845,22 @@ exports.googleLogin = async (req, res) => {
 
 exports.verifyEmail = async (req, res) => {
   try {
-    const { email, code } = req.body;
+    const { token } = req.body;
 
-    if (!email || !code) {
-      return res.error("Email and code are required", 400);
+    if (!token) {
+      return res.error("Verification token is required", 400);
     }
 
     const [user] = await sequelize.query(
-      `SELECT id, verification_code FROM users WHERE email = :email`,
+      `SELECT id FROM users WHERE verification_code = :token`,
       {
-        replacements: { email },
+        replacements: { token },
         type: QueryTypes.SELECT
       }
     );
 
     if (!user) {
-      return res.error("User not found", 404);
-    }
-
-    if (user.verification_code !== code) {
-      return res.error("Invalid verification code", 400);
+      return res.error("Invalid or expired token", 400);
     }
 
     await sequelize.query(
@@ -905,12 +902,12 @@ exports.resendVerificationEmail = async (req, res) => {
       return res.error("Email is already verified", 400);
     }
 
-    const verificationCode = Math.floor(100000 + Math.random() * 900000).toString();
+    const verificationToken = uuidv4();
 
     await sequelize.query(
       `UPDATE users SET verification_code = :code WHERE id = :id`,
       {
-        replacements: { code: verificationCode, id: user.id },
+        replacements: { code: verificationToken, id: user.id },
         type: QueryTypes.UPDATE
       }
     );
@@ -922,8 +919,9 @@ exports.resendVerificationEmail = async (req, res) => {
       html: `
         <h2>Email Verification</h2>
         <p>Hi ${user.name},</p>
-        <p>Your new verification code is: <strong>${verificationCode}</strong></p>
-        <p>Please enter this code to verify your account.</p>
+        <p>Please click the link below to verify your email address:</p>
+        <br>
+        <a href="${process.env.FRONTEND_URL}/verify-email?token=${verificationToken}" style="display:inline-block;padding:10px 20px;background:#007bff;color:#fff;text-decoration:none;border-radius:5px;">Verify Email</a>
       `
     });
 
