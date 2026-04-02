@@ -12,6 +12,7 @@ router.get('/list', authMiddleware, products.listProducts);
 router.get('/:id', authMiddleware, products.getProductById);
 router.get('/inventory/list', authMiddleware, inventory.listInventory);
 router.get('/frontend/list',responseHandler, products.getProduct);
+router.get('/frontend/:id', responseHandler, products.getProductFrontendById);
 router.post("/get-by-ids", authMiddleware, products.getProductsByIds);
 router.post('/add', authMiddleware, products.addProduct);
 router.put('/edit/:id', authMiddleware, products.updateProduct);

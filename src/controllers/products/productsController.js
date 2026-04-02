@@ -623,6 +623,57 @@ exports.getProduct = async (req, res) => {
   }
 };
 
+exports.getProductFrontendById = async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    const product = await sequelize.query(
+      `SELECT 
+        p.*,
+        p.title AS name,
+        CASE 
+            WHEN p.is_tax_inclusive THEN ROUND(p.selling_price * (1 + COALESCE(p.gst_slab,0)/100.0), 2)
+            ELSE p.selling_price
+        END AS price,
+        p.category_id AS "categoryId",
+        c.name AS categoryname,
+        i.on_hand AS "onHand",
+        i.reserved,
+        i.reorder_point,
+        m.file_path AS "featuredImage",
+        COALESCE(
+          json_agg(
+            DISTINCT jsonb_build_object(
+              'id', m2.id,
+              'url', m2.file_path,
+              'type', m2.media_type
+            )
+          ) FILTER (WHERE m2.id IS NOT NULL),
+          '[]'
+        ) AS images
+      FROM products p
+      LEFT JOIN categories c ON c.id = p.category_id
+      LEFT JOIN inventory i ON i.product_id = p.id
+      LEFT JOIN media m ON m.id = p.image_ids[1]
+      LEFT JOIN media m2 ON m2.id = ANY(p.image_ids)
+      WHERE p.id = :id
+      GROUP BY p.id, c.name, i.on_hand, i.reserved, i.reorder_point, m.file_path`,
+      {
+        replacements: { id },
+        type: QueryTypes.SELECT
+      }
+    );
+
+    if (!product.length) {
+      return res.error("Product not found", 404);
+    }
+
+    return res.success(product[0], "Product fetched successfully");
+  } catch (error) {
+    console.error(error);
+    return res.error("Failed to fetch product");
+  }
+};
 
 exports.getProductsByIds = async (req, res) => {
   try {
