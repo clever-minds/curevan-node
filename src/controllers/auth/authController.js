@@ -118,13 +118,14 @@ exports.register = async (req, res) => {
     }
 
     const hash = await bcrypt.hash(password, 10);
+    const verificationCode = Math.floor(100000 + Math.random() * 900000).toString();
 
     const [user] = await sequelize.query(
-      `INSERT INTO users (uid,email,password,name,phone,role)
-       VALUES (:uid,:email,:password,:name,:phone,:role)
+      `INSERT INTO users (uid,email,password,name,phone,role,is_verified,verification_code)
+       VALUES (:uid,:email,:password,:name,:phone,:role,false,:verificationCode)
        RETURNING id`,
       {
-        replacements: { uid, email, password: hash, name, phone, role },
+        replacements: { uid, email, password: hash, name, phone, role, verificationCode },
         type: QueryTypes.INSERT,
         transaction
       }
@@ -159,10 +160,26 @@ exports.register = async (req, res) => {
 
     await transaction.commit();
 
+    try {
+      await transporter.sendMail({
+        from: `"Curevan" <${process.env.MAIL_USER}>`,
+        to: email,
+        subject: "Verify your Email - Curevan",
+        html: `
+          <h2>Email Verification</h2>
+          <p>Hi ${name},</p>
+          <p>Your verification code is: <strong>${verificationCode}</strong></p>
+          <p>Please enter this code to verify your account.</p>
+        `
+      });
+    } catch (mailError) {
+      console.error("Failed to send verification email:", mailError);
+    }
+
     res.json({
       success: true,
       uid,
-      message: 'User registered & roles mapped'
+      message: 'User registered successfully. Please verify your email.'
     });
 
   } catch (err) {
@@ -198,6 +215,10 @@ exports.login = async (req, res) => {
     const ok = await bcrypt.compare(password, user.password);
     if (!ok) {
       return res.status(401).json({ message: 'Invalid credentials' });
+    }
+
+    if (!user.is_verified) {
+      return res.status(403).json({ message: 'Please verify your email to login' });
     }
 
 
@@ -726,8 +747,8 @@ exports.googleLogin = async (req, res) => {
 
       // 3️⃣ Insert user (no password for Google)
       const [newUser] = await sequelize.query(
-        `INSERT INTO users (uid,email,name,role,picture)
-         VALUES (:uid,:email,:name,:role,:picture)
+        `INSERT INTO users (uid,email,name,role,picture,is_verified)
+         VALUES (:uid,:email,:name,:role,:picture,true)
          RETURNING *`,
         {
           replacements: { uid, email, name, role, picture },
@@ -801,7 +822,7 @@ exports.googleLogin = async (req, res) => {
       }
     );
 
-    return res.json({
+    res.json({
       success: true,
       token: jwtToken,
       user: {
@@ -810,22 +831,112 @@ exports.googleLogin = async (req, res) => {
         email: user.email,
         name: user.name,
         role: user.role,
-        roles: userRoles
+        roles: userRoles,
       }
     });
 
   } catch (err) {
-    await transaction.rollback();
-    console.error("Google Login Error:", err);
-    return res.status(500).json({ error: err.message });
+    if (transaction) await transaction.rollback();
+    console.error(err);
+    res.status(500).json({ error: err.message });
+  }
+};
+
+exports.verifyEmail = async (req, res) => {
+  try {
+    const { email, code } = req.body;
+
+    if (!email || !code) {
+      return res.error("Email and code are required", 400);
+    }
+
+    const [user] = await sequelize.query(
+      `SELECT id, verification_code FROM users WHERE email = :email`,
+      {
+        replacements: { email },
+        type: QueryTypes.SELECT
+      }
+    );
+
+    if (!user) {
+      return res.error("User not found", 404);
+    }
+
+    if (user.verification_code !== code) {
+      return res.error("Invalid verification code", 400);
+    }
+
+    await sequelize.query(
+      `UPDATE users SET is_verified = true, verification_code = null WHERE id = :id`,
+      {
+        replacements: { id: user.id },
+        type: QueryTypes.UPDATE
+      }
+    );
+
+    return res.success(null, "Email verified successfully");
+  } catch (error) {
+    console.error("Error verifying email:", error);
+    return res.error("Verification failed", 500);
+  }
+};
+
+exports.resendVerificationEmail = async (req, res) => {
+  try {
+    const { email } = req.body;
+
+    if (!email) {
+      return res.error("Email is required", 400);
+    }
+
+    const [user] = await sequelize.query(
+      `SELECT id, name, is_verified FROM users WHERE email = :email`,
+      {
+        replacements: { email },
+        type: QueryTypes.SELECT
+      }
+    );
+
+    if (!user) {
+      return res.error("User not found", 404);
+    }
+
+    if (user.is_verified) {
+      return res.error("Email is already verified", 400);
+    }
+
+    const verificationCode = Math.floor(100000 + Math.random() * 900000).toString();
+
+    await sequelize.query(
+      `UPDATE users SET verification_code = :code WHERE id = :id`,
+      {
+        replacements: { code: verificationCode, id: user.id },
+        type: QueryTypes.UPDATE
+      }
+    );
+
+    await transporter.sendMail({
+      from: `"Curevan" <${process.env.MAIL_USER}>`,
+      to: email,
+      subject: "Verify your Email - Curevan",
+      html: `
+        <h2>Email Verification</h2>
+        <p>Hi ${user.name},</p>
+        <p>Your new verification code is: <strong>${verificationCode}</strong></p>
+        <p>Please enter this code to verify your account.</p>
+      `
+    });
+
+    return res.success(null, "Verification code sent to email");
+  } catch (error) {
+    console.error("Error resending verification code:", error);
+    return res.error("Failed to resend code", 500);
   }
 };
 // controllers/auth.controller.js
-
 exports.logout = async (req, res) => {
   try {
- 
-   res.clearCookie("token", {
+    res.clearCookie("token", {
       httpOnly: true,
       secure: false,         
       sameSite: "lax",     
