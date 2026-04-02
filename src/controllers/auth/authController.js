@@ -231,14 +231,12 @@ exports.login = async (req, res) => {
     expiresIn: process.env.JWT_EXPIRE || "1d"
   }
 );
-res.cookie("token", token, {
-      httpOnly: true,
-      secure: true,         
-      sameSite: "lax",     
-      domain: ".curevan.com", 
-      path: "/",
-      maxAge: 24 * 60 * 60 * 1000,
-    });
+ res.cookie("token", token, {
+    httpOnly: true,
+    secure: false, // localhost
+    sameSite: "lax",
+    maxAge: 24 * 60 * 60 * 1000,
+  });
   console.log("Login successful, token set in cookie", res);
 
     res.json({
@@ -908,10 +906,8 @@ exports.loginWithMobile = async (req, res) => {
 
       res.cookie("token", token, {
         httpOnly: true,
-        secure: true,         
-        sameSite: "lax",     
-        domain: ".curevan.com", 
-        path: "/",
+        secure: false, // set true in production with HTTPS
+        sameSite: "lax",
         maxAge: 24 * 60 * 60 * 1000,
       });
 

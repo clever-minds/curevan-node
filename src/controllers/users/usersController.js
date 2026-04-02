@@ -18,7 +18,7 @@ exports.listUsers = async (req, res) => {
     }
 
     const users = await sequelize.query(
-        `SELECT 
+      `SELECT 
     u.id,
     u.name,
     u.email,
@@ -34,11 +34,11 @@ exports.listUsers = async (req, res) => {
       GROUP BY u.id, u.name, u.email, u.role, u.status, u.created_at, u.updated_at
       ORDER BY u.id DESC;
       `,
-        {
-            replacements,
-            type: QueryTypes.SELECT,
-        }
-        );
+      {
+        replacements,
+        type: QueryTypes.SELECT,
+      }
+    );
 
 
     return res.success(users, "Users fetched successfully");
@@ -98,7 +98,7 @@ exports.getUserById = async (req, res) => {
     const { id } = req.params;
 
     const [user] = await sequelize.query(
-  `SELECT 
+      `SELECT 
       u.id,
       u.name,
       u.email,
@@ -112,11 +112,11 @@ exports.getUserById = async (req, res) => {
    LEFT JOIN roles r ON r.id = ur.role_id
    WHERE u.id = :id
    GROUP BY u.id, u.name, u.email, u.role, u.status, u.created_at, u.updated_at`,
-  {
-    replacements: { id },
-    type: QueryTypes.SELECT,
-  }
-);
+      {
+        replacements: { id },
+        type: QueryTypes.SELECT,
+      }
+    );
 
     if (!user) {
       return res.error("User not found");
@@ -373,7 +373,7 @@ exports.updateUserRoles = async (req, res) => {
 
     let finalRoles = roles;
 
-      if (!roles || roles.length === 0) {
+    if (!roles || roles.length === 0) {
       finalRoles = ["patient"];
     }
 
@@ -1040,6 +1040,46 @@ exports.getChangeRequestById = async (req, res) => {
     return res.error("Failed to fetch change request");
   }
 };
+
+// ✅ PUBLIC STATS
+exports.publicStats = async (req, res) => {
+  try {
+    const [usersResult] = await sequelize.query(`SELECT COUNT(*) as cnt FROM users`, { type: QueryTypes.SELECT });
+    const [therapistsResult] = await sequelize.query(`SELECT COUNT(*) as cnt FROM users WHERE role = 'therapist'`, { type: QueryTypes.SELECT });
+
+    let productsCnt = 0;
+    try {
+      const [productsResult] = await sequelize.query(`SELECT COUNT(*) as cnt FROM products`, { type: QueryTypes.SELECT });
+      productsCnt = Array.isArray(productsResult) ? (productsResult[0]?.cnt || 0) : (productsResult?.cnt || 0);
+    } catch (e) { }
+
+    let patientsCnt = 0;
+    try {
+      // Assuming appointments table has a status or we just count all of them for now
+      const [appointmentsResult] = await sequelize.query(`SELECT COUNT(*) as cnt FROM appointments`, { type: QueryTypes.SELECT });
+      patientsCnt = Array.isArray(appointmentsResult) ? (appointmentsResult[0]?.cnt || 0) : (appointmentsResult?.cnt || 0);
+    } catch (e) { }
+
+    let ordersCnt = 0;
+    try {
+      const [ordersResult] = await sequelize.query(`SELECT COUNT(*) as cnt FROM orders WHERE status = 'delivered' OR status = 'Delivered'`, { type: QueryTypes.SELECT });
+      ordersCnt = Array.isArray(ordersResult) ? (ordersResult[0]?.cnt || 0) : (ordersResult?.cnt || 0);
+    } catch (e) { }
+
+
+    return res.json({
+      usersTotal: parseInt(usersResult?.cnt || 0),
+      therapistsTotal: parseInt(therapistsResult?.cnt || 0),
+      productsTotal: parseInt(productsCnt),
+      patientsServedTotal: parseInt(patientsCnt),
+      productsDeliveredTotal: parseInt(ordersCnt)
+    });
+  } catch (error) {
+    console.error("Public Stats Error:", error);
+    return res.status(500).json({ error: "Failed to fetch stats" });
+  }
+};
+
 exports.listChangeRequests = async (req, res) => {
   try {
     const userId = Number(req.user?.id);
