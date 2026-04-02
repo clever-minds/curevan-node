@@ -12,18 +12,18 @@ router.post('/login', auth.login);
 router.get('/profile', authMiddleware, auth.getUserProfile);
 router.get('/me', authMiddleware, auth.getMe);
 router.post("/logout", auth.logout);
-router.post("/login-with-mobile",responseHandler, auth.loginWithMobile);
+router.post("/login-with-mobile", responseHandler, auth.loginWithMobile);
 router.post("/verify-email", responseHandler, auth.verifyEmail);
 router.post("/resend-verification", responseHandler, auth.resendVerificationEmail);
-router.post("/change-password",authMiddleware,responseHandler,auth.changePassword);
+router.post("/change-password", authMiddleware, responseHandler, auth.changePassword);
 
-router.post("/forgot-password",responseHandler,auth.forgotPassword);
+router.post("/forgot-password", responseHandler, auth.forgotPassword);
 
-router.post("/reset-password",responseHandler,auth.resetPassword);
+router.post("/reset-password", responseHandler, auth.resetPassword);
 
-router.put("/update-profile",authMiddleware,responseHandler,auth.updateUserProfile);
+router.put("/update-profile", authMiddleware, responseHandler, auth.updateUserProfile);
 
-router.post("/change-profile-request", authMiddleware,responseHandler,auth.createChangeRequest);
+router.post("/change-profile-request", authMiddleware, responseHandler, auth.createChangeRequest);
 
 router.get(
   '/google',
@@ -45,11 +45,11 @@ router.get(
       process.env.JWT_SECRET,
       { expiresIn: '1d' }
     );
-   res.cookie("token", token, {
+    res.cookie("token", token, {
       httpOnly: true,
-      secure: true,         
-      sameSite: "lax",     
-      domain: ".curevan.com", 
+      secure: true,
+      sameSite: "lax",
+      domain: ".curevan.com",
       path: "/",
       maxAge: 24 * 60 * 60 * 1000,
     });

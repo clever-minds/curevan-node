@@ -31,8 +31,8 @@ passport.use(
             const uid = uuidv4();
 
             const [newUser] = await sequelize.query(
-                `INSERT INTO users (uid, name, email, role)
-                VALUES (:uid, :name, :email, :role)
+                `INSERT INTO users (uid, name, email, role, is_verified)
+                VALUES (:uid, :name, :email, :role, true)
                 RETURNING id, uid, name, email, role`,
                 {
                 replacements: {
