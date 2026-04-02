@@ -303,7 +303,9 @@ exports.listProducts = async (req, res) => {
           i.on_hand AS "onHand",
           i.reserved,
           i.reorder_point,
-          m.file_path AS "featuredImage"
+          m.file_path AS "featuredImage",
+          (SELECT COALESCE(AVG(rating), 0) FROM reviews WHERE product_id = p.id) AS "averageRating",
+          (SELECT COUNT(*) FROM reviews WHERE product_id = p.id) AS "totalReviews"
       FROM products p
       LEFT JOIN categories c ON c.id = p.category_id
       LEFT JOIN inventory i ON i.product_id = p.id
@@ -332,6 +334,8 @@ exports.getProductById = async (req, res) => {
         p.*,
         i.on_hand,
         i.reorder_point,
+        (SELECT COALESCE(AVG(rating), 0) FROM reviews WHERE product_id = p.id) AS "averageRating",
+        (SELECT COUNT(*) FROM reviews WHERE product_id = p.id) AS "totalReviews",
 
         COALESCE(
           json_agg(
@@ -608,7 +612,9 @@ exports.getProduct = async (req, res) => {
         i.on_hand AS "onHand",
         i.reserved,
         i.reorder_point,
-        m.file_path AS "featuredImage"
+        m.file_path AS "featuredImage",
+        (SELECT COALESCE(AVG(rating), 0) FROM reviews WHERE product_id = p.id) AS "averageRating",
+        (SELECT COUNT(*) FROM reviews WHERE product_id = p.id) AS "totalReviews"
       FROM products p
       LEFT JOIN categories c ON c.id = p.category_id
       LEFT JOIN inventory i ON i.product_id = p.id
@@ -641,6 +647,8 @@ exports.getProductFrontendById = async (req, res) => {
         i.reserved,
         i.reorder_point,
         m.file_path AS "featuredImage",
+        (SELECT COALESCE(AVG(rating), 0) FROM reviews WHERE product_id = p.id) AS "averageRating",
+        (SELECT COUNT(*) FROM reviews WHERE product_id = p.id) AS "totalReviews",
         COALESCE(
           json_agg(
             DISTINCT jsonb_build_object(
@@ -696,6 +704,8 @@ exports.getProductsByIds = async (req, res) => {
         i.reserved,
         i.reorder_point,
         m.file_path AS "featuredImage",
+        (SELECT COALESCE(AVG(rating), 0) FROM reviews WHERE product_id = p.id) AS "averageRating",
+        (SELECT COUNT(*) FROM reviews WHERE product_id = p.id) AS "totalReviews",
         COALESCE(
           json_agg(
             DISTINCT jsonb_build_object(

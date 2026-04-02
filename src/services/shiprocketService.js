@@ -198,6 +198,33 @@ async function cancelShipment(shipmentId) {
   }
 }
 
+// ✅ 8. Create Return Order (Reverse Shipment)
+async function createReturnOrder(order) {
+  try {
+    const token = await getToken();
+
+    const res = await axios.post(
+      "https://apiv2.shiprocket.in/v1/external/orders/create/return",
+      order,
+      {
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+      }
+    );
+
+    console.log("✅ Shiprocket Return Order Created");
+
+    return res.data;
+  } catch (error) {
+    console.error(
+      "❌ Shiprocket Return Order Error:",
+      error.response?.data || error.message
+    );
+    throw new Error("Shiprocket return order creation failed");
+  }
+}
+
 module.exports = {
   getToken,
   createOrder,
@@ -206,4 +233,5 @@ module.exports = {
   generateManifest,
   trackShipment,
   cancelShipment,
+  createReturnOrder,
 };

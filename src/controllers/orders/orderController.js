@@ -1,5 +1,6 @@
 const { QueryTypes } = require("sequelize");
 const { sequelize } = require("../../config/db");
+const transporter = require("../../config/mailer");
 
 // exports.createOrderFromCart = async (req, res) => {
 //   const transaction = await sequelize.transaction();
@@ -1211,6 +1212,25 @@ exports.createOrderFromCart = async (req, res) => {
 
     await transaction.commit();
 
+    try {
+      if (req.user?.email) {
+        await transporter.sendMail({
+          from: `"Curevan Orders" <${process.env.MAIL_USER}>`,
+          to: req.user.email,
+          subject: `Order Confirmation - ${orderNumber}`,
+          html: `
+            <h3>Order Received!</h3>
+            <p>Hi ${req.user.name || 'Customer'},</p>
+            <p>Your order <strong>${orderNumber}</strong> has been placed successfully.</p>
+            <p><strong>Total Amount:</strong> ₹${total}</p>
+            <p>We will notify you once your order is shipped.</p>
+          `
+        });
+      }
+    } catch (mailErr) {
+      console.error("Failed to send order creation email:", mailErr);
+    }
+
     return res.json({
       success: true,
       message: "Order & Invoice created successfully with GST and Inventory updated",
@@ -1369,6 +1389,24 @@ exports.cancelOrder = async (req, res) => {
     );
 
     await transaction.commit();
+
+    try {
+      if (req.user?.email) {
+        await transporter.sendMail({
+          from: `"Curevan Orders" <${process.env.MAIL_USER}>`,
+          to: req.user.email,
+          subject: `Order Cancelled - #${orderId}`,
+          html: `
+            <h3>Order Cancelled</h3>
+            <p>Hi ${req.user.name || 'Customer'},</p>
+            <p>Your order #${orderId} has been cancelled successfully.</p>
+            <p>If you have any questions, please contact our support team.</p>
+          `
+        });
+      }
+    } catch (mailErr) {
+      console.error("Failed to send order cancel email:", mailErr);
+    }
 
     return res.json({
       success: true,

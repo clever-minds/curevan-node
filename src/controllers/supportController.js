@@ -1,5 +1,6 @@
 const { QueryTypes } = require("sequelize");
 const { sequelize } = require("../config/db");
+const transporter = require("../config/mailer");
 
 
 exports.createTicket = async (req, res) => {
@@ -34,6 +35,39 @@ exports.createTicket = async (req, res) => {
       }
     );
 
+    try {
+      const userEmail = req.user?.email;
+      const userName = req.user?.name || "Customer";
+      
+      if (userEmail) {
+        await transporter.sendMail({
+          from: `"Curevan Support" <${process.env.MAIL_USER}>`,
+          to: userEmail,
+          subject: `Support Ticket Created: ${subject || type}`,
+          html: `
+            <p>Hi ${userName},</p>
+            <p>We have received your support ticket regarding <strong>${type}</strong>.</p>
+            <p>Our team will look into this and get back to you soon.</p>
+            <p><strong>Message:</strong><br/>${message}</p>
+          `
+        });
+      }
+
+      await transporter.sendMail({
+        from: `"Curevan Support" <${process.env.MAIL_USER}>`,
+        to: process.env.MAIL_USER,
+        subject: `New Support Ticket from ${userName}`,
+        html: `
+          <p>A new support ticket has been created by ${userName} (${userEmail || 'N/A'}).</p>
+          <p><strong>Type:</strong> ${type}</p>
+          <p><strong>Subject:</strong> ${subject || 'N/A'}</p>
+          <p><strong>Message:</strong><br/>${message}</p>
+        `
+      });
+    } catch (mailErr) {
+      console.error("Failed to send ticket creation emails:", mailErr);
+    }
+
     return res.success(ticket[0], "Ticket created successfully");
 
   } catch (error) {
@@ -50,7 +84,7 @@ exports.getTickets = async (req, res) => {
     console.log("Get tickets for user roles:", roles);
 
     // Check if user is super admin or admin.super
-    const isAdmin =roles.includes("admin.super");
+    const isAdmin = roles.includes("admin.super");
 
     // Fetch tickets: all if admin, else only user's tickets
     const tickets = await sequelize.query(
@@ -127,6 +161,50 @@ exports.replyTicket = async (req, res) => {
       }
     );
 
+    try {
+      const [ticketInfo] = await sequelize.query(
+        `SELECT t.user_id, u.email as user_email, u.name as user_name 
+         FROM tickets t 
+         JOIN users u ON u.id = t.user_id 
+         WHERE t.id = :ticket_id`,
+        { 
+          replacements: { ticket_id }, 
+          type: QueryTypes.SELECT 
+        }
+      );
+
+      if (ticketInfo) {
+        const isUserReplying = (ticketInfo.user_id === userId);
+        
+        if (isUserReplying) {
+          await transporter.sendMail({
+            from: `"Curevan Support" <${process.env.MAIL_USER}>`,
+            to: process.env.MAIL_USER,
+            subject: `New Reply on Ticket #${ticket_id} from ${ticketInfo.user_name}`,
+            html: `
+              <p>User ${ticketInfo.user_name} has replied to Ticket #${ticket_id}.</p>
+              <p><strong>Message:</strong><br/>${message}</p>
+            `
+          });
+        } else {
+          if (ticketInfo.user_email) {
+            await transporter.sendMail({
+              from: `"Curevan Support" <${process.env.MAIL_USER}>`,
+              to: ticketInfo.user_email,
+              subject: `Update on your Support Ticket #${ticket_id}`,
+              html: `
+                <p>Hi ${ticketInfo.user_name},</p>
+                <p>An admin has replied to your support ticket:</p>
+                <p><strong>Message:</strong><br/>${message}</p>
+              `
+            });
+          }
+        }
+      }
+    } catch (mailErr) {
+      console.error("Failed to send ticket reply emails:", mailErr);
+    }
+
     return res.success(null, "Reply added");
 
   } catch (error) {
@@ -150,10 +228,68 @@ exports.closeTicket = async (req, res) => {
       }
     );
 
+    try {
+      const [ticketInfo] = await sequelize.query(
+        `SELECT u.email as user_email, u.name as user_name 
+         FROM tickets t 
+         JOIN users u ON u.id = t.user_id 
+         WHERE t.id = :id`,
+        { 
+          replacements: { id }, 
+          type: QueryTypes.SELECT 
+        }
+      );
+
+      if (ticketInfo && ticketInfo.user_email) {
+        await transporter.sendMail({
+          from: `"Curevan Support" <${process.env.MAIL_USER}>`,
+          to: ticketInfo.user_email,
+          subject: `Your Support Ticket #${id} has been closed`,
+          html: `
+            <p>Hi ${ticketInfo.user_name},</p>
+            <p>Your support ticket #${id} has been marked as closed.</p>
+            <p>If you need further assistance, please open a new ticket or reply to this email.</p>
+          `
+        });
+      }
+    } catch (mailErr) {
+      console.error("Failed to send ticket close email:", mailErr);
+    }
+
     return res.success(null, "Ticket closed");
 
   } catch (error) {
     console.error(error);
     return res.error("Failed to close ticket");
+  }
+};
+
+exports.contactUs = async (req, res) => {
+  try {
+    const { name, email, phone, subject, message } = req.body;
+
+    if (!name || !email || !message) {
+      return res.error("Name, email and message are required", 400);
+    }
+
+    await transporter.sendMail({
+      from: `"Curevan Contact" <${email}>`,
+      to: process.env.MAIL_USER, // Send to site admin
+      replyTo: email,
+      subject: `New Contact Request: ${subject || "No Subject"}`,
+      html: `
+        <h3>New Contact Us Message</h3>
+        <p><strong>Name:</strong> ${name}</p>
+        <p><strong>Email:</strong> ${email}</p>
+        <p><strong>Phone:</strong> ${phone || "N/A"}</p>
+        <p><strong>Message:</strong></p>
+        <p>${message}</p>
+      `
+    });
+
+    return res.success(null, "Message sent successfully");
+  } catch (error) {
+    console.error("Contact Us error:", error);
+    return res.error("Failed to send message", 500);
   }
 };

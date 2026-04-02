@@ -10,15 +10,15 @@ const {
 ========================= */
 exports.createShipment = async (req, res) => {
   const t = await sequelize.transaction();
-  const { orderId, actorId } = req.body;
+  const { orderId, actorId, billing_address, shipping_address } = req.body;
 
   try {
-    // 1️⃣ Get Order with Billing & Shipping Address
+    // 1️⃣ Get Order with existing linked addresses
     const [orderResult] = await sequelize.query(
       `SELECT 
           o.*, 
-          ba.full_name AS billing_name, ba.email AS billing_email, ba.phone AS billing_phone, ba.full_address AS billing_address, ba.city AS billing_city, ba.state AS billing_state, ba.pincode AS billing_pincode,
-          sa.full_name AS shipping_name, sa.email AS shipping_email, sa.phone AS shipping_phone, sa.full_address AS shipping_address, sa.city AS shipping_city, sa.state AS shipping_state, sa.pincode AS shipping_pincode
+          ba.full_name AS billing_name, ba.email AS billing_email, ba.phone AS billing_phone, ba.full_address AS billing_address_text, ba.city AS billing_city, ba.state AS billing_state, ba.pincode AS billing_pincode,
+          sa.full_name AS shipping_name, sa.email AS shipping_email, sa.phone AS shipping_phone, sa.full_address AS shipping_address_text, sa.city AS shipping_city, sa.state AS shipping_state, sa.pincode AS shipping_pincode
        FROM orders o
        LEFT JOIN order_addresses ba ON o.billing_address_id = ba.id
        LEFT JOIN order_addresses sa ON o.shipping_address_id = sa.id
@@ -37,75 +37,77 @@ exports.createShipment = async (req, res) => {
       return res.status(400).json({ success: false, message: `Order already ${order.status}` });
     }
 
-    // 2️⃣ Validate addresses
-    if (!order.billing_address_id) {
-      await t.rollback();
-      return res.status(400).json({ success: false, message: "Please add billing address first" });
-    }
-
-    // If shipping address missing, fallback to billing
-    const shippingAddress = order.shipping_address_id ? {
-      name: order.shipping_name,
-      address: order.shipping_address,
-      city: order.shipping_city,
-      state: order.shipping_state,
-      pincode: order.shipping_pincode,
-      email: order.shipping_email,
-      phone: order.shipping_phone
-    } : {
-      name: order.billing_name,
-      address: order.billing_address,
-      city: order.billing_city,
-      state: order.billing_state,
-      pincode: order.billing_pincode,
-      email: order.billing_email,
-      phone: order.billing_phone
+    // 2️⃣ Resolve Billing Address
+    const finalBilling = {
+      name: order.billing_name || billing_address?.full_name,
+      email: order.billing_email || billing_address?.email,
+      phone: order.billing_phone || billing_address?.phone,
+      address: order.billing_address_text || billing_address?.full_address,
+      city: order.billing_city || billing_address?.city,
+      state: order.billing_state || billing_address?.state,
+      pincode: order.billing_pincode || billing_address?.pincode
     };
 
-    // 3️⃣ Prepare Shiprocket Payload
+    if (!finalBilling.name || !finalBilling.address || !finalBilling.pincode) {
+      await t.rollback();
+      return res.status(400).json({ success: false, message: "Billing address is required (not found in DB or Request)" });
+    }
+
+    // 3️⃣ Resolve Shipping Address
+    const finalShipping = {
+      name: order.shipping_name || shipping_address?.full_name || finalBilling.name,
+      email: order.shipping_email || shipping_address?.email || finalBilling.email,
+      phone: order.shipping_phone || shipping_address?.phone || finalBilling.phone,
+      address: order.shipping_address_text || shipping_address?.full_address || finalBilling.address,
+      city: order.shipping_city || shipping_address?.city || finalBilling.city,
+      state: order.shipping_state || shipping_address?.state || finalBilling.state,
+      pincode: order.shipping_pincode || shipping_address?.pincode || finalBilling.pincode
+    };
+
+    // 4️⃣ Prepare Shiprocket Payload
     const orderItems = await getOrderItemsForShiprocket(order.id);
 
     const shiprocketPayload = {
-  order_id: order.id.toString(),
-  order_date: new Date().toISOString(),
-  pickup_location: "Default Pickup", // must match dashboard exactly
-  billing_customer_name: order.billing_name,
-  billing_address: order.billing_address,
-  billing_city: order.billing_city,
-  billing_state: order.billing_state,
-  billing_country: "IN",
-  billing_pincode: order.billing_pincode.toString(),
-  billing_email: order.billing_email,
-  billing_phone: order.billing_phone.toString(),
-  shipping_is_billing: false,
-  shipping_customer_name: order.shipping_name,
-  shipping_address: order.shipping_address,
-  shipping_city: order.shipping_city,
-  shipping_state: order.shipping_state,
-  shipping_country: "IN",
-  shipping_pincode: order.shipping_pincode.toString(),
-  shipping_email: order.shipping_email,
-  shipping_phone: order.shipping_phone.toString(),
-  order_items: orderItems.map(i => ({
-    name: i.name,
-    sku: i.sku,
-    units: i.units,
-    selling_price: Number(i.selling_price), // Number type
-    discount: 0,
-    tax: 0
-  })),
-  payment_method: "Prepaid",
-  order_amount: Number(order.total_amount),
-  shipping_charges: 0,
-  giftwrap_charges: 0,
-  transaction_charges: 0,
-  total_discount: 0,
-  sub_total: Number(order.total_amount),
-  length: 10,
-  breadth: 15,
-  height: 20,
-  weight: 2.5
-};
+      order_id: order.id.toString(),
+      order_date: new Date().toISOString(),
+      pickup_location: "Default Pickup",
+      billing_customer_name: finalBilling.name,
+      billing_address: finalBilling.address,
+      billing_city: finalBilling.city,
+      billing_state: finalBilling.state,
+      billing_country: "IN",
+      billing_pincode: finalBilling.pincode.toString(),
+      billing_email: finalBilling.email,
+      billing_phone: finalBilling.phone.toString(),
+      shipping_is_billing: false,
+      shipping_customer_name: finalShipping.name,
+      shipping_address: finalShipping.address,
+      shipping_city: finalShipping.city,
+      shipping_state: finalShipping.state,
+      shipping_country: "IN",
+      shipping_pincode: finalShipping.pincode.toString(),
+      shipping_email: finalShipping.email,
+      shipping_phone: finalShipping.phone.toString(),
+      order_items: orderItems.map(i => ({
+        name: i.name,
+        sku: i.sku,
+        units: i.units,
+        selling_price: Number(i.selling_price),
+        discount: 0,
+        tax: 0
+      })),
+      payment_method: "Prepaid",
+      order_amount: Number(order.total), // Corrected to use order.total
+      shipping_charges: 0,
+      giftwrap_charges: 0,
+      transaction_charges: 0,
+      total_discount: 0,
+      sub_total: Number(order.total),
+      length: 10,
+      breadth: 15,
+      height: 20,
+      weight: 2.5
+    };
 
     // 4️⃣ Call Shiprocket API
     const shiprocketOrder = await createOrder(shiprocketPayload);

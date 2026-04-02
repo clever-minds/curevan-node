@@ -42,6 +42,8 @@ app.use('/api/general', require('./routes/general.routes'));
 app.use('/api/support', require('./routes/support.routes'));
 app.use('/api/shipment', require('./routes/shipment.routes'));
 app.use('/api/stats', require('./routes/stats.routes'));
+app.use('/api/reviews', require('./routes/review.routes'));
+
 
 app.get("/", (req, res) => {
   res.send("API running successfully");

@@ -1,5 +1,6 @@
 const { QueryTypes } = require("sequelize");
 const { sequelize } = require("../../config/db");
+const transporter = require("../../config/mailer");
 
 // ✅ LIST APPOINTMENTS
 exports.listAppointments = async (req, res) => {
@@ -274,6 +275,37 @@ exports.createBookingAndInvoice = async (req, res) => {
     // ✅ Commit transaction
     // --------------------------
     await t.commit();
+
+    try {
+      // Send Booking Confirmation Email
+      const [patient] = await sequelize.query(
+        `SELECT email FROM users WHERE id = :patientId`,
+        { replacements: { patientId: bookingData.patientId }, type: QueryTypes.SELECT }
+      );
+
+      if (patient?.email) {
+        await transporter.sendMail({
+          from: `"Curevan Appointments" <${process.env.MAIL_USER}>`,
+          to: patient.email,
+          subject: "Your Appointment is Booked",
+          html: `
+            <h3>Booking Confirmation</h3>
+            <p>Hi ${bookingData.patientName},</p>
+            <p>Your appointment has been successfully booked.</p>
+            <ul>
+              <li><strong>Date:</strong> ${bookingData.date}</li>
+              <li><strong>Time:</strong> ${bookingData.time}</li>
+              <li><strong>Therapist:</strong> ${bookingData.therapist}</li>
+              <li><strong>Service:</strong> ${bookingData.therapyType}</li>
+              <li><strong>Total Amount:</strong> ₹${bookingData.totalAmount}</li>
+            </ul>
+            <p>Thank you for choosing Curevan.</p>
+          `
+        });
+      }
+    } catch (mailErr) {
+      console.error("Failed to send booking email:", mailErr);
+    }
 
     return res.json({ success: true, appointmentId, invoiceId });
 
@@ -736,6 +768,36 @@ exports.updatePcr = async (req, res) => {
 
     // 7️⃣ Commit transaction
     await t.commit();
+
+    // 8️⃣ Send Status Update Email (if status changed)
+    try {
+      if (normalizedStatus && normalizedStatus !== existing.status) {
+        const [apptInfo] = await sequelize.query(
+          `SELECT u.email, u.name as user_name 
+           FROM appointments a 
+           JOIN users u ON u.id = a.patient_id 
+           WHERE a.id = :appointmentId`,
+          { replacements: { appointmentId }, type: QueryTypes.SELECT }
+        );
+
+        if (apptInfo?.email) {
+          await transporter.sendMail({
+            from: `"Curevan Support" <${process.env.MAIL_USER}>`,
+            to: apptInfo.email,
+            subject: `Your Appointment Status is now: ${normalizedStatus}`,
+            html: `
+              <h3>Appointment Update</h3>
+              <p>Hi ${apptInfo.user_name},</p>
+              <p>The status of your appointment has been updated to <strong>${normalizedStatus}</strong>.</p>
+              <p>Sign in to your dashboard to view more details.</p>
+            `
+          });
+        }
+      }
+    } catch (mailErr) {
+      console.error("Failed to send appt status update email:", mailErr);
+    }
+
     return res.status(200).json({ success: true, message: "PCR updated successfully" });
 
   } catch (error) {

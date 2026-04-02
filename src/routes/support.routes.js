@@ -15,4 +15,6 @@ router.post("/tickets/reply", authMiddleware, responseHandler, support.replyTick
 
 router.post("/tickets/:id/close", authMiddleware, responseHandler, support.closeTicket);
 
+router.post("/contact-us", responseHandler, support.contactUs);
+
 module.exports = router;
