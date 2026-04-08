@@ -568,7 +568,25 @@ exports.deleteProduct = async (req, res) => {
   try {
     const { id } = req.params;
 
-    // inventory delete
+    // 1️⃣ Delete from cart
+    await sequelize.query(
+      `DELETE FROM cart WHERE product_id = :id`,
+      {
+        replacements: { id },
+        transaction
+      }
+    );
+
+    // 2️⃣ Delete from reviews (optional, but prevents FK error)
+    await sequelize.query(
+      `DELETE FROM reviews WHERE product_id = :id`,
+      {
+        replacements: { id },
+        transaction
+      }
+    );
+
+    // 3️⃣ Delete from inventory
     await sequelize.query(
       `DELETE FROM inventory WHERE product_id = :id`,
       {
@@ -577,7 +595,7 @@ exports.deleteProduct = async (req, res) => {
       }
     );
 
-    // product delete
+    // 4️⃣ Delete product
     const result = await sequelize.query(
       `DELETE FROM products WHERE id = :id`,
       {
@@ -587,7 +605,7 @@ exports.deleteProduct = async (req, res) => {
       }
     );
 
-    // result = number of affected rows
+    // If result = 0 (Postgres DELETE returns count)
     if (result === 0) {
       await transaction.rollback();
       return res.status(404).json({ message: "Product not found" });
@@ -598,6 +616,14 @@ exports.deleteProduct = async (req, res) => {
 
   } catch (error) {
     await transaction.rollback();
+
+    // 5️⃣ Handle ForeignKeyConstraintError (e.g. still in orders)
+    if (error.name === 'SequelizeForeignKeyConstraintError' || error.parent?.code === '23503') {
+      return res.status(409).json({
+        message: "Cannot delete product because it is being referenced by other records (e.g. orders, shipments)."
+      });
+    }
+
     console.error(error);
     res.status(500).json({ message: "Failed to delete product" });
   }
