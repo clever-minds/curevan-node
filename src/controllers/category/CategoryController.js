@@ -4,10 +4,10 @@ const { sequelize } = require('../../config/db');
 exports.listCategories = async (req, res) => {
   try {
     const categories = await sequelize.query(
-      `SELECT c.id, c.slug, c.name, c.description, c.image AS "image_id", c.is_active AS "isActive",
-              m.file_path AS "image"
+      `SELECT c.id, c.slug, c.name, c.description, (CASE WHEN c.image ~ '^[0-9]+$' THEN c.image ELSE NULL END) AS "image_id", c.is_active AS "isActive",
+              COALESCE(m.file_path, c.image) AS "image"
        FROM categories c
-       LEFT JOIN media m ON m.id = CAST(NULLIF(c.image, '') AS INTEGER)
+       LEFT JOIN media m ON m.id = (CASE WHEN c.image ~ '^[0-9]+$' THEN CAST(c.image AS INTEGER) ELSE NULL END)
        ORDER BY c.id DESC`,
       { type: QueryTypes.SELECT }
     );
@@ -180,10 +180,10 @@ exports.deleteCategory = async (req, res) => {
 exports.getAllCategories = async (req, res) => {
   try {
     const categories = await sequelize.query(
-      `SELECT c.id, c.slug, c.name, c.description, c.image AS "image_id", c.is_active AS "isActive",
-              m.file_path AS "image"
+      `SELECT c.id, c.slug, c.name, c.description, (CASE WHEN c.image ~ '^[0-9]+$' THEN c.image ELSE NULL END) AS "image_id", c.is_active AS "isActive",
+              COALESCE(m.file_path, c.image) AS "image"
        FROM categories c
-       LEFT JOIN media m ON m.id = CAST(NULLIF(c.image, '') AS INTEGER)
+       LEFT JOIN media m ON m.id = (CASE WHEN c.image ~ '^[0-9]+$' THEN CAST(c.image AS INTEGER) ELSE NULL END)
        ORDER BY c.id DESC`,
       { type: QueryTypes.SELECT }
     );
