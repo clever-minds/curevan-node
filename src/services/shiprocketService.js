@@ -226,6 +226,23 @@ async function createReturnOrder(order) {
   }
 }
 
+// ✅ 9. Get Pickup Locations
+async function getPickupLocations() {
+  try {
+    const token = await getToken();
+    const res = await axios.get(
+      "https://apiv2.shiprocket.in/v1/external/settings/get/pickup",
+      {
+        headers: { Authorization: `Bearer ${token}` },
+      }
+    );
+    return res.data;
+  } catch (error) {
+    console.error("❌ Pickup Locations Error:", error.response?.data || error.message);
+    throw new Error("Failed to fetch pickup locations");
+  }
+}
+
 module.exports = {
   getToken,
   createOrder,
@@ -235,4 +252,5 @@ module.exports = {
   trackShipment,
   cancelShipment,
   createReturnOrder,
+  getPickupLocations,
 };

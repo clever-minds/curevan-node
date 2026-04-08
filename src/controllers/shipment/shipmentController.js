@@ -70,7 +70,7 @@ exports.createShipment = async (req, res) => {
     const shiprocketPayload = {
       order_id: order.id.toString(),
       order_date: new Date().toISOString(),
-      pickup_location: "Default Pickup",
+      pickup_location: process.env.SHIPROCKET_PICKUP_LOCATION || "Primary",
       billing_customer_name: finalBilling.name.split(" ")[0] || "Customer",
       billing_last_name: finalBilling.name.split(" ").slice(1).join(" ") || ".",
       billing_address: finalBilling.address,
@@ -191,8 +191,8 @@ exports.createShipment = async (req, res) => {
 
   } catch (error) {
     await t.rollback();
-    console.error("❌ Shipment Error:", error.response?.data || error.message);
-    return res.status(500).json({ success: false, message: "Shipment failed", error: error.message });
+    console.error("❌ Shipment Error Details:", JSON.stringify(error.response?.data, null, 2) || error.message);
+    return res.status(500).json({ success: false, message: "Shipment failed", error: error.message, details: error.response?.data });
   }
 };
 
