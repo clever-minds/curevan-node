@@ -893,7 +893,8 @@ exports.createOrderFromCart = async (req, res) => {
          p.mrp,
          p.sku,
          p.hsn_code,
-         p.gst_slab
+         p.gst_slab,
+         p.is_tax_inclusive
        FROM cart c
        JOIN products p ON c.product_id = p.id
        WHERE c.user_id = :userId`,
@@ -977,12 +978,24 @@ exports.createOrderFromCart = async (req, res) => {
     let taxableValue = 0;
 
     cartItems.forEach(item => {
-      const itemTotal = item.selling_price * item.quantity;
-      subtotal += itemTotal;
+      const gstRate = (item.gst_slab || 0) / 100;
+      let itemTaxable = 0;
+      let itemTax = 0;
+      let itemTotalWithTax = 0;
 
-      const itemTaxable = itemTotal / (1 + ((item.gst_slab || 0) / 100));
-      const itemTax = itemTotal - itemTaxable;
+      if (item.is_tax_inclusive) {
+        // Price already includes GST
+        itemTotalWithTax = item.selling_price * item.quantity;
+        itemTaxable = itemTotalWithTax / (1 + gstRate);
+        itemTax = itemTotalWithTax - itemTaxable;
+      } else {
+        // Price is base price, add GST on top
+        itemTaxable = item.selling_price * item.quantity;
+        itemTax = itemTaxable * gstRate;
+        itemTotalWithTax = itemTaxable + itemTax;
+      }
 
+      subtotal += itemTotalWithTax;
       taxableValue += itemTaxable;
       totalTax += itemTax;
 
@@ -998,7 +1011,9 @@ exports.createOrderFromCart = async (req, res) => {
     let appliedCouponDiscount = 0;
     if (coupon_code) appliedCouponDiscount = coupon_discount || 0;
 
-    const finalTaxableValue = subtotal - appliedCouponDiscount;
+    // Subtotal in response usually means the sum of prices (tax-inclusive or exclusive depending on context)
+    // Here we'll stick to taxableValue as the base for discount.
+    const finalTaxableValue = taxableValue - appliedCouponDiscount;
     const total = finalTaxableValue + totalTax;
     const totalInPaise = Math.round(total * 100);
 

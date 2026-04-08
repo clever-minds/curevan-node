@@ -111,6 +111,17 @@ exports.addProduct = async (req, res) => {
 
   try {
     // 1️⃣ Destructure body with defaults
+    const toLocalDbDate = (dateStr) => {
+      if (!dateStr) return null;
+      if (dateStr.includes('T')) {
+        // If ISO string, adjust for +05:30 (IST) manually to get the correct date
+        const date = new Date(dateStr);
+        const offsetDate = new Date(date.getTime() + (5.5 * 60 * 60 * 1000));
+        return offsetDate.toISOString().split('T')[0];
+      }
+      return dateStr; // Already YYYY-MM-DD
+    };
+
     const {
       productType = null,
       title,
@@ -206,8 +217,8 @@ exports.addProduct = async (req, res) => {
           packer,
           importer,
           batch_number,
-          manufacturing_date: manufacturing_date || null,
-          expiry_date: expiry_date || null,
+          manufacturing_date: toLocalDbDate(manufacturing_date),
+          expiry_date: toLocalDbDate(expiry_date),
           tags: tagsJSON,
           imageIds: imageIdsArray
         },
@@ -386,6 +397,16 @@ exports.updateProduct = async (req, res) => {
   try {
     const { id } = req.params;
 
+    const toLocalDbDate = (dateStr) => {
+      if (!dateStr) return null;
+      if (dateStr.includes('T')) {
+        const date = new Date(dateStr);
+        const offsetDate = new Date(date.getTime() + (5.5 * 60 * 60 * 1000));
+        return offsetDate.toISOString().split('T')[0];
+      }
+      return dateStr;
+    };
+
     const {
       productType,
       title,
@@ -496,8 +517,8 @@ exports.updateProduct = async (req, res) => {
       packer,
       importer,
       batch_number,
-      manufacturing_date: manufacturing_date || null,
-      expiry_date: expiry_date || null,
+      manufacturing_date: toLocalDbDate(manufacturing_date),
+      expiry_date: toLocalDbDate(expiry_date),
       tags: tagsJSON
     };
 
