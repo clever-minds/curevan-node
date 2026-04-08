@@ -69,6 +69,7 @@ async function generateAWB(shipmentId) {
   try {
     const token = await getToken();
 
+    console.log("🚚 Generating AWB for Shipment ID:", shipmentId);
     const res = await axios.post(
       "https://apiv2.shiprocket.in/v1/external/courier/assign/awb",
       {

@@ -113,7 +113,15 @@ exports.createShipment = async (req, res) => {
 
     // 4️⃣ Call Shiprocket API
     const shiprocketOrder = await createOrder(shiprocketPayload);
+    
+    // Shiprocket adhoc creation usually returns shipment_id directly in the response
     const shipmentId = shiprocketOrder.shipment_id || shiprocketOrder.order_id;
+
+    if (!shipmentId) {
+      console.error("❌ Shiprocket Response Error: No shipment_id or order_id found.", shiprocketOrder);
+      await t.rollback();
+      return res.status(400).json({ success: false, message: "Shiprocket failed to return a shipment ID", details: shiprocketOrder });
+    }
 
     // 5️⃣ Generate AWB
     const awbData = await generateAWB(shipmentId);
