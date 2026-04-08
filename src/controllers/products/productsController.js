@@ -206,8 +206,8 @@ exports.addProduct = async (req, res) => {
           packer,
           importer,
           batch_number,
-          manufacturing_date,
-          expiry_date,
+          manufacturing_date: manufacturing_date || null,
+          expiry_date: expiry_date || null,
           tags: tagsJSON,
           imageIds: imageIdsArray
         },
@@ -496,8 +496,8 @@ exports.updateProduct = async (req, res) => {
       packer,
       importer,
       batch_number,
-      manufacturing_date,
-      expiry_date,
+      manufacturing_date: manufacturing_date || null,
+      expiry_date: expiry_date || null,
       tags: tagsJSON
     };
 

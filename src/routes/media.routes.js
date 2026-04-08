@@ -10,7 +10,7 @@ router.get("/list",authMiddleware, media.listMedia);
 /* UPLOAD (MULTIPLE) */
 router.post(
   "/upload",authMiddleware,
-  upload.array("files[]"),
+  upload.any(),
   media.uploadMedia
 );
 
