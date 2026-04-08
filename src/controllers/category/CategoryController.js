@@ -31,7 +31,7 @@ function slugify(text) {
 // ✅ ADD CATEGORY
 exports.addCategory = async (req, res) => {
   try {
-    const { name, description, image_url, is_active } = req.body;
+    const { name, description, image_id, status } = req.body;
 
     if (!name) {
       return res.status(400).json({ message: 'Category name is required' });
@@ -63,14 +63,22 @@ exports.addCategory = async (req, res) => {
           slug,
           name,
           description: description || null,
-          image: image_url || null,
-          is_active: is_active ?? true
+          image: image_id || null,
+          is_active: status ?? true
         },
         type: QueryTypes.INSERT
       }
     );
 
-    res.status(201).json(result[0][0]);
+    const row = result[0][0];
+    res.status(201).json({
+      id: row.id,
+      slug: row.slug,
+      name: row.name,
+      description: row.description,
+      image_id: row.image,
+      status: row.is_active
+    });
 
   } catch (error) {
     console.error(error);
@@ -85,14 +93,14 @@ exports.addCategory = async (req, res) => {
 exports.editCategory = async (req, res) => {
   try {
     const { id } = req.params;
-    let { name, description, image, is_active } = req.body;
+    let { name, description, image_id, status } = req.body;
 
     if (!name) {
       return res.status(400).json({ message: 'Category name is required' });
     }
 
-    if (typeof is_active !== 'boolean') {
-      is_active = true;
+    if (typeof status !== 'boolean') {
+      status = true;
     }
 
     const slug = slugify(name);
@@ -113,7 +121,6 @@ exports.editCategory = async (req, res) => {
       });
     }
 
-    /* 🔄 Step 2: Update */
     const [result] = await sequelize.query(
       `UPDATE categories
        SET name = :name,
@@ -121,25 +128,37 @@ exports.editCategory = async (req, res) => {
            description = :description,
            image = :image,
            is_active = :is_active
-       WHERE id = :id`,
+       WHERE id = :id
+       RETURNING *`,
       {
         replacements: {
           id,
           name,
           slug,
           description,
-          image,
-          is_active,
+          image: image_id,
+          is_active: status,
         },
         type: QueryTypes.UPDATE,
       }
     );
 
-    if (!result) {
+    if (!result || result.length === 0) {
       return res.status(404).json({ message: 'Category not found' });
     }
 
-    res.json({ success: true });
+    const row = result[0];
+    res.json({
+      success: true,
+      data: {
+        id: row.id,
+        slug: row.slug,
+        name: row.name,
+        description: row.description,
+        image_id: row.image,
+        status: row.is_active
+      }
+    });
   } catch (error) {
     console.error(error);
     res.status(500).json({ message: 'Failed to update category' });
