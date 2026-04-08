@@ -114,8 +114,11 @@ exports.createShipment = async (req, res) => {
     // 4️⃣ Call Shiprocket API
     const shiprocketOrder = await createOrder(shiprocketPayload);
     
-    // Shiprocket adhoc creation usually returns shipment_id directly in the response
-    const shipmentId = shiprocketOrder.shipment_id || shiprocketOrder.order_id;
+    // Shiprocket adhoc creation usually returns shipment_id directly in the response 
+    // but sometimes it might be nested in a 'response' object.
+    const shipmentId = shiprocketOrder.shipment_id || shiprocketOrder.response?.shipment_id || shiprocketOrder.order_id || shiprocketOrder.response?.order_id;
+
+    console.log(`📦 Shiprocket ID Captured: ${shipmentId} (Type: ${typeof shipmentId})`);
 
     if (!shipmentId) {
       console.error("❌ Shiprocket Response Error: No shipment_id or order_id found.", shiprocketOrder);
