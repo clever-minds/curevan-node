@@ -18,7 +18,8 @@ app.use(cors({
     "https://curevan-dev.vercel.app/",
     "https://curevan-dev.vercel.app/",
     "http://192.168.29.237:3000",
-    "https://api.curevan.com"
+    "https://api.curevan.com",
+    "http://192.168.29.207:3000"
   ],
   credentials: true
 }));

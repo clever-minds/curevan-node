@@ -40,7 +40,7 @@ exports.requestReturn = async (req, res) => {
        VALUES (:orderId, :userId, :reason, 'Requested')
        RETURNING id`,
       {
-        replacements: { orderId, userId, reason },
+        replacements: { orderId, userId, reason: reason || null },
         type: QueryTypes.INSERT,
         transaction: t
       }

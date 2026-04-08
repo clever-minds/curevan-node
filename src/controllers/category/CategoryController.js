@@ -4,10 +4,11 @@ const { sequelize } = require('../../config/db');
 exports.listCategories = async (req, res) => {
   try {
     const categories = await sequelize.query(
-      `SELECT id, slug, name, description, image,is_active AS "isActive"
-
-       FROM categories
-       ORDER BY id DESC`,
+      `SELECT c.id, c.slug, c.name, c.description, c.image AS "image_id", c.is_active AS "isActive",
+              m.file_path AS "image"
+       FROM categories c
+       LEFT JOIN media m ON m.id = CAST(NULLIF(c.image, '') AS INTEGER)
+       ORDER BY c.id DESC`,
       { type: QueryTypes.SELECT }
     );
 
@@ -27,17 +28,6 @@ function slugify(text) {
     .replace(/-+/g, '-');
 }
 
-
-function slugify(text) {
-  return text
-    .toString()
-    .toLowerCase()
-    .trim()
-    .replace(/[^a-z0-9\s-]/g, '')
-    .replace(/\s+/g, '-')
-    .replace(/-+/g, '-');
-}
-
 // ✅ ADD CATEGORY
 exports.addCategory = async (req, res) => {
   try {
@@ -47,7 +37,22 @@ exports.addCategory = async (req, res) => {
       return res.status(400).json({ message: 'Category name is required' });
     }
 
-    const slug = slugify(name); // 👈 YAHAN USE
+    const slug = slugify(name);
+
+    /* 🔍 Check duplicate slug */
+    const [existing] = await sequelize.query(
+      `SELECT id FROM categories WHERE slug = :slug`,
+      {
+        replacements: { slug },
+        type: QueryTypes.SELECT,
+      }
+    );
+
+    if (existing) {
+      return res.status(409).json({
+        message: 'Category with this name/slug already exists',
+      });
+    }
 
     const result = await sequelize.query(
       `INSERT INTO categories (slug, name, description, image, is_active)
@@ -82,16 +87,22 @@ exports.editCategory = async (req, res) => {
     const { id } = req.params;
     let { name, description, image, is_active } = req.body;
 
+    if (!name) {
+      return res.status(400).json({ message: 'Category name is required' });
+    }
+
     if (typeof is_active !== 'boolean') {
       is_active = true;
     }
 
-    /* 🔍 Step 1: Check duplicate name (except current id) */
+    const slug = slugify(name);
+
+    /* 🔍 Step 1: Check duplicate slug (except current id) */
     const [existing] = await sequelize.query(
       `SELECT id FROM categories 
-       WHERE LOWER(name) = LOWER(:name) AND id != :id`,
+       WHERE slug = :slug AND id != :id`,
       {
-        replacements: { name, id },
+        replacements: { slug, id },
         type: QueryTypes.SELECT,
       }
     );
@@ -106,6 +117,7 @@ exports.editCategory = async (req, res) => {
     const [result] = await sequelize.query(
       `UPDATE categories
        SET name = :name,
+           slug = :slug,
            description = :description,
            image = :image,
            is_active = :is_active
@@ -114,6 +126,7 @@ exports.editCategory = async (req, res) => {
         replacements: {
           id,
           name,
+          slug,
           description,
           image,
           is_active,
@@ -167,10 +180,11 @@ exports.deleteCategory = async (req, res) => {
 exports.getAllCategories = async (req, res) => {
   try {
     const categories = await sequelize.query(
-      `SELECT id, slug, name, description, image,is_active AS "isActive"
-
-       FROM categories
-       ORDER BY id DESC`,
+      `SELECT c.id, c.slug, c.name, c.description, c.image AS "image_id", c.is_active AS "isActive",
+              m.file_path AS "image"
+       FROM categories c
+       LEFT JOIN media m ON m.id = CAST(NULLIF(c.image, '') AS INTEGER)
+       ORDER BY c.id DESC`,
       { type: QueryTypes.SELECT }
     );
 

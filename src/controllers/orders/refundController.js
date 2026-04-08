@@ -36,7 +36,7 @@ exports.initiateRefund = async (req, res) => {
           returnId: returnId || null,
           userId: order.user_id,
           amount,
-          reason,
+          reason: reason || null,
           transactionId: transactionId || null
         },
         type: QueryTypes.INSERT,

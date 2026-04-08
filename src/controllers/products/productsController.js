@@ -542,6 +542,12 @@ exports.updateProduct = async (req, res) => {
 
   } catch (error) {
     await t.rollback();
+
+    // Handle unique SKU error
+    if (error.original?.code === '23505') {
+      return res.status(409).json({ success: false, message: 'SKU already exists' });
+    }
+
     console.error('UPDATE PRODUCT ERROR:', error);
 
     res.status(500).json({

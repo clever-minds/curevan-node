@@ -909,6 +909,35 @@ exports.createOrderFromCart = async (req, res) => {
       return res.status(400).json({ error: "Cart is empty" });
     }
 
+    // 1.2️⃣ Check Addresses
+    if (!billing_address_id || !shipping_address_id) {
+      await transaction.rollback();
+      return res.error("Please add billing/shipping address first", 400);
+    }
+
+    const [shippingAddress] = await sequelize.query(
+      `SELECT state FROM order_addresses WHERE id = :id AND user_id = :userId`,
+      {
+        replacements: { id: shipping_address_id, userId },
+        type: QueryTypes.SELECT,
+        transaction
+      }
+    );
+
+    const [billingAddress] = await sequelize.query(
+      `SELECT id FROM order_addresses WHERE id = :id AND user_id = :userId`,
+      {
+        replacements: { id: billing_address_id, userId },
+        type: QueryTypes.SELECT,
+        transaction
+      }
+    );
+
+    if (!shippingAddress || !billingAddress) {
+      await transaction.rollback();
+      return res.error("Please add billing/shipping address first", 400);
+    }
+
     // 1.5️⃣ Check Inventory
     const productIds = cartItems.map(item => item.product_id);
 
@@ -938,16 +967,7 @@ exports.createOrderFromCart = async (req, res) => {
 
     // 2️⃣ Shipping & Tax
     const WAREHOUSE_STATE = "Gujarat";
-    const shippingAddress = await sequelize.query(
-      `SELECT state FROM order_addresses WHERE id = :id`,
-      {
-        replacements: { id: shipping_address_id },
-        type: QueryTypes.SELECT,
-        transaction
-      }
-    );
-
-    const isIntraState = shippingAddress.length && shippingAddress[0].state === WAREHOUSE_STATE;
+    const isIntraState = shippingAddress.state === WAREHOUSE_STATE;
 
     let subtotal = 0;
     let totalTax = 0;
