@@ -82,9 +82,10 @@ async function generateAWB(shipmentId) {
       }
     );
 
-    console.log("✅ AWB Generated");
-
-    return res.data.response.data;
+    console.log("✅ AWB Generated Result:", JSON.stringify(res.data, null, 2));
+    
+    // Some responses might have data directly or nested
+    return res.data?.response?.data || res.data?.data || res.data;
   } catch (error) {
     console.error(
       "❌ AWB Error:",

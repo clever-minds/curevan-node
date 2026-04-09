@@ -129,9 +129,18 @@ exports.createShipment = async (req, res) => {
     }
 
     // 5️⃣ Generate AWB
+    console.log(`🚚 Requesting AWB for Shipment ID: ${shipmentId}`);
     const awbData = await generateAWB(shipmentId);
-    const awb = awbData.awb_code;
-    const courier = awbData.courier_name;
+    console.log("📍 AWB Response Data:", JSON.stringify(awbData, null, 2));
+
+    const awb = awbData?.awb_code || null;
+    const courier = awbData?.courier_name || "Unknown Courier";
+
+    if (!awb) {
+      console.error("❌ No AWB code returned from Shiprocket", awbData);
+      // We might want to throw an error here or handle it differently
+      throw new Error("Shiprocket failed to assign an AWB code. Please check Shiprocket panel for shipment ID: " + shipmentId);
+    }
 
     // 6️⃣ Insert Shipment
     const [shipmentInsert] = await sequelize.query(
