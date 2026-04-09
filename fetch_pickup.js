@@ -12,7 +12,7 @@ async function run() {
     console.log("✅ Authenticated.");
 
     console.log("🔍 Fetching pickup locations...");
-    const res = await axios.get("https://apiv2.shiprocket.in/v1/external/settings/get/pickup", {
+    const res = await axios.get("https://apiv2.shiprocket.in/v1/external/settings/company/pickup", {
       headers: { Authorization: `Bearer ${token}` }
     });
 

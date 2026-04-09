@@ -70,7 +70,7 @@ exports.createShipment = async (req, res) => {
     const shiprocketPayload = {
       order_id: order.id.toString(),
       order_date: new Date().toISOString(),
-      pickup_location: process.env.SHIPROCKET_PICKUP_LOCATION || "Primary",
+      pickup_location: process.env.SHIPROCKET_PICKUP_LOCATION || "work",
       billing_customer_name: finalBilling.name.split(" ")[0] || "Customer",
       billing_last_name: finalBilling.name.split(" ").slice(1).join(" ") || ".",
       billing_address: finalBilling.address,

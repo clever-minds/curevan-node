@@ -231,7 +231,7 @@ async function getPickupLocations() {
   try {
     const token = await getToken();
     const res = await axios.get(
-      "https://apiv2.shiprocket.in/v1/external/settings/get/pickup",
+      "https://apiv2.shiprocket.in/v1/external/settings/company/pickup",
       {
         headers: { Authorization: `Bearer ${token}` },
       }
