@@ -66,11 +66,12 @@ exports.createShipment = async (req, res) => {
 
     // 4️⃣ Prepare Shiprocket Payload
     const orderItems = await getOrderItemsForShiprocket(order.id);
+    console.log("🔍 Current Env Pickup Location:", process.env.SHIPROCKET_PICKUP_LOCATION);
 
     const shiprocketPayload = {
       order_id: order.id.toString(),
       order_date: new Date().toISOString(),
-      pickup_location: process.env.SHIPROCKET_PICKUP_LOCATION || "work",
+      pickup_location: "work",
       billing_customer_name: finalBilling.name.split(" ")[0] || "Customer",
       billing_last_name: finalBilling.name.split(" ").slice(1).join(" ") || ".",
       billing_address: finalBilling.address,
@@ -112,6 +113,7 @@ exports.createShipment = async (req, res) => {
     };
 
     // 4️⃣ Call Shiprocket API
+    console.log("🚀 Sending Payload to Shiprocket:", JSON.stringify(shiprocketPayload, null, 2));
     const shiprocketOrder = await createOrder(shiprocketPayload);
     
     // Shiprocket adhoc creation usually returns shipment_id directly in the response 
