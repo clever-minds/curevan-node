@@ -244,6 +244,29 @@ async function getPickupLocations() {
   }
 }
 
+// ✅ 10. Check Serviceability (Estimate Shipping Charges)
+async function checkServiceability({ pickup_postcode, delivery_postcode, weight, cod }) {
+  try {
+    const token = await getToken();
+    const res = await axios.get(
+      "https://apiv2.shiprocket.in/v1/external/courier/serviceability/",
+      {
+        params: {
+          pickup_postcode,
+          delivery_postcode,
+          weight,
+          cod
+        },
+        headers: { Authorization: `Bearer ${token}` }
+      }
+    );
+    return res.data;
+  } catch (error) {
+    console.error("❌ Serviceability Error:", error.response?.data || error.message);
+    throw new Error("Failed to fetch shipping charges from Shiprocket");
+  }
+}
+
 module.exports = {
   getToken,
   createOrder,
@@ -254,4 +277,5 @@ module.exports = {
   cancelShipment,
   createReturnOrder,
   getPickupLocations,
+  checkServiceability,
 };

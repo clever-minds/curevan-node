@@ -1,6 +1,7 @@
 const { QueryTypes } = require("sequelize");
 const { sequelize } = require("../../config/db");
 const transporter = require("../../config/mailer");
+const { checkServiceability, getPickupLocations } = require("../../services/shiprocketService");
 
 // exports.createOrderFromCart = async (req, res) => {
 //   const transaction = await sequelize.transaction();
@@ -880,7 +881,8 @@ exports.createOrderFromCart = async (req, res) => {
       payment_ref,
       payment_gateway,
       currency,
-      coupon_discount
+      coupon_discount,
+      shipping_charges
     } = req.body;
 
     // 1️⃣ Get Cart Items
@@ -894,7 +896,8 @@ exports.createOrderFromCart = async (req, res) => {
          p.sku,
          p.hsn_code,
          p.gst_slab,
-         p.is_tax_inclusive
+         p.is_tax_inclusive,
+         p.weight_kg
        FROM cart c
        JOIN products p ON c.product_id = p.id
        WHERE c.user_id = :userId`,
@@ -917,7 +920,7 @@ exports.createOrderFromCart = async (req, res) => {
     }
 
     const [shippingAddress] = await sequelize.query(
-      `SELECT state FROM order_addresses WHERE id = :id AND user_id = :userId`,
+      `SELECT state, pincode FROM order_addresses WHERE id = :id AND user_id = :userId`,
       {
         replacements: { id: shipping_address_id, userId },
         type: QueryTypes.SELECT,
@@ -1007,14 +1010,50 @@ exports.createOrderFromCart = async (req, res) => {
       }
     });
 
-    // 3️⃣ Coupon Discount
-    let appliedCouponDiscount = 0;
-    if (coupon_code) appliedCouponDiscount = coupon_discount || 0;
+    // Calculate total weight from cart items (fallback to 0.5 kg if total is 0)
+    let totalWeight = cartItems.reduce((acc, item) => {
+      const w = parseFloat(item.weight_kg) || 0;
+      return acc + (w * item.quantity);
+    }, 0);
+    if (totalWeight <= 0) totalWeight = 0.5;
+
+    // Fetch dynamic shipping charge from Shiprocket
+    let shippingChargeAmt = 0;
+    try {
+      if (shippingAddress && shippingAddress.pincode) {
+        const locations = await getPickupLocations();
+        const loc = locations?.data?.shipping_address?.[0];
+        const pickup_postcode = loc?.pin_code;
+        const delivery_postcode = shippingAddress.pincode;
+
+        if (pickup_postcode && delivery_postcode) {
+          const serviceability = await checkServiceability({
+            pickup_postcode,
+            delivery_postcode,
+            weight: totalWeight.toString(), 
+            cod: 0
+          });
+
+          const companies = serviceability?.data?.available_courier_companies || [];
+          if (companies.length > 0) {
+            const recommendedId = serviceability.data.recommended_courier_company_id;
+            const recommendedCourier = companies.find(c => c.courier_company_id === recommendedId) || companies[0];
+            shippingChargeAmt = recommendedCourier.rate;
+            console.log(`✅ Fetched Shiprocket rate: ${shippingChargeAmt} for pin ${delivery_postcode}`);
+          }
+        }
+      }
+    } catch (err) {
+      console.error("❌ Failed to fetch dynamic Shiprocket rate. Using fallback 0.", err.message);
+    }
 
     // Subtotal in response usually means the sum of prices (tax-inclusive or exclusive depending on context)
     // Here we'll stick to taxableValue as the base for discount.
+    let appliedCouponDiscount = 0;
+    if (coupon_code) appliedCouponDiscount = coupon_discount || 0;
+    
     const finalTaxableValue = taxableValue - appliedCouponDiscount;
-    const total = finalTaxableValue + totalTax;
+    const total = finalTaxableValue + totalTax + shippingChargeAmt;
     const totalInPaise = Math.round(total * 100);
 
     // 4️⃣ Generate Order Number
@@ -1033,6 +1072,7 @@ exports.createOrderFromCart = async (req, res) => {
          coupon_id,
          coupon_code,
          coupon_discount,
+         shipping_charges,
          taxable_value,
          cgst,
          sgst,
@@ -1054,6 +1094,7 @@ exports.createOrderFromCart = async (req, res) => {
          :couponId,
          :couponCode,
          :couponDiscount,
+         :shippingCharges,
          :taxableValue,
          :cgst,
          :sgst,
@@ -1078,6 +1119,7 @@ exports.createOrderFromCart = async (req, res) => {
           couponId: coupon_id || null,
           couponCode: coupon_code || null,
           couponDiscount: appliedCouponDiscount,
+          shippingCharges: shippingChargeAmt,
           taxableValue: finalTaxableValue,
           cgst,
           sgst,
@@ -1280,6 +1322,7 @@ exports.createOrderFromCart = async (req, res) => {
         sgst,
         igst,
         totalTax,
+        shippingCharges: shippingChargeAmt,
         total,
         paymentStatus: payment_status || "Unpaid"
       }
@@ -1480,6 +1523,7 @@ exports.myOrders = async (req, res) => {
         o.coupon_code AS "couponCode",
         o.taxable_value AS "taxableValue",
         o.coupon_discount AS "couponDiscount",
+        o.shipping_charges AS "shippingCharges",
         o.subtotal,
         o.status,
         o.payment_status AS "paymentStatus",
@@ -1567,6 +1611,7 @@ exports.getOrderById = async (req, res) => {
         o.sgst,
         o.igst,
         o.coupon_discount as "couponDiscount",
+        o.shipping_charges AS "shippingCharges",
         o.payment_status AS "paymentStatus",
         o.created_at AS "createdAt",
 
