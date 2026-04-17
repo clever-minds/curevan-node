@@ -305,10 +305,7 @@ exports.listProducts = async (req, res) => {
           p.*,
           p.title AS name,
           -- Selling price GST-inclusive
-          CASE 
-              WHEN p.is_tax_inclusive THEN p.selling_price
-              ELSE ROUND(p.selling_price * (1 + COALESCE(p.gst_slab,0)/100.0), 2)
-          END AS price,
+          p.selling_price AS price,
           p.category_id AS "categoryId",
           c.name AS category_name,
           i.on_hand AS "onHand",
@@ -343,10 +340,7 @@ exports.getProductById = async (req, res) => {
       `
       SELECT 
         p.*,
-        CASE 
-            WHEN p.is_tax_inclusive THEN p.selling_price
-            ELSE ROUND(p.selling_price * (1 + COALESCE(p.gst_slab,0)/100.0), 2)
-        END AS price,
+        p.selling_price AS price,
         i.on_hand,
         i.reorder_point,
         (SELECT COALESCE(AVG(rating), 0) FROM reviews WHERE product_id = p.id) AS "averageRating",
@@ -660,10 +654,7 @@ exports.getProduct = async (req, res) => {
       `SELECT 
         p.*,
         p.title AS name,
-          CASE 
-              WHEN p.is_tax_inclusive THEN p.selling_price
-              ELSE ROUND(p.selling_price * (1 + COALESCE(p.gst_slab,0)/100.0), 2)
-          END AS price,
+          p.selling_price AS price,
         p.category_id AS "categoryId",
         c.name AS categoryname,
         i.on_hand AS "onHand",
@@ -694,10 +685,7 @@ exports.getProductFrontendById = async (req, res) => {
       `SELECT 
         p.*,
         p.title AS name,
-        CASE 
-            WHEN p.is_tax_inclusive THEN p.selling_price
-            ELSE ROUND(p.selling_price * (1 + COALESCE(p.gst_slab,0)/100.0), 2)
-        END AS price,
+        p.selling_price AS price,
         p.category_id AS "categoryId",
         c.name AS categoryname,
         i.on_hand AS "onHand",
@@ -754,10 +742,7 @@ exports.getProductsByIds = async (req, res) => {
         p.*,
         p.id as 'productId  ',
         p.title AS name,
-        CASE 
-            WHEN p.is_tax_inclusive THEN p.selling_price
-            ELSE ROUND(p.selling_price * (1 + COALESCE(p.gst_slab,0)/100.0), 2)
-        END AS price,
+        p.selling_price AS price,
         p.category_id AS "categoryId",
         c.name AS category_name,
         i.on_hand AS "onHand",
