@@ -15,7 +15,10 @@ exports.listCart = async (req, res) => {
          c.created_at AS "createdAt",
          c.updated_at AS "updatedAt",
          p.title as name,
-         p.selling_price AS price,
+         CASE 
+            WHEN p.is_tax_inclusive THEN p.selling_price
+            ELSE ROUND(p.selling_price * (1 + COALESCE(p.gst_slab,0)/100.0), 2)
+         END AS price,
          p.long_description as description,
          p.category_id AS "categoryId",
          p.status AS "isActive",
