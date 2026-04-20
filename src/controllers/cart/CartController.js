@@ -15,10 +15,12 @@ exports.listCart = async (req, res) => {
          c.created_at AS "createdAt",
          c.updated_at AS "updatedAt",
          p.title as name,
+         p.selling_price AS price,
+         COALESCE(p.gst_slab, 0) AS "gstPercent",
          CASE 
-            WHEN p.is_tax_inclusive THEN p.selling_price
-            ELSE ROUND(p.selling_price * (1 + COALESCE(p.gst_slab,0)/100.0), 2)
-         END AS price,
+            WHEN p.is_tax_inclusive THEN ROUND(p.selling_price - (p.selling_price / (1 + COALESCE(p.gst_slab,0)/100.0)), 2)
+            ELSE ROUND(p.selling_price * (COALESCE(p.gst_slab,0)/100.0), 2)
+         END AS "gstAmount",
          p.long_description as description,
          p.category_id AS "categoryId",
          p.status AS "isActive",
@@ -71,7 +73,7 @@ exports.addToCart = async (req, res) => {
         `UPDATE cart 
          SET quantity =:quantity, updated_at = CURRENT_TIMESTAMP
          WHERE id = :id`,
-        { replacements: { quantity, id: existing.id }, type: QueryTypes.UPDATE, logging: console.log   }
+        { replacements: { quantity, id: existing.id }, type: QueryTypes.UPDATE, logging: console.log }
       );
     } else {
       // Insert new cart item
