@@ -153,7 +153,8 @@ exports.addProduct = async (req, res) => {
       tags = [],
       image_ids = [],
       stock = 0,
-      reorderPoint = 0
+      reorderPoint = 0,
+      additional_features = []
     } = req.body;
 
     // 2️⃣ Validate required fields
@@ -161,8 +162,9 @@ exports.addProduct = async (req, res) => {
       return res.status(400).json({ message: 'Title, SKU and Category are required' });
     }
 
-    // 3️⃣ Prepare tags JSON
+    // 3️⃣ Prepare JSON fields
     const tagsJSON = Array.isArray(tags) ? JSON.stringify(tags) : '[]';
+    const additionalFeaturesJSON = Array.isArray(additional_features) ? JSON.stringify(additional_features) : '[]';
 
     // 4️⃣ Ensure image_ids is always an array
     const imageIdsArray = Array.isArray(image_ids) ? image_ids : image_ids ? [image_ids] : [];
@@ -178,7 +180,7 @@ exports.addProduct = async (req, res) => {
           length_cm, width_cm, height_cm, weight_kg,
           manufacturer, country_of_origin, packer, importer, batch_number,
           manufacturing_date, expiry_date, tags,
-          image_ids
+          image_ids, additional_features
         ) VALUES (
           :productType, :title, :subtitle, :shortDescription, :longDescription,
           :brand, :sku, :category, :mrp, :sellingPrice,
@@ -187,7 +189,7 @@ exports.addProduct = async (req, res) => {
           :length_cm, :width_cm, :height_cm, :weight_kg,
           :manufacturer, :country_of_origin, :packer, :importer, :batch_number,
           :manufacturing_date, :expiry_date, :tags::json,
-          ARRAY[:imageIds]::integer[]
+          ARRAY[:imageIds]::integer[], :additional_features::json
         )
         RETURNING id`,
       {
@@ -220,7 +222,8 @@ exports.addProduct = async (req, res) => {
           manufacturing_date: toLocalDbDate(manufacturing_date),
           expiry_date: toLocalDbDate(expiry_date),
           tags: tagsJSON,
-          imageIds: imageIdsArray
+          imageIds: imageIdsArray,
+          additional_features: additionalFeaturesJSON
         },
         type: QueryTypes.INSERT,
         transaction: t
@@ -453,7 +456,8 @@ exports.updateProduct = async (req, res) => {
       batch_number,
       manufacturing_date,
       expiry_date,
-      tags
+      tags,
+      additional_features
     } = req.body;
 
     // ---------------- IMAGE IDS (INTEGER ARRAY) ----------------
@@ -461,8 +465,9 @@ exports.updateProduct = async (req, res) => {
       ? image_ids.map(Number).filter(n => !isNaN(n))
       : [];
 
-    // ---------------- TAGS JSON ----------------
+    // ---------------- JSON FIELDS ----------------
     const tagsJSON = JSON.stringify(tags || []);
+    const additionalFeaturesJSON = JSON.stringify(additional_features || []);
 
     // ---------------- PRODUCT UPDATE QUERY ----------------
     let updateQuery = `
@@ -494,7 +499,8 @@ exports.updateProduct = async (req, res) => {
         batch_number = :batch_number,
         manufacturing_date = :manufacturing_date,
         expiry_date = :expiry_date,
-        tags = :tags::json
+        tags = :tags::json,
+        additional_features = :additional_features::json
     `;
 
     // update image_ids only if provided
@@ -533,7 +539,8 @@ exports.updateProduct = async (req, res) => {
       batch_number,
       manufacturing_date: toLocalDbDate(manufacturing_date),
       expiry_date: toLocalDbDate(expiry_date),
-      tags: tagsJSON
+      tags: tagsJSON,
+      additional_features: additionalFeaturesJSON
     };
 
     if (imageIds.length > 0) {
