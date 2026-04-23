@@ -22,4 +22,7 @@ router.get("/track/:awb", responseHandler, shipment.trackShipment);
 // ✅ Cancel Shipment
 router.post("/cancel/:id", authMiddleware, shipment.cancelShipment);
 
+// ✅ Estimate Shipping (Public)
+router.get("/estimate", responseHandler, shipment.estimateShipping);
+
 module.exports = router;

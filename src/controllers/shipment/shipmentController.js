@@ -305,3 +305,65 @@ exports.cancelShipment = async (req, res) => {
   }
 };
 
+/* =========================
+   ESTIMATE SHIPPING
+========================= */
+const { checkServiceability, getPickupLocations } = require("../../services/shiprocketService");
+
+exports.estimateShipping = async (req, res) => {
+  try {
+    const { pincode, weight = 0.5 } = req.query;
+    console.log(`🔍 Estimating shipping for pincode: ${pincode}, weight: ${weight}`);
+
+    if (!pincode) {
+      return res.status(400).json({ success: false, message: "Pincode is required" });
+    }
+
+    const locations = await getPickupLocations();
+    console.log("📍 Pickup Locations response:", JSON.stringify(locations));
+    const loc = locations?.data?.shipping_address?.[0];
+    const pickup_postcode = loc?.pin_code;
+
+    if (!pickup_postcode) {
+      console.error("❌ Pickup location not found in Shiprocket settings");
+      return res.status(500).json({ success: false, message: "Pickup location not configured" });
+    }
+
+    console.log(`🚚 Calling Shiprocket serviceability from ${pickup_postcode} to ${pincode}`);
+    const serviceability = await checkServiceability({
+      pickup_postcode,
+      delivery_postcode: pincode,
+      weight: weight.toString(),
+      cod: 0
+    });
+
+    console.log("📦 Serviceability response:", JSON.stringify(serviceability));
+
+    const companies = serviceability?.data?.available_courier_companies || [];
+    if (companies.length === 0) {
+      console.warn(`⚠️ No couriers available for pincode ${pincode}`);
+      return res.status(404).json({ success: false, message: "No courier service available for this pincode" });
+    }
+
+    const recommendedId = serviceability.data.recommended_courier_company_id;
+    const recommendedCourier = companies.find(c => c.courier_company_id === recommendedId) || companies[0];
+
+    return res.json({
+      success: true,
+      data: {
+        rate: recommendedCourier.rate,
+        courier: recommendedCourier.courier_name,
+        estimated_delivery: recommendedCourier.etd,
+        all_options: companies.map(c => ({
+          name: c.courier_name,
+          rate: c.rate,
+          etd: c.etd
+        }))
+      }
+    });
+  } catch (error) {
+    console.error("Estimation Error:", error.message);
+    return res.status(500).json({ success: false, message: "Failed to estimate shipping charges", error: error.message });
+  }
+};
+
