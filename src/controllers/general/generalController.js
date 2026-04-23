@@ -441,27 +441,35 @@ exports.listKnowledgeBase = async (req, res) => {
 
     let query = `
       SELECT 
-        *,
-        tags AS categories,
-        duration_min AS "durationMin",
-        sop_version AS "sopVersion"
-      FROM knowledge_base
+        kb.*,
+        kb.tags AS categories,
+        kb.duration_min AS "durationMin",
+        kb.sop_version AS "sopVersion",
+        kb.created_at AS "createdAt",
+        kb.published_at AS "publishedAt",
+        kb.ai_hint AS "aiHint",
+        kb.meta_description AS "metaDescription",
+        kb.youtube_video_url AS "videoUrl",
+        m.file_path AS "featuredImage",
+        kb.featured_image AS "featuredImageId"
+      FROM knowledge_base kb
+      LEFT JOIN media m ON m.id = kb.featured_image
       WHERE 1=1
     `;
 
     const replacements = {};
 
     if (contentType) {
-      query += ` AND content_type = :contentType`;
+      query += ` AND kb.content_type = :contentType`;
       replacements.contentType = contentType;
     }
 
     if (userRole !== "admin") {
-      query += ` AND author_id = :authorId`;
+      query += ` AND kb.author_id::int = :authorId`;
       replacements.authorId = authorId;
     }
 
-    query += ` ORDER BY created_at DESC`;
+    query += ` ORDER BY kb.created_at DESC`;
 
     const items = await sequelize.query(query, {
       replacements,
@@ -483,14 +491,22 @@ exports.listKnowledgeBasepublic = async (req, res) => {
 
     let query = `
       SELECT 
-        *,
-        tags AS categories,
-        duration_min AS "durationMin",
-        sop_version AS "sopVersion"
-      FROM knowledge_base
-      WHERE content_type = 'post'
-      AND status = 'published'
-      ORDER BY created_at DESC
+        kb.*,
+        kb.tags AS categories,
+        kb.duration_min AS "durationMin",
+        kb.sop_version AS "sopVersion",
+        kb.created_at AS "createdAt",
+        kb.published_at AS "publishedAt",
+        kb.ai_hint AS "aiHint",
+        kb.meta_description AS "metaDescription",
+        kb.youtube_video_url AS "videoUrl",
+        m.file_path AS "featuredImage",
+        kb.featured_image AS "featuredImageId"
+      FROM knowledge_base kb
+      LEFT JOIN media m ON m.id = kb.featured_image
+      WHERE kb.content_type = 'post'
+      AND kb.status = 'published'
+      ORDER BY kb.created_at DESC
     `;
 
     const items = await sequelize.query(query, {
