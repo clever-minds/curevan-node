@@ -45,6 +45,7 @@ app.use('/api/support', require('./routes/support.routes'));
 app.use('/api/shipment', require('./routes/shipment.routes'));
 app.use('/api/stats', require('./routes/stats.routes'));
 app.use('/api/reviews', require('./routes/review.routes'));
+app.use('/api/offers', require('./routes/offers.routes'));
 
 
 app.get("/", (req, res) => {
