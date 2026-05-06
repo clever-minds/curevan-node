@@ -885,22 +885,67 @@ exports.createOrderFromCart = async (req, res) => {
       shipping_charges
     } = req.body;
 
-    // 1️⃣ Get Cart Items
     const cartItems = await sequelize.query(
-      `SELECT 
+      `SELECT q.*, 
+        CASE 
+          WHEN q.offer IS NOT NULL THEN
+            CASE 
+              WHEN q.offer->>'type' = 'percent' OR q.offer->>'type' = 'percentage' THEN 
+                ROUND(q.price * (1 - CAST(q.offer->>'value' AS NUMERIC) / 100.0), 2)
+              WHEN q.offer->>'type' IN ('flat', 'fixed') THEN 
+                GREATEST(0::numeric, ROUND(q.price - CAST(q.offer->>'value' AS NUMERIC), 2))
+              ELSE q.price
+            END
+          ELSE q.price
+        END AS "discountedPrice"
+      FROM (
+        SELECT 
          c.product_id,
          c.quantity,
          p.title,
          p.selling_price,
+         p.selling_price AS price,
+         p.category_id,
          p.mrp,
          p.sku,
          p.hsn_code,
          p.gst_slab,
          p.is_tax_inclusive,
-         p.weight_kg
+         p.weight_kg,
+         (
+          SELECT jsonb_build_object(
+            'id', o.id,
+            'name', o.name,
+            'type', o.type,
+            'value', o.value,
+            'scope', o.scope,
+            'description', o.description
+          )
+          FROM offers o
+          WHERE o.is_active = true 
+            AND (o.valid_from IS NULL OR o.valid_from <= CURRENT_DATE)
+            AND (o.valid_to IS NULL OR o.valid_to >= CURRENT_DATE)
+            AND (
+              (o.scope = 'product' AND o.product_id = p.id) OR
+              (o.scope = 'category' AND o.category_id = p.category_id) OR
+              (o.scope = 'global') OR
+              (p.id = ANY(o.applicable_products)) OR
+              (p.category_id = ANY(o.applicable_categories))
+            )
+          ORDER BY 
+            CASE 
+              WHEN o.scope = 'product' THEN 1
+              WHEN p.id = ANY(o.applicable_products) THEN 2
+              WHEN o.scope = 'category' THEN 3
+              WHEN p.category_id = ANY(o.applicable_categories) THEN 4
+              ELSE 5 
+            END ASC
+          LIMIT 1
+         ) AS offer
        FROM cart c
        JOIN products p ON c.product_id = p.id
-       WHERE c.user_id = :userId`,
+       WHERE c.user_id = :userId
+      ) q`,
       {
         replacements: { userId },
         type: QueryTypes.SELECT,
@@ -979,8 +1024,20 @@ exports.createOrderFromCart = async (req, res) => {
     let sgst = 0;
     let igst = 0;
     let taxableValue = 0;
+    let totalOfferDiscount = 0;
+    let appliedOffers = [];
 
     cartItems.forEach(item => {
+      // Calculate offer discount for this item
+      let itemSellingPrice = parseFloat(item.selling_price) || 0;
+      let itemDiscountedPrice = parseFloat(item.discountedPrice) || itemSellingPrice;
+      if (itemDiscountedPrice < itemSellingPrice) {
+        totalOfferDiscount += ((itemSellingPrice - itemDiscountedPrice) * item.quantity);
+        if (item.offer && item.offer.name && !appliedOffers.includes(item.offer.name)) {
+          appliedOffers.push(item.offer.name);
+        }
+      }
+
       const gstRate = (item.gst_slab || 0) / 100;
       let itemTaxable = 0;
       let itemTax = 0;
@@ -988,12 +1045,12 @@ exports.createOrderFromCart = async (req, res) => {
 
       if (item.is_tax_inclusive) {
         // Price already includes GST
-        itemTotalWithTax = item.selling_price * item.quantity;
+        itemTotalWithTax = itemSellingPrice * item.quantity;
         itemTaxable = itemTotalWithTax / (1 + gstRate);
         itemTax = itemTotalWithTax - itemTaxable;
       } else {
         // Price is base price, add GST on top
-        itemTaxable = item.selling_price * item.quantity;
+        itemTaxable = itemSellingPrice * item.quantity;
         itemTax = itemTaxable * gstRate;
         itemTotalWithTax = itemTaxable + itemTax;
       }
@@ -1047,10 +1104,18 @@ exports.createOrderFromCart = async (req, res) => {
       console.error("❌ Failed to fetch dynamic Shiprocket rate. Using fallback 0.", err.message);
     }
 
-    // Subtotal in response usually means the sum of prices (tax-inclusive or exclusive depending on context)
-    // Here we'll stick to taxableValue as the base for discount.
     let appliedCouponDiscount = 0;
-    if (coupon_code) appliedCouponDiscount = coupon_discount || 0;
+    let finalCouponCode = coupon_code || null;
+
+    if (coupon_code) {
+      appliedCouponDiscount = parseFloat(coupon_discount) || 0;
+    }
+
+    if (totalOfferDiscount > 0) {
+      appliedCouponDiscount += totalOfferDiscount;
+      const offerNames = appliedOffers.join(", ");
+      finalCouponCode = finalCouponCode ? `${finalCouponCode} | Offers: ${offerNames}` : `Offers: ${offerNames}`;
+    }
     
     const finalTaxableValue = taxableValue - appliedCouponDiscount;
     const total = finalTaxableValue + totalTax + shippingChargeAmt;
@@ -1117,7 +1182,7 @@ exports.createOrderFromCart = async (req, res) => {
           shippingAddressId: shipping_address_id,
           subtotal,
           couponId: coupon_id || null,
-          couponCode: coupon_code || null,
+          couponCode: finalCouponCode,
           couponDiscount: appliedCouponDiscount,
           shippingCharges: shippingChargeAmt,
           taxableValue: finalTaxableValue,
@@ -1138,6 +1203,12 @@ exports.createOrderFromCart = async (req, res) => {
 
     // 6️⃣ Insert Order Items & Update Inventory
     for (let item of cartItems) {
+      // Calculate item discount
+      const itemSellingPrice = parseFloat(item.selling_price) || 0;
+      const itemDiscountedPrice = parseFloat(item.discountedPrice) || itemSellingPrice;
+      const itemDiscountAmount = itemSellingPrice - itemDiscountedPrice;
+      const itemOfferName = (itemDiscountAmount > 0 && item.offer) ? item.offer.name : null;
+
       // Insert order item
       await sequelize.query(
         `INSERT INTO order_items (
@@ -1148,7 +1219,9 @@ exports.createOrderFromCart = async (req, res) => {
            price,
            mrp,
            hsn_code,
-           tax_rate_pct
+           tax_rate_pct,
+           offer_name,
+           discount_amount
          ) VALUES (
            :orderId,
            :sku,
@@ -1157,7 +1230,9 @@ exports.createOrderFromCart = async (req, res) => {
            :price,
            :mrp,
            :hsnCode,
-           :taxRate
+           :taxRate,
+           :offerName,
+           :discountAmount
          )`,
         {
           replacements: {
@@ -1168,7 +1243,9 @@ exports.createOrderFromCart = async (req, res) => {
             price: item.selling_price,
             mrp: item.mrp,
             hsnCode: item.hsn_code,
-            taxRate: item.gst_slab
+            taxRate: item.gst_slab,
+            offerName: itemOfferName,
+            discountAmount: itemDiscountAmount
           },
           type: QueryTypes.INSERT,
           transaction

@@ -7,7 +7,20 @@ exports.listCart = async (req, res) => {
     const userId = req.user.id;
 
     const cartItems = await sequelize.query(
-      `SELECT 
+      `SELECT q.*, 
+        CASE 
+          WHEN q.offer IS NOT NULL THEN
+            CASE 
+              WHEN q.offer->>'type' = 'percent' OR q.offer->>'type' = 'percentage' THEN 
+                ROUND(q.price * (1 - CAST(q.offer->>'value' AS NUMERIC) / 100.0), 2)
+              WHEN q.offer->>'type' IN ('flat', 'fixed') THEN 
+                GREATEST(0::numeric, ROUND(q.price - CAST(q.offer->>'value' AS NUMERIC), 2))
+              ELSE q.price
+            END
+          ELSE q.price
+        END AS "discountedPrice"
+      FROM (
+        SELECT 
          c.id,
          c.user_id AS "userId",
          c.product_id AS "productId",
@@ -27,12 +40,43 @@ exports.listCart = async (req, res) => {
          p.is_coupon_excluded AS "isCouponExcluded",
          p.sku,
          p.hsn_code AS "hsnCode",
-         m.file_path AS "featuredImage"
+         m.file_path AS "featuredImage",
+         (
+          SELECT jsonb_build_object(
+            'id', o.id,
+            'name', o.name,
+            'type', o.type,
+            'value', o.value,
+            'scope', o.scope,
+            'description', o.description
+          )
+          FROM offers o
+          WHERE o.is_active = true 
+            AND (o.valid_from IS NULL OR o.valid_from <= CURRENT_DATE)
+            AND (o.valid_to IS NULL OR o.valid_to >= CURRENT_DATE)
+            AND (
+              (o.scope = 'product' AND o.product_id = p.id) OR
+              (o.scope = 'category' AND o.category_id = p.category_id) OR
+              (o.scope = 'global') OR
+              (p.id = ANY(o.applicable_products)) OR
+              (p.category_id = ANY(o.applicable_categories))
+            )
+          ORDER BY 
+            CASE 
+              WHEN o.scope = 'product' THEN 1
+              WHEN p.id = ANY(o.applicable_products) THEN 2
+              WHEN o.scope = 'category' THEN 3
+              WHEN p.category_id = ANY(o.applicable_categories) THEN 4
+              ELSE 5 
+            END ASC
+          LIMIT 1
+         ) AS offer
        FROM cart c
        JOIN products p ON c.product_id = p.id
        LEFT JOIN media m ON m.id = p.image_ids[1]
        WHERE c.user_id = :userId
-       ORDER BY c.id DESC`,
+       ORDER BY c.id DESC
+      ) q`,
       {
         replacements: { userId },
         type: QueryTypes.SELECT,
