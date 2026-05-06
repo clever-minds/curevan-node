@@ -304,7 +304,20 @@ exports.addProduct = async (req, res) => {
 exports.listProducts = async (req, res) => {
   try {
     const products = await sequelize.query(
-      `SELECT 
+      `SELECT q.*, 
+        CASE 
+          WHEN q.offer IS NOT NULL THEN
+            CASE 
+              WHEN q.offer->>'type' = 'percentage' THEN 
+                ROUND(q.price * (1 - CAST(q.offer->>'value' AS NUMERIC) / 100.0), 2)
+              WHEN q.offer->>'type' IN ('flat', 'fixed') THEN 
+                GREATEST(0::numeric, ROUND(q.price - CAST(q.offer->>'value' AS NUMERIC), 2))
+              ELSE q.price
+            END
+          ELSE q.price
+        END AS "discountedPrice"
+      FROM (
+        SELECT 
           p.*,
           p.title AS name,
           -- Selling price GST-inclusive
@@ -324,12 +337,43 @@ exports.listProducts = async (req, res) => {
           i.reorder_point,
           m.file_path AS "featuredImage",
           (SELECT COALESCE(AVG(rating), 0) FROM reviews WHERE product_id = p.id) AS "averageRating",
-          (SELECT COUNT(*) FROM reviews WHERE product_id = p.id) AS "totalReviews"
+          (SELECT COUNT(*) FROM reviews WHERE product_id = p.id) AS "totalReviews",
+          (
+            SELECT jsonb_build_object(
+              'id', o.id,
+              'name', o.name,
+              'type', o.type,
+              'value', o.value,
+              'scope', o.scope,
+              'description', o.description
+            )
+            FROM offers o
+            WHERE o.is_active = true 
+              AND (o.valid_from IS NULL OR o.valid_from <= CURRENT_DATE)
+              AND (o.valid_to IS NULL OR o.valid_to >= CURRENT_DATE)
+              AND (
+                (o.scope = 'product' AND o.product_id = p.id) OR
+                (o.scope = 'category' AND o.category_id = p.category_id) OR
+                (o.scope = 'global') OR
+                (p.id = ANY(o.applicable_products)) OR
+                (p.category_id = ANY(o.applicable_categories))
+              )
+            ORDER BY 
+              CASE 
+                WHEN o.scope = 'product' THEN 1
+                WHEN p.id = ANY(o.applicable_products) THEN 2
+                WHEN o.scope = 'category' THEN 3
+                WHEN p.category_id = ANY(o.applicable_categories) THEN 4
+                ELSE 5 
+              END ASC
+            LIMIT 1
+          ) AS offer
       FROM products p
       LEFT JOIN categories c ON c.id = p.category_id
       LEFT JOIN inventory i ON i.product_id = p.id
       LEFT JOIN media m ON m.id = p.image_ids[1]
-      ORDER BY p.created_at DESC`,
+      ORDER BY p.created_at DESC
+      ) q`,
       { type: QueryTypes.SELECT }
     );
 
@@ -348,8 +392,20 @@ exports.getProductById = async (req, res) => {
     const { id } = req.params;
 
     const product = await sequelize.query(
-      `
-      SELECT 
+      `SELECT q.*, 
+        CASE 
+          WHEN q.offer IS NOT NULL THEN
+            CASE 
+              WHEN q.offer->>'type' = 'percentage' THEN 
+                ROUND(q.price * (1 - CAST(q.offer->>'value' AS NUMERIC) / 100.0), 2)
+              WHEN q.offer->>'type' IN ('flat', 'fixed') THEN 
+                GREATEST(0::numeric, ROUND(q.price - CAST(q.offer->>'value' AS NUMERIC), 2))
+              ELSE q.price
+            END
+          ELSE q.price
+        END AS "discountedPrice"
+      FROM (
+        SELECT 
         p.*,
         CASE 
             WHEN p.is_tax_inclusive THEN p.selling_price
@@ -374,7 +430,37 @@ exports.getProductById = async (req, res) => {
             )
           ) FILTER (WHERE m.id IS NOT NULL),
           '[]'
-        ) AS images
+        ) AS images,
+        (
+          SELECT jsonb_build_object(
+            'id', o.id,
+            'name', o.name,
+            'type', o.type,
+            'value', o.value,
+            'scope', o.scope,
+            'description', o.description
+          )
+          FROM offers o
+          WHERE o.is_active = true 
+            AND (o.valid_from IS NULL OR o.valid_from <= CURRENT_DATE)
+            AND (o.valid_to IS NULL OR o.valid_to >= CURRENT_DATE)
+            AND (
+              (o.scope = 'product' AND o.product_id = p.id) OR
+              (o.scope = 'category' AND o.category_id = p.category_id) OR
+              (o.scope = 'global') OR
+              (p.id = ANY(o.applicable_products)) OR
+              (p.category_id = ANY(o.applicable_categories))
+            )
+          ORDER BY 
+            CASE 
+              WHEN o.scope = 'product' THEN 1
+              WHEN p.id = ANY(o.applicable_products) THEN 2
+              WHEN o.scope = 'category' THEN 3
+              WHEN p.category_id = ANY(o.applicable_categories) THEN 4
+              ELSE 5 
+            END ASC
+          LIMIT 1
+        ) AS offer
 
       FROM products p
       LEFT JOIN inventory i 
@@ -385,7 +471,7 @@ exports.getProductById = async (req, res) => {
 
       WHERE p.id = :id
       GROUP BY p.id, i.on_hand, i.reorder_point
-      `,
+      ) q`,
       {
         replacements: { id },
         type: QueryTypes.SELECT,
@@ -674,7 +760,20 @@ exports.deleteProduct = async (req, res) => {
 exports.getProduct = async (req, res) => {
   try {
     const products = await sequelize.query(
-      `SELECT 
+      `SELECT q.*, 
+        CASE 
+          WHEN q.offer IS NOT NULL THEN
+            CASE 
+              WHEN q.offer->>'type' = 'percentage' THEN 
+                ROUND(q.price * (1 - CAST(q.offer->>'value' AS NUMERIC) / 100.0), 2)
+              WHEN q.offer->>'type' IN ('flat', 'fixed') THEN 
+                GREATEST(0::numeric, ROUND(q.price - CAST(q.offer->>'value' AS NUMERIC), 2))
+              ELSE q.price
+            END
+          ELSE q.price
+        END AS "discountedPrice"
+      FROM (
+        SELECT 
         p.*,
         p.title AS name,
           CASE 
@@ -693,11 +792,42 @@ exports.getProduct = async (req, res) => {
         i.reorder_point,
         m.file_path AS "featuredImage",
         (SELECT COALESCE(AVG(rating), 0) FROM reviews WHERE product_id = p.id) AS "averageRating",
-        (SELECT COUNT(*) FROM reviews WHERE product_id = p.id) AS "totalReviews"
+        (SELECT COUNT(*) FROM reviews WHERE product_id = p.id) AS "totalReviews",
+        (
+          SELECT jsonb_build_object(
+            'id', o.id,
+            'name', o.name,
+            'type', o.type,
+            'value', o.value,
+            'scope', o.scope,
+            'description', o.description
+          )
+          FROM offers o
+          WHERE o.is_active = true 
+            AND (o.valid_from IS NULL OR o.valid_from <= CURRENT_DATE)
+            AND (o.valid_to IS NULL OR o.valid_to >= CURRENT_DATE)
+            AND (
+              (o.scope = 'product' AND o.product_id = p.id) OR
+              (o.scope = 'category' AND o.category_id = p.category_id) OR
+              (o.scope = 'global') OR
+              (p.id = ANY(o.applicable_products)) OR
+              (p.category_id = ANY(o.applicable_categories))
+            )
+          ORDER BY 
+            CASE 
+              WHEN o.scope = 'product' THEN 1
+              WHEN p.id = ANY(o.applicable_products) THEN 2
+              WHEN o.scope = 'category' THEN 3
+              WHEN p.category_id = ANY(o.applicable_categories) THEN 4
+              ELSE 5 
+            END ASC
+          LIMIT 1
+        ) AS offer
       FROM products p
       LEFT JOIN categories c ON c.id = p.category_id
       LEFT JOIN inventory i ON i.product_id = p.id
-      LEFT JOIN media m ON m.id = p.image_ids[1]`,
+      LEFT JOIN media m ON m.id = p.image_ids[1]
+      ) q`,
       { type: QueryTypes.SELECT }
     );
 
@@ -713,7 +843,20 @@ exports.getProductFrontendById = async (req, res) => {
     const { id } = req.params;
 
     const product = await sequelize.query(
-      `SELECT 
+      `SELECT q.*, 
+        CASE 
+          WHEN q.offer IS NOT NULL THEN
+            CASE 
+              WHEN q.offer->>'type' = 'percentage' THEN 
+                ROUND(q.price * (1 - CAST(q.offer->>'value' AS NUMERIC) / 100.0), 2)
+              WHEN q.offer->>'type' IN ('flat', 'fixed') THEN 
+                GREATEST(0::numeric, ROUND(q.price - CAST(q.offer->>'value' AS NUMERIC), 2))
+              ELSE q.price
+            END
+          ELSE q.price
+        END AS "discountedPrice"
+      FROM (
+        SELECT 
         p.*,
         p.title AS name,
         CASE 
@@ -742,14 +885,45 @@ exports.getProductFrontendById = async (req, res) => {
             )
           ) FILTER (WHERE m2.id IS NOT NULL),
           '[]'
-        ) AS images
+        ) AS images,
+        (
+          SELECT jsonb_build_object(
+            'id', o.id,
+            'name', o.name,
+            'type', o.type,
+            'value', o.value,
+            'scope', o.scope,
+            'description', o.description
+          )
+          FROM offers o
+          WHERE o.is_active = true 
+            AND (o.valid_from IS NULL OR o.valid_from <= CURRENT_DATE)
+            AND (o.valid_to IS NULL OR o.valid_to >= CURRENT_DATE)
+            AND (
+              (o.scope = 'product' AND o.product_id = p.id) OR
+              (o.scope = 'category' AND o.category_id = p.category_id) OR
+              (o.scope = 'global') OR
+              (p.id = ANY(o.applicable_products)) OR
+              (p.category_id = ANY(o.applicable_categories))
+            )
+          ORDER BY 
+            CASE 
+              WHEN o.scope = 'product' THEN 1
+              WHEN p.id = ANY(o.applicable_products) THEN 2
+              WHEN o.scope = 'category' THEN 3
+              WHEN p.category_id = ANY(o.applicable_categories) THEN 4
+              ELSE 5 
+            END ASC
+          LIMIT 1
+        ) AS offer
       FROM products p
       LEFT JOIN categories c ON c.id = p.category_id
       LEFT JOIN inventory i ON i.product_id = p.id
       LEFT JOIN media m ON m.id = p.image_ids[1]
       LEFT JOIN media m2 ON m2.id = ANY(p.image_ids)
       WHERE p.id = :id
-      GROUP BY p.id, c.name, i.on_hand, i.reserved, i.reorder_point, m.file_path`,
+      GROUP BY p.id, c.name, i.on_hand, i.reserved, i.reorder_point, m.file_path
+      ) q`,
       {
         replacements: { id },
         type: QueryTypes.SELECT
@@ -776,8 +950,20 @@ exports.getProductsByIds = async (req, res) => {
     }
 
     const products = await sequelize.query(
-      `
-      SELECT 
+      `SELECT q.*, 
+        CASE 
+          WHEN q.offer IS NOT NULL THEN
+            CASE 
+              WHEN q.offer->>'type' = 'percentage' THEN 
+                ROUND(q.price * (1 - CAST(q.offer->>'value' AS NUMERIC) / 100.0), 2)
+              WHEN q.offer->>'type' IN ('flat', 'fixed') THEN 
+                GREATEST(0::numeric, ROUND(q.price - CAST(q.offer->>'value' AS NUMERIC), 2))
+              ELSE q.price
+            END
+          ELSE q.price
+        END AS "discountedPrice"
+      FROM (
+        SELECT 
         p.*,
         p.id as 'productId  ',
         p.title AS name,
@@ -798,6 +984,36 @@ exports.getProductsByIds = async (req, res) => {
         m.file_path AS "featuredImage",
         (SELECT COALESCE(AVG(rating), 0) FROM reviews WHERE product_id = p.id) AS "averageRating",
         (SELECT COUNT(*) FROM reviews WHERE product_id = p.id) AS "totalReviews",
+        (
+          SELECT jsonb_build_object(
+            'id', o.id,
+            'name', o.name,
+            'type', o.type,
+            'value', o.value,
+            'scope', o.scope,
+            'description', o.description
+          )
+          FROM offers o
+          WHERE o.is_active = true 
+            AND (o.valid_from IS NULL OR o.valid_from <= CURRENT_DATE)
+            AND (o.valid_to IS NULL OR o.valid_to >= CURRENT_DATE)
+            AND (
+              (o.scope = 'product' AND o.product_id = p.id) OR
+              (o.scope = 'category' AND o.category_id = p.category_id) OR
+              (o.scope = 'global') OR
+              (p.id = ANY(o.applicable_products)) OR
+              (p.category_id = ANY(o.applicable_categories))
+            )
+          ORDER BY 
+            CASE 
+              WHEN o.scope = 'product' THEN 1
+              WHEN p.id = ANY(o.applicable_products) THEN 2
+              WHEN o.scope = 'category' THEN 3
+              WHEN p.category_id = ANY(o.applicable_categories) THEN 4
+              ELSE 5 
+            END ASC
+          LIMIT 1
+        ) AS offer,
         COALESCE(
           json_agg(
             DISTINCT jsonb_build_object(
@@ -816,7 +1032,7 @@ exports.getProductsByIds = async (req, res) => {
       WHERE p.id = ANY(:ids::int[])
       GROUP BY p.id, c.name, i.on_hand, i.reserved, i.reorder_point, m.file_path
       ORDER BY p.created_at DESC
-      `,
+      ) q`,
       {
         replacements: { ids },
         type: QueryTypes.SELECT
