@@ -308,7 +308,7 @@ exports.listProducts = async (req, res) => {
         CASE 
           WHEN q.offer IS NOT NULL THEN
             CASE 
-              WHEN q.offer->>'type' = 'percentage' THEN 
+              WHEN q.offer->>'type' = 'percent' OR q.offer->>'type' = 'percentage' THEN 
                 ROUND(q.price * (1 - CAST(q.offer->>'value' AS NUMERIC) / 100.0), 2)
               WHEN q.offer->>'type' IN ('flat', 'fixed') THEN 
                 GREATEST(0::numeric, ROUND(q.price - CAST(q.offer->>'value' AS NUMERIC), 2))
@@ -320,11 +320,7 @@ exports.listProducts = async (req, res) => {
         SELECT 
           p.*,
           p.title AS name,
-          -- Selling price GST-inclusive
-          CASE 
-              WHEN p.is_tax_inclusive THEN p.selling_price
-              ELSE ROUND(p.selling_price * (1 + COALESCE(p.gst_slab,0)/100.0), 2)
-          END AS price,
+          p.selling_price AS price,
           COALESCE(p.gst_slab, 0) AS "gstPercent",
           CASE 
               WHEN p.is_tax_inclusive THEN ROUND(p.selling_price - (p.selling_price / (1 + COALESCE(p.gst_slab,0)/100.0)), 2)
@@ -396,7 +392,7 @@ exports.getProductById = async (req, res) => {
         CASE 
           WHEN q.offer IS NOT NULL THEN
             CASE 
-              WHEN q.offer->>'type' = 'percentage' THEN 
+              WHEN q.offer->>'type' = 'percent' OR q.offer->>'type' = 'percentage' THEN 
                 ROUND(q.price * (1 - CAST(q.offer->>'value' AS NUMERIC) / 100.0), 2)
               WHEN q.offer->>'type' IN ('flat', 'fixed') THEN 
                 GREATEST(0::numeric, ROUND(q.price - CAST(q.offer->>'value' AS NUMERIC), 2))
@@ -407,10 +403,7 @@ exports.getProductById = async (req, res) => {
       FROM (
         SELECT 
         p.*,
-        CASE 
-            WHEN p.is_tax_inclusive THEN p.selling_price
-            ELSE ROUND(p.selling_price * (1 + COALESCE(p.gst_slab,0)/100.0), 2)
-        END AS price,
+        p.selling_price AS price,
         COALESCE(p.gst_slab, 0) AS "gstPercent",
         CASE 
             WHEN p.is_tax_inclusive THEN ROUND(p.selling_price - (p.selling_price / (1 + COALESCE(p.gst_slab,0)/100.0)), 2)
@@ -764,7 +757,7 @@ exports.getProduct = async (req, res) => {
         CASE 
           WHEN q.offer IS NOT NULL THEN
             CASE 
-              WHEN q.offer->>'type' = 'percentage' THEN 
+              WHEN q.offer->>'type' = 'percent' OR q.offer->>'type' = 'percentage' THEN 
                 ROUND(q.price * (1 - CAST(q.offer->>'value' AS NUMERIC) / 100.0), 2)
               WHEN q.offer->>'type' IN ('flat', 'fixed') THEN 
                 GREATEST(0::numeric, ROUND(q.price - CAST(q.offer->>'value' AS NUMERIC), 2))
@@ -776,10 +769,7 @@ exports.getProduct = async (req, res) => {
         SELECT 
         p.*,
         p.title AS name,
-          CASE 
-              WHEN p.is_tax_inclusive THEN p.selling_price
-              ELSE ROUND(p.selling_price * (1 + COALESCE(p.gst_slab,0)/100.0), 2)
-          END AS price,
+          p.selling_price AS price,
           COALESCE(p.gst_slab, 0) AS "gstPercent",
           CASE 
               WHEN p.is_tax_inclusive THEN ROUND(p.selling_price - (p.selling_price / (1 + COALESCE(p.gst_slab,0)/100.0)), 2)
@@ -847,7 +837,7 @@ exports.getProductFrontendById = async (req, res) => {
         CASE 
           WHEN q.offer IS NOT NULL THEN
             CASE 
-              WHEN q.offer->>'type' = 'percentage' THEN 
+              WHEN q.offer->>'type' = 'percent' OR q.offer->>'type' = 'percentage' THEN 
                 ROUND(q.price * (1 - CAST(q.offer->>'value' AS NUMERIC) / 100.0), 2)
               WHEN q.offer->>'type' IN ('flat', 'fixed') THEN 
                 GREATEST(0::numeric, ROUND(q.price - CAST(q.offer->>'value' AS NUMERIC), 2))
@@ -859,10 +849,7 @@ exports.getProductFrontendById = async (req, res) => {
         SELECT 
         p.*,
         p.title AS name,
-        CASE 
-            WHEN p.is_tax_inclusive THEN p.selling_price
-            ELSE ROUND(p.selling_price * (1 + COALESCE(p.gst_slab,0)/100.0), 2)
-        END AS price,
+        p.selling_price AS price,
         COALESCE(p.gst_slab, 0) AS "gstPercent",
         CASE 
             WHEN p.is_tax_inclusive THEN ROUND(p.selling_price - (p.selling_price / (1 + COALESCE(p.gst_slab,0)/100.0)), 2)
@@ -954,7 +941,7 @@ exports.getProductsByIds = async (req, res) => {
         CASE 
           WHEN q.offer IS NOT NULL THEN
             CASE 
-              WHEN q.offer->>'type' = 'percentage' THEN 
+              WHEN q.offer->>'type' = 'percent' OR q.offer->>'type' = 'percentage' THEN 
                 ROUND(q.price * (1 - CAST(q.offer->>'value' AS NUMERIC) / 100.0), 2)
               WHEN q.offer->>'type' IN ('flat', 'fixed') THEN 
                 GREATEST(0::numeric, ROUND(q.price - CAST(q.offer->>'value' AS NUMERIC), 2))
@@ -967,10 +954,7 @@ exports.getProductsByIds = async (req, res) => {
         p.*,
         p.id as 'productId  ',
         p.title AS name,
-        CASE 
-            WHEN p.is_tax_inclusive THEN p.selling_price
-            ELSE ROUND(p.selling_price * (1 + COALESCE(p.gst_slab,0)/100.0), 2)
-        END AS price,
+        p.selling_price AS price,
         COALESCE(p.gst_slab, 0) AS "gstPercent",
         CASE 
             WHEN p.is_tax_inclusive THEN ROUND(p.selling_price - (p.selling_price / (1 + COALESCE(p.gst_slab,0)/100.0)), 2)
