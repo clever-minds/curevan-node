@@ -491,7 +491,27 @@ exports.listKnowledgeBasepublic = async (req, res) => {
 
     let query = `
       SELECT 
-        kb.*,
+        kb.id, 
+        kb.title, 
+        kb.slug, 
+        kb.excerpt, 
+        kb.content, 
+        kb.featured_image, 
+        kb.ai_hint, 
+        kb.author_id, 
+        kb.status, 
+        kb.tags, 
+        kb.total_views, 
+        kb.unique_views, 
+        kb.created_at, 
+        kb.published_at, 
+        kb.updated_at, 
+        kb.meta_description, 
+        kb.youtube_video_url, 
+        kb.content_type, 
+        kb.difficulty, 
+        kb.duration_min, 
+        kb.sop_version,
         kb.tags AS categories,
         kb.duration_min AS "durationMin",
         kb.sop_version AS "sopVersion",
@@ -501,9 +521,11 @@ exports.listKnowledgeBasepublic = async (req, res) => {
         kb.meta_description AS "metaDescription",
         kb.youtube_video_url AS "videoUrl",
         m.file_path AS "featuredImage",
-        kb.featured_image AS "featuredImageId"
+        kb.featured_image AS "featuredImageId",
+        u.name AS "author_name"
       FROM knowledge_base kb
       LEFT JOIN media m ON m.id = kb.featured_image
+      LEFT JOIN users u ON u.id = kb.author_id::int
       WHERE kb.content_type = 'post'
       AND kb.status = 'published'
       ORDER BY kb.created_at DESC
