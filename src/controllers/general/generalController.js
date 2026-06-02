@@ -346,6 +346,7 @@ exports.addKnowledgeBase = async (req, res) => {
       excerpt,
       content,
       featuredImage,
+      featuredImageId,
       aiHint,
       contentType = "post",
       status = "draft",
@@ -379,12 +380,25 @@ exports.addKnowledgeBase = async (req, res) => {
 
     const authorName = user?.name || "Unknown Author";
 
+    let finalFeaturedImageId = null;
+    if (featuredImageId) {
+      const parsed = Number(featuredImageId);
+      if (!isNaN(parsed) && parsed > 0) {
+        finalFeaturedImageId = parsed;
+      }
+    } else if (featuredImage) {
+      const parsed = Number(featuredImage);
+      if (!isNaN(parsed) && parsed > 0) {
+        finalFeaturedImageId = parsed;
+      }
+    }
+
     const replacements = {
       title,
       slug,
       excerpt: excerpt ?? null,
       content: content ?? null,
-      featuredImage: featuredImage ?? null,
+      featuredImage: finalFeaturedImageId,
       aiHint: aiHint ?? null,
       videoUrl: videoUrl ?? null,
       contentType,
@@ -668,6 +682,7 @@ exports.updateKnowledgeBase = async (req, res) => {
       excerpt,
       content,
       featuredImage,
+      featuredImageId,
       aiHint,
       status,
       tags = [],
@@ -688,13 +703,26 @@ exports.updateKnowledgeBase = async (req, res) => {
 
     const formattedTags = tags.length ? `{${tags.join(",")}}` : null;
 
+    let finalFeaturedImageId = null;
+    if (featuredImageId) {
+      const parsed = Number(featuredImageId);
+      if (!isNaN(parsed) && parsed > 0) {
+        finalFeaturedImageId = parsed;
+      }
+    } else if (featuredImage) {
+      const parsed = Number(featuredImage);
+      if (!isNaN(parsed) && parsed > 0) {
+        finalFeaturedImageId = parsed;
+      }
+    }
+
     const replacements = {
       id,
       title,
       slug,
       excerpt: excerpt ?? null,
       content: content ?? null,
-      featuredImage: featuredImage ?? null,
+      featuredImage: finalFeaturedImageId,
       aiHint: aiHint ?? null,
       videoUrl: videoUrl ?? null,
       status,
