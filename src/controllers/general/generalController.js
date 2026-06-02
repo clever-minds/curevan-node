@@ -355,6 +355,7 @@ exports.addKnowledgeBase = async (req, res) => {
       difficulty,
       durationMin,
       sopVersion,
+      faqs = [],
       createdAt = new Date(),
       publishedAt = null,
       updatedAt = new Date(),
@@ -395,6 +396,7 @@ exports.addKnowledgeBase = async (req, res) => {
       difficulty: difficulty ?? null,
       durationMin: durationMin ?? null,
       sopVersion: sopVersion ?? null,
+      faqs: faqs ? JSON.stringify(faqs) : '[]',
       createdAt,
       publishedAt,
       updatedAt,
@@ -408,7 +410,7 @@ exports.addKnowledgeBase = async (req, res) => {
         youtube_video_url,
         content_type,
         author_id, author_name, status, tags, meta_description,
-        difficulty, duration_min, sop_version,
+        difficulty, duration_min, sop_version, faqs,
         total_views, unique_views, created_at, published_at, updated_at
       )
       VALUES
@@ -417,7 +419,7 @@ exports.addKnowledgeBase = async (req, res) => {
         :videoUrl,
         :contentType,
         :authorId, :authorName, :status, :tags, :metaDescription,
-        :difficulty, :durationMin, :sopVersion,
+        :difficulty, :durationMin, :sopVersion, :faqs,
         0, 0, :createdAt, :publishedAt, :updatedAt
       )
       RETURNING id
@@ -512,6 +514,7 @@ exports.listKnowledgeBasepublic = async (req, res) => {
         kb.difficulty, 
         kb.duration_min, 
         kb.sop_version,
+        kb.faqs,
         kb.tags AS categories,
         kb.duration_min AS "durationMin",
         kb.sop_version AS "sopVersion",
@@ -572,6 +575,7 @@ exports.getKnowledgeBaseById = async (req, res) => {
         kb.sop_version AS "sopVersion",
         kb.created_at AS "createdAt",
         kb.published_at AS "publishedAt",
+        kb.faqs,
         m.file_path AS "featuredImage",
         kb.featured_image AS "featuredImageId"
       FROM knowledge_base kb
@@ -627,6 +631,7 @@ exports.getKnowledgeBaseBySlug = async (req, res) => {
         kb.sop_version AS "sopVersion",
         kb.created_at AS "createdAt",
         kb.published_at AS "publishedAt",
+        kb.faqs,
         m.file_path AS "featuredImage",
         kb.featured_image AS "featuredImageId"
       FROM knowledge_base kb
@@ -670,6 +675,7 @@ exports.updateKnowledgeBase = async (req, res) => {
       difficulty,
       durationMin,
       sopVersion,
+      faqs = [],
       publishedAt = null,
       updatedAt = new Date(),
       contentType = "post",
@@ -696,6 +702,7 @@ exports.updateKnowledgeBase = async (req, res) => {
       difficulty: difficulty ?? null,
       durationMin: durationMin ?? null,
       sopVersion: sopVersion ?? null,
+      faqs: faqs ? JSON.stringify(faqs) : '[]',
       publishedAt,
       updatedAt,
     };
@@ -717,6 +724,7 @@ exports.updateKnowledgeBase = async (req, res) => {
         difficulty = :difficulty,
         duration_min = :durationMin,
         sop_version = :sopVersion,
+        faqs = :faqs,
         published_at = :publishedAt,
         updated_at = :updatedAt
       WHERE id = :id
