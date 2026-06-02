@@ -430,6 +430,7 @@ exports.addKnowledgeBase = async (req, res) => {
     const typeLabel = contentType === "post" ? "journal" : contentType;
     return res.success(null, `${typeLabel} aDDED successfully`);  
   } catch (error) {
+    console.error("addKnowledgeBase error:", error);
     return res.error("Failed to update Knowledge Base");
   }
 };
@@ -734,6 +735,7 @@ exports.updateKnowledgeBase = async (req, res) => {
     const typeLabel = contentType === "post" ? "journal" : contentType;
     return res.success(null, `${typeLabel} updated successfully`);  
   } catch (error) {
+    console.error("updateKnowledgeBase error:", error);
     return res.error("Failed to update Knowledge Base");
   }
 };
