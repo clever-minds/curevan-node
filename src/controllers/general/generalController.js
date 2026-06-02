@@ -346,6 +346,7 @@ exports.addKnowledgeBase = async (req, res) => {
       excerpt,
       content,
       featuredImage,
+      featuredImageId,
       aiHint,
       contentType = "post",
       status = "draft",
@@ -384,7 +385,7 @@ exports.addKnowledgeBase = async (req, res) => {
       slug,
       excerpt: excerpt ?? null,
       content: content ?? null,
-      featuredImage: featuredImage ?? null,
+      featuredImage: featuredImageId ? Number(featuredImageId) : (featuredImage && !isNaN(Number(featuredImage)) ? Number(featuredImage) : null),
       aiHint: aiHint ?? null,
       videoUrl: videoUrl ?? null,
       contentType,
@@ -430,6 +431,7 @@ exports.addKnowledgeBase = async (req, res) => {
     const typeLabel = contentType === "post" ? "journal" : contentType;
     return res.success(null, `${typeLabel} aDDED successfully`);  
   } catch (error) {
+    console.error("ADD KNOWLEDGE BASE ERROR:", error);
     return res.error("Failed to update Knowledge Base");
   }
 };
@@ -667,6 +669,7 @@ exports.updateKnowledgeBase = async (req, res) => {
       excerpt,
       content,
       featuredImage,
+      featuredImageId,
       aiHint,
       status,
       tags = [],
@@ -693,7 +696,7 @@ exports.updateKnowledgeBase = async (req, res) => {
       slug,
       excerpt: excerpt ?? null,
       content: content ?? null,
-      featuredImage: featuredImage ?? null,
+      featuredImage: featuredImageId ? Number(featuredImageId) : (featuredImage && !isNaN(Number(featuredImage)) ? Number(featuredImage) : null),
       aiHint: aiHint ?? null,
       videoUrl: videoUrl ?? null,
       status,
@@ -734,6 +737,7 @@ exports.updateKnowledgeBase = async (req, res) => {
     const typeLabel = contentType === "post" ? "journal" : contentType;
     return res.success(null, `${typeLabel} updated successfully`);  
   } catch (error) {
+    console.error("UPDATE KNOWLEDGE BASE ERROR:", error);
     return res.error("Failed to update Knowledge Base");
   }
 };
