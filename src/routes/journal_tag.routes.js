@@ -1,7 +1,7 @@
 const express = require("express");
 const router = express.Router();
 
-const Tag = require("../controllers/Tag/JournalTagController");
+const Tag = require("../controllers/category/JournalTagController");
 const authMiddleware = require("../middlewares/authMiddleware");
 const responseHandler = require("../middlewares/responseHandler");
 
