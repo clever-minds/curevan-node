@@ -29,6 +29,7 @@ app.use("/uploads", express.static(path.join(__dirname, "..", "uploads")));
 app.use('/api/auth', require('./routes/auth.routes'));
 app.use('/api/category', require('./routes/category.routes'));
 app.use('/api/journal-categories', require('./routes/journal_category.routes'));
+app.use('/api/journal-tags', require('./routes/journal_tag.routes'));
 app.use('/api/products', require('./routes/products.routes'));
 app.use('/api/media', require('./routes/media.routes'));
 app.use('/api/coupons', require('./routes/coupons.routes'));

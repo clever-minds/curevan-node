@@ -351,6 +351,7 @@ exports.addKnowledgeBase = async (req, res) => {
       contentType = "post",
       status = "draft",
       tags = [],
+      categories = [],
       metaDescription,
       videoUrl,
       difficulty,
@@ -406,6 +407,7 @@ exports.addKnowledgeBase = async (req, res) => {
       authorName,
       status,
       tags: tags?.length ? `{${tags.join(",")}}` : null,
+      categories: categories?.length ? `{${categories.join(",")}}` : null,
       metaDescription: metaDescription ?? null,
       difficulty: difficulty ?? null,
       durationMin: durationMin ?? null,
@@ -423,7 +425,7 @@ exports.addKnowledgeBase = async (req, res) => {
         title, slug, excerpt, content, featured_image, ai_hint,
         youtube_video_url,
         content_type,
-        author_id, author_name, status, tags, meta_description,
+        author_id, author_name, status, tags, categories, meta_description,
         difficulty, duration_min, sop_version, faqs,
         total_views, unique_views, created_at, published_at, updated_at
       )
@@ -432,7 +434,7 @@ exports.addKnowledgeBase = async (req, res) => {
         :title, :slug, :excerpt, :content, :featuredImage, :aiHint,
         :videoUrl,
         :contentType,
-        :authorId, :authorName, :status, :tags, :metaDescription,
+        :authorId, :authorName, :status, :tags, :categories, :metaDescription,
         :difficulty, :durationMin, :sopVersion, :faqs,
         0, 0, :createdAt, :publishedAt, :updatedAt
       )
@@ -459,7 +461,6 @@ exports.listKnowledgeBase = async (req, res) => {
     let query = `
       SELECT 
         kb.*,
-        kb.tags AS categories,
         kb.duration_min AS "durationMin",
         kb.sop_version AS "sopVersion",
         kb.created_at AS "createdAt",
@@ -530,7 +531,6 @@ exports.listKnowledgeBasepublic = async (req, res) => {
         kb.duration_min, 
         kb.sop_version,
         kb.faqs,
-        kb.tags AS categories,
         kb.duration_min AS "durationMin",
         kb.sop_version AS "sopVersion",
         kb.created_at AS "createdAt",
@@ -577,7 +577,7 @@ exports.getKnowledgeBaseById = async (req, res) => {
       SELECT 
         kb.title,
         kb.slug,
-        kb.tags AS categories,
+        kb.categories,
         kb.excerpt,
         kb.content,
         kb.ai_hint AS "aiHint",
@@ -633,7 +633,7 @@ exports.getKnowledgeBaseBySlug = async (req, res) => {
       SELECT 
         kb.title,
         kb.slug,
-        kb.tags AS categories,
+        kb.categories,
         kb.excerpt,
         kb.content,
         kb.ai_hint AS "aiHint",
@@ -686,6 +686,7 @@ exports.updateKnowledgeBase = async (req, res) => {
       aiHint,
       status,
       tags = [],
+      categories = [],
       metaDescription,
       videoUrl,
       difficulty,
@@ -727,6 +728,7 @@ exports.updateKnowledgeBase = async (req, res) => {
       videoUrl: videoUrl ?? null,
       status,
       tags: formattedTags,
+      categories: categories.length ? `{${categories.join(",")}}` : null,
       metaDescription: metaDescription ?? null,
       difficulty: difficulty ?? null,
       durationMin: durationMin ?? null,
@@ -749,6 +751,7 @@ exports.updateKnowledgeBase = async (req, res) => {
         youtube_video_url = :videoUrl,
         status = :status,
         tags = :tags,
+        categories = :categories,
         meta_description = :metaDescription,
         difficulty = :difficulty,
         duration_min = :durationMin,
