@@ -38,6 +38,7 @@ exports.listCart = async (req, res) => {
          p.category_id AS "categoryId",
          p.status AS "isActive",
          p.is_coupon_excluded AS "isCouponExcluded",
+         p.is_tax_inclusive AS "isTaxInclusive",
          p.sku,
          p.hsn_code AS "hsnCode",
          m.file_path AS "featuredImage",
