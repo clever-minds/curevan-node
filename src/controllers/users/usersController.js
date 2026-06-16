@@ -806,8 +806,8 @@ exports.approveChangeRequest = async (req, res) => {
       gender: "gender",
       country: "country",
       emergencyContact: "emergency_contact",
-      email_opt_in: "email_opt_in",
-      push_opt_in: "push_opt_in"
+      email_opt_in: "email_notifications",
+      push_opt_in: "push_notifications"
     };
 
     const fieldToTableMap = {
@@ -826,8 +826,8 @@ exports.approveChangeRequest = async (req, res) => {
       gender: "users",
       country: "users",
       emergency_contact: "users",
-      email_opt_in: "users",
-      push_opt_in: "users",
+      email_notifications: "users",
+      push_notifications: "users",
       default_role_id: "users",
 
       // therapist_profiles table
