@@ -828,7 +828,6 @@ exports.approveChangeRequest = async (req, res) => {
       emergency_contact: "users",
       email_notifications: "users",
       push_notifications: "users",
-      default_role_id: "users",
 
       // therapist_profiles table
       bio: "therapist_profiles",
