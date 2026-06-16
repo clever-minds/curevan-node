@@ -43,6 +43,7 @@ app.use('/api/therapists', require('./routes/therapist.routes'));
 
 app.use('/api/appointments', require('./routes/appointments.routes'));
 app.use('/api/general', require('./routes/general.routes'));
+app.use('/api/service-types', require('./routes/service_types.routes'));
 app.use('/api/support', require('./routes/support.routes'));
 app.use('/api/shipment', require('./routes/shipment.routes'));
 app.use('/api/stats', require('./routes/stats.routes'));
