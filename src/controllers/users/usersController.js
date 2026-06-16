@@ -762,6 +762,14 @@ exports.approveChangeRequest = async (req, res) => {
       return res.status(400).json({ error: "Invalid change request format" });
     }
 
+    if (changesObj.data && changesObj.data.new && typeof changesObj.data.new === "object") {
+      for (const [key, val] of Object.entries(changesObj.data.new)) {
+        if (!changesObj[key]) {
+          changesObj[key] = { new: val };
+        }
+      }
+    }
+
     /* ---------- GET PROFILE ---------- */
     const [profile] = await sequelize.query(
       `SELECT id FROM therapist_profiles WHERE user_id = :userId`,
@@ -790,10 +798,11 @@ exports.approveChangeRequest = async (req, res) => {
       membershipPlan: "membership_plan",
       serviceRadiusKm: "service_radius_km",
       experienceYears: "experience_years",
+      experience: "experience_years",
       specialty: "specialty",
       bio: "bio",
       qualification: "qualification",
-      dob: "dob",
+      dob: "date_of_birth",
       gender: "gender",
       country: "country",
       emergencyContact: "emergency_contact",
@@ -813,12 +822,13 @@ exports.approveChangeRequest = async (req, res) => {
       pin: "users",
       latitude: "users",
       longitude: "users",
-      dob: "users",
+      date_of_birth: "users",
       gender: "users",
       country: "users",
       emergency_contact: "users",
       email_opt_in: "users",
       push_opt_in: "users",
+      default_role_id: "users",
 
       // therapist_profiles table
       bio: "therapist_profiles",
