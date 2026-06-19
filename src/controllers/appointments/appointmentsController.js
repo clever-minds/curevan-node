@@ -151,9 +151,10 @@ exports.listAppointmentsForUser = async (req, res) => {
          a.payment_status AS "paymentStatus",
          a.pcr_status AS "pcrStatus",
          a.verification_status AS "verificationStatus",
-         a.rating,
-         a.review
+         tr.rating,
+         tr.review
        FROM appointments a
+       LEFT JOIN therapist_reviews tr ON tr.appointment_id = a.id
        WHERE ${field} = :userId
        ORDER BY a.date DESC`,
       { replacements: { userId }, type: QueryTypes.SELECT }

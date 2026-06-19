@@ -818,7 +818,7 @@ exports.getProfile = async (req, res) => {
     profile.availability = availabilityObj;
 
     // 5️⃣ Fetch average rating and reviews
-    const [[avgRatingRow]] = await sequelize.query(
+    const [avgRatingRow] = await sequelize.query(
       `SELECT AVG(rating) as avg_rating FROM therapist_reviews WHERE therapist_id = :userId AND rating IS NOT NULL`,
       { replacements: { userId: profile.user_id }, type: QueryTypes.SELECT }
     );
