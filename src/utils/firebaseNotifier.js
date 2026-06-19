@@ -1,4 +1,5 @@
-const admin = require("firebase-admin");
+const { initializeApp, cert } = require("firebase-admin/app");
+const { getMessaging } = require("firebase-admin/messaging");
 
 // Note: You must provide a valid service account JSON to initialize Firebase Admin.
 // For now, this handles the initialization safely if no credentials are provided yet.
@@ -12,23 +13,21 @@ try {
 
   // If service account JSON is available locally, use it
   if (serviceAccount) {
-    admin.initializeApp({
-      credential: admin.credential.cert(serviceAccount)
+    initializeApp({
+      credential: cert(serviceAccount)
     });
   } else if (process.env.FIREBASE_SERVICE_ACCOUNT) {
     serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT);
-    admin.initializeApp({
-      credential: admin.credential.cert(serviceAccount)
+    initializeApp({
+      credential: cert(serviceAccount)
     });
   } else {
     // Attempt default initialization if credentials are in the environment (e.g. GOOGLE_APPLICATION_CREDENTIALS)
-    admin.initializeApp();
+    initializeApp();
   }
 } catch (error) {
   console.warn("Firebase Admin Initialization Warning:", error.message);
 }
-
-const { getMessaging } = require("firebase-admin/messaging");
 
 /**
  * Sends a targeted notification to a specific therapist.
