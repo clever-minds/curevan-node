@@ -28,6 +28,8 @@ try {
   console.warn("Firebase Admin Initialization Warning:", error.message);
 }
 
+const { getMessaging } = require("firebase-admin/messaging");
+
 /**
  * Sends a targeted notification to a specific therapist.
  * @param {string} token - The FCM device token for the therapist.
@@ -45,7 +47,7 @@ exports.sendToTherapist = async (token, title, body, data = {}) => {
   };
 
   try {
-    const response = await admin.messaging().send(message);
+    const response = await getMessaging().send(message);
     console.log("Successfully sent notification to therapist:", response);
   } catch (error) {
     console.error("Error sending notification to therapist:", error);
@@ -68,7 +70,7 @@ exports.sendToAllTherapists = async (title, body, data = {}, topic = "all_therap
   };
 
   try {
-    const response = await admin.messaging().send(message);
+    const response = await getMessaging().send(message);
     console.log("Successfully sent notification to all therapists:", response);
   } catch (error) {
     console.error("Error sending notification to all therapists:", error);
