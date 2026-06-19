@@ -299,15 +299,22 @@ exports.createBookingAndInvoice = async (req, res) => {
         }
       } else {
         // Handle unassigned booking (Request a Therapist) - broadcast to nearby available therapists within 5km
-        const [patientInfo] = await sequelize.query(
-          `SELECT latitude, longitude FROM users WHERE id = :patientId`,
-          { replacements: { patientId: bookingData.patientId }, type: QueryTypes.SELECT }
-        );
+        let lat, lng;
+        if (bookingData.latitude && bookingData.longitude) {
+          lat = parseFloat(bookingData.latitude);
+          lng = parseFloat(bookingData.longitude);
+        } else {
+          const [patientInfo] = await sequelize.query(
+            `SELECT latitude, longitude FROM users WHERE id = :patientId`,
+            { replacements: { patientId: bookingData.patientId }, type: QueryTypes.SELECT }
+          );
+          if (patientInfo && patientInfo.latitude && patientInfo.longitude) {
+            lat = parseFloat(patientInfo.latitude);
+            lng = parseFloat(patientInfo.longitude);
+          }
+        }
 
-        if (patientInfo && patientInfo.latitude && patientInfo.longitude) {
-          const lat = parseFloat(patientInfo.latitude);
-          const lng = parseFloat(patientInfo.longitude);
-
+        if (lat && lng) {
           // Find therapists within 5km who don't have an overlapping appointment
           const nearbyTherapists = await sequelize.query(
             `SELECT u.fcm_token, u.name
