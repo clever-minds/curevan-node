@@ -15,8 +15,8 @@ app.use(cors({
     "https://your-app.vercel.app",
     "https://13.235.132.236",
     "http://localhost:3000",
-    "https://curevan-dev.vercel.app/",
-    "https://curevan-dev.vercel.app/",
+    "https://curevan-dev.vercel.app",
+    "https://curevan-nybpeh6ha-cleverminds.vercel.app",
     "http://192.168.29.237:3000",
     "https://api.curevan.com",
     "http://192.168.29.207:3000"
