@@ -23,6 +23,8 @@ router.post("/reset-password", responseHandler, auth.resetPassword);
 
 router.put("/update-profile", authMiddleware, responseHandler, auth.updateUserProfile);
 
+router.put("/update-fcm-token", authMiddleware, auth.updateFcmToken);
+
 router.post("/change-profile-request", authMiddleware, responseHandler, auth.createChangeRequest);
 
 router.get(

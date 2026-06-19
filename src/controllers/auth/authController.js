@@ -1398,3 +1398,37 @@ exports.createChangeRequest = async (req, res) => {
     return res.error("Failed to submit change request");
   }
 };
+
+exports.updateFcmToken = async (req, res) => {
+  try {
+    const userId = req.user?.id;
+    const { fcm_token } = req.body;
+
+    if (!userId) {
+      return res.status(401).json({ message: "Unauthorized" });
+    }
+
+    if (!fcm_token) {
+      return res.status(400).json({ message: "FCM token is required" });
+    }
+
+    await sequelize.query(
+      `UPDATE users SET fcm_token = :fcm_token WHERE id = :userId`,
+      {
+        replacements: { fcm_token, userId },
+        type: QueryTypes.UPDATE
+      }
+    );
+
+    return res.json({
+      success: true,
+      message: "FCM token updated successfully"
+    });
+
+  } catch (error) {
+    console.error("❌ updateFcmToken error:", error);
+    return res.status(500).json({
+      message: "Internal server error"
+    });
+  }
+};
