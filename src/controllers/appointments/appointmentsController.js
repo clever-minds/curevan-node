@@ -319,15 +319,16 @@ exports.createBookingAndInvoice = async (req, res) => {
           const nearbyTherapists = await sequelize.query(
             `SELECT u.fcm_token, u.name
              FROM users u
+             JOIN therapist_profiles tp ON tp.user_id = u.id
              WHERE u.role = 'therapist'
              AND u.fcm_token IS NOT NULL
-             AND u.latitude IS NOT NULL
-             AND u.longitude IS NOT NULL
+             AND tp.lat IS NOT NULL
+             AND tp.lng IS NOT NULL
              AND (
                  6371 * acos(
-                     cos(radians(:lat)) * cos(radians(u.latitude)) *
-                     cos(radians(u.longitude) - radians(:lng)) +
-                     sin(radians(:lat)) * sin(radians(u.latitude))
+                     cos(radians(:lat)) * cos(radians(tp.lat)) *
+                     cos(radians(tp.lng) - radians(:lng)) +
+                     sin(radians(:lat)) * sin(radians(tp.lat))
                  )
              ) <= 5
              AND u.id NOT IN (
