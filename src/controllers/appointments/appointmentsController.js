@@ -1013,7 +1013,7 @@ exports.updateAppointmentStatus = async (req, res) => {
       }
     );
     
-    return res.json({ success: true, message: \`Status updated to \${status}\` });
+    return res.json({ success: true, message: `Status updated to ${status}` });
   } catch (error) {
     console.error("Error updating status:", error);
     return res.status(500).json({ success: false, error: "Failed to update status" });
