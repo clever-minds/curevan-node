@@ -11,6 +11,10 @@ async function runAlter() {
     await sequelize.query(`ALTER TABLE appointments ALTER COLUMN therapist_name DROP NOT NULL;`);
     console.log("✅ Successfully made therapist_id and therapist_name nullable in appointments table.");
 
+    // Add reports column if missing
+    await sequelize.query(`ALTER TABLE appointments ADD COLUMN IF NOT EXISTS reports JSONB;`);
+    console.log("✅ Successfully added reports column to appointments table.");
+
     // Make therapist_id nullable in pcr
     await sequelize.query(`ALTER TABLE pcr ALTER COLUMN therapist_id DROP NOT NULL;`);
     console.log("✅ Successfully made therapist_id nullable in pcr table.");
