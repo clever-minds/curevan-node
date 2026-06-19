@@ -284,17 +284,23 @@ exports.createBookingAndInvoice = async (req, res) => {
 
     try {
       // Send Targeted Push Notification to the Therapist for Direct Booking
-      const [therapistInfo] = await sequelize.query(
-        `SELECT fcm_token FROM users WHERE id = :therapistId`,
-        { replacements: { therapistId: bookingData.therapistId }, type: QueryTypes.SELECT }
-      );
-      if (therapistInfo && therapistInfo.fcm_token) {
-        await firebaseNotifier.sendToTherapist(
-          therapistInfo.fcm_token,
-          "New Direct Booking Assigned",
-          `You have a new appointment with ${bookingData.patientName} on ${bookingData.date} at ${bookingData.time}.`,
-          { appointmentId: String(appointmentId), type: "direct_booking" }
+      if (bookingData.therapistId) {
+        const [therapistInfo] = await sequelize.query(
+          `SELECT fcm_token FROM users WHERE id = :therapistId`,
+          { replacements: { therapistId: bookingData.therapistId }, type: QueryTypes.SELECT }
         );
+        if (therapistInfo && therapistInfo.fcm_token) {
+          await firebaseNotifier.sendToTherapist(
+            therapistInfo.fcm_token,
+            "New Direct Booking Assigned",
+            `You have a new appointment with ${bookingData.patientName} on ${bookingData.date} at ${bookingData.time}.`,
+            { appointmentId: String(appointmentId), type: "direct_booking" }
+          );
+        }
+      } else {
+        // Handle unassigned booking (Request a Therapist)
+        // You can send this to Admin or broadcast to all therapists later if needed.
+        console.log("Unassigned booking - no direct therapist notification sent.");
       }
     } catch (fcmErr) {
       console.error("Failed to send direct booking FCM notification:", fcmErr);
