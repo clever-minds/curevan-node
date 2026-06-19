@@ -524,6 +524,7 @@ exports.updateProfile = async (req, res) => {
       bankIfscCode,
       serviceRadiusKm,
       specialty,
+      documents, // ✅ NEW
 
       availability // ✅ NEW
     } = req.body;
@@ -581,7 +582,8 @@ exports.updateProfile = async (req, res) => {
         bank_account_number=:bankAccountNumber,
         bank_ifsc_code=:bankIfscCode,
         service_radius_km=:serviceRadiusKm,
-        specialty=:specialty
+        specialty=:specialty,
+        documents=:documents
       WHERE user_id=:userId`,
       {
         replacements: {
@@ -596,7 +598,8 @@ exports.updateProfile = async (req, res) => {
           bankAccountNumber,
           bankIfscCode,
           serviceRadiusKm,
-          specialty: pgSpecialty
+          specialty: pgSpecialty,
+          documents: documents ? JSON.stringify(documents) : '[]'
         },
         type: QueryTypes.UPDATE,
         transaction: t
@@ -1286,6 +1289,113 @@ exports.getAvailability = async (req, res) => {
 
   } catch (error) {
     console.error("getAvailability error:", error);
+    res.status(500).json({ status: false, message: "Server error" });
+  }
+};
+
+/* =========================
+   GET DASHBOARD STATS
+========================= */
+exports.getDashboardStats = async (req, res) => {
+  try {
+    const { therapistId } = req.params;
+
+    // 1. KPIs
+    // Sessions Completed (status = Completed)
+    const [[sessionsCompletedRow]] = await sequelize.query(
+      `SELECT COUNT(*) as count FROM appointments WHERE therapist_id = :id AND status = 'Completed'`,
+      { replacements: { id: therapistId } }
+    );
+    const sessionsCompleted = parseInt(sessionsCompletedRow.count || 0, 10);
+
+    // Unique Patients
+    const [[uniquePatientsRow]] = await sequelize.query(
+      `SELECT COUNT(DISTINCT patient_id) as count FROM appointments WHERE therapist_id = :id`,
+      { replacements: { id: therapistId } }
+    );
+    const uniquePatients = parseInt(uniquePatientsRow.count || 0, 10);
+
+    // Avg Rating
+    const [[avgRatingRow]] = await sequelize.query(
+      `SELECT AVG(rating) as avg_rating FROM appointments WHERE therapist_id = :id AND rating IS NOT NULL`,
+      { replacements: { id: therapistId } }
+    );
+    const avgRating = parseFloat(avgRatingRow.avg_rating || 0).toFixed(1);
+
+    // Net Payout (Estimate based on 90% of service_amount)
+    const [[netPayoutRow]] = await sequelize.query(
+      `SELECT SUM(service_amount) as total FROM appointments WHERE therapist_id = :id AND status = 'Completed'`,
+      { replacements: { id: therapistId } }
+    );
+    const grossPayout = parseFloat(netPayoutRow.total || 0);
+    const netPayout = grossPayout * 0.9; // 10% platform fee assumed for now
+
+    // Product Commissions (Estimate - 0 for now unless there's a products table)
+    const productCommissions = 0;
+    
+    // PCR Lock Rate (Estimate - % of completed sessions that have PCR locked)
+    // Assuming PCR is locked if pcr_status = 'locked'
+    const [[pcrLockedRow]] = await sequelize.query(
+      `SELECT COUNT(*) as count FROM appointments WHERE therapist_id = :id AND status = 'Completed' AND pcr_status = 'locked'`,
+      { replacements: { id: therapistId } }
+    );
+    const pcrLockedCount = parseInt(pcrLockedRow.count || 0, 10);
+    const pcrLockRate = sessionsCompleted > 0 ? Math.round((pcrLockedCount / sessionsCompleted) * 100) : 0;
+
+    // 2. Charts Data
+    // Session Data (Last 7 days)
+    const sessionDataQuery = await sequelize.query(
+      `SELECT DATE(date) as date, COUNT(*) as "sessionCount" 
+       FROM appointments 
+       WHERE therapist_id = :id AND status = 'Completed' AND date >= current_date - interval '7 days'
+       GROUP BY DATE(date) ORDER BY DATE(date) ASC`,
+      { replacements: { id: therapistId }, type: QueryTypes.SELECT }
+    );
+    
+    // Mode Split
+    const modeSplitQuery = await sequelize.query(
+      `SELECT mode as name, COUNT(*) as value 
+       FROM appointments 
+       WHERE therapist_id = :id AND status = 'Completed'
+       GROUP BY mode`,
+      { replacements: { id: therapistId }, type: QueryTypes.SELECT }
+    );
+
+    // Weekly Earnings Data (Last 4 weeks)
+    const weeklyEarningsQuery = await sequelize.query(
+      `SELECT to_char(date, 'WW') as week_num, MIN(date) as week_start, SUM(service_amount) * 0.9 as "Service"
+       FROM appointments 
+       WHERE therapist_id = :id AND status = 'Completed' AND date >= current_date - interval '28 days'
+       GROUP BY week_num ORDER BY week_num ASC`,
+      { replacements: { id: therapistId }, type: QueryTypes.SELECT }
+    );
+    const weeklyEarningsData = weeklyEarningsQuery.map(row => ({
+      week: `Week of ${new Date(row.week_start).toLocaleDateString('en-US', { month: 'short', day: 'numeric'})}`,
+      Service: parseFloat(row.Service || 0),
+      Product: 0
+    }));
+
+    res.json({
+      status: true,
+      data: {
+        kpis: {
+          sessionsCompleted,
+          uniquePatients,
+          avgRating,
+          netPayout,
+          productCommissions,
+          pcrLockRate
+        },
+        charts: {
+          sessionData: sessionDataQuery,
+          modeSplitData: modeSplitQuery,
+          weeklyEarningsData
+        }
+      }
+    });
+
+  } catch (error) {
+    console.error("getDashboardStats error:", error);
     res.status(500).json({ status: false, message: "Server error" });
   }
 };

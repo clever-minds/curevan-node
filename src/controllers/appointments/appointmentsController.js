@@ -1,6 +1,8 @@
 const { QueryTypes } = require("sequelize");
 const { sequelize } = require("../../config/db");
 const transporter = require("../../config/mailer");
+const firebaseNotifier = require("../../utils/firebaseNotifier");
+
 
 // ✅ LIST APPOINTMENTS
 exports.listAppointments = async (req, res) => {
@@ -148,7 +150,9 @@ exports.listAppointmentsForUser = async (req, res) => {
          a.created_at AS "createdAt",
          a.payment_status AS "paymentStatus",
          a.pcr_status AS "pcrStatus",
-         a.verification_status AS "verificationStatus"
+         a.verification_status AS "verificationStatus",
+         a.rating,
+         a.review
        FROM appointments a
        WHERE ${field} = :userId
        ORDER BY a.date DESC`,
@@ -183,11 +187,11 @@ exports.createBookingAndInvoice = async (req, res) => {
       `INSERT INTO appointments (
         patient_id, patient_name, date_of_birth, therapist_id, therapist_name, service_type_id, therapy_type,
         service_amount, total_amount, date, time, mode, notes, service_address_id,
-        status, verification_status, payment_status, pcr_status, created_at
+        status, verification_status, payment_status, pcr_status, reports, created_at
       ) VALUES (
         :patientId, :patientName, :dateofbirth, :therapistId, :therapistName, :serviceTypeId, :therapyType,
         :serviceAmount, :totalAmount, :date, :time, :mode, :notes, :serviceAddress,
-        :status, :verificationStatus, :paymentStatus, :pcrStatus, NOW()
+        :status, :verificationStatus, :paymentStatus, :pcrStatus, :reports, NOW()
       ) RETURNING id`,
       {
         replacements: {
@@ -209,6 +213,7 @@ exports.createBookingAndInvoice = async (req, res) => {
           verificationStatus: "Pending",
           paymentStatus: "Paid",
           pcrStatus: "not_started",
+          reports: bookingData.reports ? JSON.stringify(bookingData.reports) : null,
         },
         type: sequelize.QueryTypes.INSERT,
         transaction: t,
@@ -275,6 +280,24 @@ exports.createBookingAndInvoice = async (req, res) => {
     // ✅ Commit transaction
     // --------------------------
     await t.commit();
+
+    try {
+      // Send Targeted Push Notification to the Therapist for Direct Booking
+      const [therapistInfo] = await sequelize.query(
+        `SELECT fcm_token FROM users WHERE id = :therapistId`,
+        { replacements: { therapistId: bookingData.therapistId }, type: QueryTypes.SELECT }
+      );
+      if (therapistInfo && therapistInfo.fcm_token) {
+        await firebaseNotifier.sendToTherapist(
+          therapistInfo.fcm_token,
+          "New Direct Booking Assigned",
+          `You have a new appointment with ${bookingData.patientName} on ${bookingData.date} at ${bookingData.time}.`,
+          { appointmentId: String(appointmentId), type: "direct_booking" }
+        );
+      }
+    } catch (fcmErr) {
+      console.error("Failed to send direct booking FCM notification:", fcmErr);
+    }
 
     try {
       // Send Booking Confirmation Email
@@ -804,5 +827,231 @@ exports.updatePcr = async (req, res) => {
     await t.rollback();
     console.error("Error updating PCR:", error);
     return res.status(500).json({ success: false, error: "Failed to update PCR" });
+  }
+};
+
+// ==========================================
+// SERVICE-FIRST BOOKING FLOW
+// ==========================================
+
+// ✅ 1. CREATE BOOKING REQUEST (Status = Searching)
+exports.createBookingRequest = async (req, res) => {
+  const { bookingData } = req.body;
+
+  try {
+    if (!bookingData) {
+      return res.status(400).json({ success: false, error: "Booking data required" });
+    }
+
+    const [rows] = await sequelize.query(
+      `INSERT INTO appointments (
+        patient_id, patient_name, date_of_birth, service_type_id, therapy_type,
+        service_amount, total_amount, date, time, mode, notes, service_address_id,
+        status, verification_status, payment_status, pcr_status, reports, created_at
+      ) VALUES (
+        :patientId, :patientName, :dateofbirth, :serviceTypeId, :therapyType,
+        :serviceAmount, :totalAmount, :date, :time, :mode, :notes, :serviceAddress,
+        'Searching Therapist', 'Not Verified', 'Pending', 'not_started', :reports, NOW()
+      ) RETURNING id`,
+      {
+        replacements: {
+          patientId: bookingData.patientId,
+          patientName: bookingData.patientName,
+          dateofbirth: bookingData.dateofBirth || null,
+          serviceTypeId: bookingData.serviceTypeId,
+          therapyType: bookingData.therapyType,
+          serviceAmount: bookingData.serviceAmount || 0,
+          totalAmount: bookingData.totalAmount || 0,
+          date: bookingData.date,
+          time: bookingData.time,
+          mode: bookingData.mode,
+          notes: bookingData.notes || null,
+          serviceAddress: bookingData.addressId || null,
+          reports: bookingData.reports ? JSON.stringify(bookingData.reports) : null,
+        },
+        type: QueryTypes.INSERT,
+      }
+    );
+    const appointmentId = rows[0]?.id;
+
+    try {
+      // Send Multicast Push Notification to all therapists about a new booking request
+      await firebaseNotifier.sendToAllTherapists(
+        "New Booking Request Available",
+        `A new request for ${bookingData.therapyType} on ${bookingData.date} is available. Accept it before someone else does!`,
+        { appointmentId: String(appointmentId), type: "service_first_booking" }
+      );
+    } catch (fcmErr) {
+      console.error("Failed to send service-first FCM notification:", fcmErr);
+    }
+
+    return res.json({ success: true, appointmentId, message: "Booking requested. Searching for therapists." });
+  } catch (error) {
+    console.error("Error creating booking request:", error);
+    return res.status(500).json({ success: false, error: "Failed to create booking request" });
+  }
+};
+
+// ✅ 2. GET AVAILABLE REQUESTS (Matchmaking Logic)
+exports.getAvailableRequests = async (req, res) => {
+  try {
+    const { therapistId } = req.query;
+
+    let query = `
+       SELECT 
+         a.id, a.patient_name AS "patientName", a.therapy_type AS "therapyType",
+         a.date, a.time, a.mode, a.status, a.service_amount AS "serviceAmount",
+         a.notes, a.created_at AS "createdAt", a.service_address_id AS "serviceAddress"
+       FROM appointments a
+       WHERE a.status IN ('Searching', 'Searching Therapist')
+    `;
+
+    if (therapistId) {
+      query += `
+        AND NOT EXISTS (
+          SELECT 1 FROM appointments a2
+          WHERE a2.therapist_id = :therapistId
+            AND a2.date = a.date 
+            AND a2.time = a.time
+            AND a2.status NOT IN ('Cancelled', 'Completed')
+        )
+      `;
+    }
+
+    query += ` ORDER BY a.created_at DESC`;
+
+    const requests = await sequelize.query(query, {
+      replacements: { therapistId },
+      type: QueryTypes.SELECT
+    });
+
+    return res.success(requests, "Available requests fetched");
+  } catch (error) {
+    console.error("Error fetching available requests:", error);
+    return res.error("Failed to fetch available requests");
+  }
+};
+
+// ✅ 3. ACCEPT BOOKING REQUEST
+exports.acceptBookingRequest = async (req, res) => {
+  const { id } = req.params;
+  const { therapistId, therapistName, therapistPhone } = req.body;
+
+  const t = await sequelize.transaction();
+
+  try {
+    const [appt] = await sequelize.query(
+      `SELECT status, patient_id, service_type_id FROM appointments WHERE id = :id FOR UPDATE`,
+      { replacements: { id }, type: QueryTypes.SELECT, transaction: t }
+    );
+
+    if (!appt) {
+      await t.rollback();
+      return res.status(404).json({ success: false, error: "Appointment not found" });
+    }
+    if (appt.status !== 'Searching' && appt.status !== 'Searching Therapist') {
+      await t.rollback();
+      return res.status(400).json({ success: false, error: "Appointment already accepted or cancelled" });
+    }
+
+    await sequelize.query(
+      `UPDATE appointments 
+       SET therapist_id = :therapistId, 
+           therapist_name = :therapistName, 
+           therapist_phone = :therapistPhone,
+           status = 'Accepted'
+       WHERE id = :id`,
+      {
+        replacements: { id, therapistId, therapistName, therapistPhone: therapistPhone || null },
+        type: QueryTypes.UPDATE,
+        transaction: t
+      }
+    );
+
+    await sequelize.query(
+      `INSERT INTO pcr (
+        appointment_id, patient_id, therapist_id, service_type_id,
+        chief_complaint, assessment, diagnosis, treatment_provided, plan_of_care,
+        bp, hr, rr, temp, status, version, created_at, locked_at, history
+      ) VALUES (
+        :id, :patientId, :therapistId, :serviceTypeId,
+        '', '', '', '', '', '', '', '', '',
+        'not_started', 1, NOW(), NOW(), '[]'
+      )`,
+      {
+        replacements: {
+          id,
+          patientId: appt.patient_id,
+          therapistId,
+          serviceTypeId: appt.service_type_id
+        },
+        type: QueryTypes.INSERT,
+        transaction: t
+      }
+    );
+
+    await t.commit();
+    return res.json({ success: true, message: "Booking accepted successfully" });
+  } catch (error) {
+    await t.rollback();
+    console.error("Error accepting booking:", error);
+    return res.status(500).json({ success: false, error: "Failed to accept booking" });
+  }
+};
+
+// ✅ 4. UPDATE APPOINTMENT STATUS (Tracking Flow)
+exports.updateAppointmentStatus = async (req, res) => {
+  const { id } = req.params;
+  const { status } = req.body; 
+
+  try {
+    await sequelize.query(
+      `UPDATE appointments SET status = :status WHERE id = :id`,
+      {
+        replacements: { status, id },
+        type: QueryTypes.UPDATE
+      }
+    );
+    
+    return res.json({ success: true, message: \`Status updated to \${status}\` });
+  } catch (error) {
+    console.error("Error updating status:", error);
+    return res.status(500).json({ success: false, error: "Failed to update status" });
+  }
+};
+
+// ✅ ADD REVIEW
+exports.addReview = async (req, res) => {
+  const { id } = req.params;
+  const { rating, review } = req.body;
+
+  try {
+    const [appt] = await sequelize.query(
+      `SELECT status FROM appointments WHERE id = :id`,
+      { replacements: { id }, type: QueryTypes.SELECT }
+    );
+
+    if (!appt) {
+      return res.status(404).json({ success: false, error: "Appointment not found" });
+    }
+    
+    if (appt.status !== 'Completed') {
+      return res.status(400).json({ success: false, error: "You can only review completed sessions" });
+    }
+
+    await sequelize.query(
+      `UPDATE appointments 
+       SET rating = :rating, review = :review
+       WHERE id = :id`,
+      {
+        replacements: { id, rating: Number(rating), review },
+        type: QueryTypes.UPDATE
+      }
+    );
+
+    return res.json({ success: true, message: "Review submitted successfully" });
+  } catch (error) {
+    console.error("Error submitting review:", error);
+    return res.status(500).json({ success: false, error: "Failed to submit review" });
   }
 };

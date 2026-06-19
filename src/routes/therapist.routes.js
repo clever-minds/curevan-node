@@ -20,5 +20,8 @@ router.get("/availability/:therapistId",authMiddleware,responseHandler, therapis
 router.post("/document",authMiddleware,responseHandler, therapistController.uploadDocument);
 router.get("/listnearby",responseHandler, therapistController.listUsersWithProfilesInRadius);
 
+// Dashboard
+router.get("/dashboard-stats/:therapistId", authMiddleware, responseHandler, therapistController.getDashboardStats);
+
 module.exports = router;
 
