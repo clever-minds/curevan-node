@@ -298,12 +298,65 @@ exports.createBookingAndInvoice = async (req, res) => {
           );
         }
       } else {
-        // Handle unassigned booking (Request a Therapist)
-        // You can send this to Admin or broadcast to all therapists later if needed.
-        console.log("Unassigned booking - no direct therapist notification sent.");
+        // Handle unassigned booking (Request a Therapist) - broadcast to nearby available therapists within 5km
+        const [patientInfo] = await sequelize.query(
+          `SELECT latitude, longitude FROM users WHERE id = :patientId`,
+          { replacements: { patientId: bookingData.patientId }, type: QueryTypes.SELECT }
+        );
+
+        if (patientInfo && patientInfo.latitude && patientInfo.longitude) {
+          const lat = parseFloat(patientInfo.latitude);
+          const lng = parseFloat(patientInfo.longitude);
+
+          // Find therapists within 5km who don't have an overlapping appointment
+          const nearbyTherapists = await sequelize.query(
+            `SELECT u.fcm_token, u.name
+             FROM users u
+             WHERE u.role = 'therapist'
+             AND u.fcm_token IS NOT NULL
+             AND u.latitude IS NOT NULL
+             AND u.longitude IS NOT NULL
+             AND (
+                 6371 * acos(
+                     cos(radians(:lat)) * cos(radians(u.latitude)) *
+                     cos(radians(u.longitude) - radians(:lng)) +
+                     sin(radians(:lat)) * sin(radians(u.latitude))
+                 )
+             ) <= 5
+             AND u.id NOT IN (
+                 SELECT therapist_id FROM appointments 
+                 WHERE date = :date 
+                 AND time = :time
+                 AND status != 'Cancelled'
+                 AND therapist_id IS NOT NULL
+             )`,
+            {
+              replacements: { 
+                lat, 
+                lng, 
+                date: bookingData.date, 
+                time: bookingData.time 
+              },
+              type: QueryTypes.SELECT
+            }
+          );
+
+          console.log(`Found ${nearbyTherapists.length} available nearby therapists within 5km.`);
+
+          for (const tp of nearbyTherapists) {
+            await firebaseNotifier.sendToTherapist(
+              tp.fcm_token,
+              "New Appointment Request Nearby!",
+              `A new appointment request is available nearby on ${bookingData.date} at ${bookingData.time}. Open the app to accept it.`,
+              { appointmentId: String(appointmentId), type: "broadcast_booking" }
+            );
+          }
+        } else {
+          console.log("Unassigned booking - patient has no lat/lng, cannot find nearby therapists.");
+        }
       }
     } catch (fcmErr) {
-      console.error("Failed to send direct booking FCM notification:", fcmErr);
+      console.error("Failed to send FCM notifications:", fcmErr);
     }
 
     try {
