@@ -356,7 +356,17 @@ exports.createBookingAndInvoice = async (req, res) => {
               tp.fcm_token,
               "New Appointment Request Nearby!",
               `A new appointment request is available nearby on ${bookingData.date} at ${bookingData.time}. Open the app to accept it.`,
-              { appointmentId: String(appointmentId), type: "broadcast_booking" }
+              { 
+                appointmentId: String(appointmentId), 
+                type: "broadcast_booking",
+                patientName: String(bookingData.patientName || "A Patient"),
+                date: String(bookingData.date || ""),
+                time: String(bookingData.time || ""),
+                therapyType: String(bookingData.therapyType || "Therapy"),
+                address: String(bookingData.address || "Address not provided"),
+                lat: String(lat),
+                lng: String(lng)
+              }
             );
           }
         } else {
