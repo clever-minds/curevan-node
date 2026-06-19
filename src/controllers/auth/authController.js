@@ -1402,7 +1402,7 @@ exports.createChangeRequest = async (req, res) => {
 exports.updateFcmToken = async (req, res) => {
   try {
     const userId = req.user?.id;
-    const { fcm_token } = req.body;
+    const fcm_token = req.body.fcm_token || req.body.fcmToken;
 
     if (!userId) {
       return res.status(401).json({ message: "Unauthorized" });

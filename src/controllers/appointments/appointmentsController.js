@@ -1027,7 +1027,7 @@ exports.addReview = async (req, res) => {
 
   try {
     const [appt] = await sequelize.query(
-      `SELECT status FROM appointments WHERE id = :id`,
+      `SELECT status, patient_id, therapist_id FROM appointments WHERE id = :id`,
       { replacements: { id }, type: QueryTypes.SELECT }
     );
 
@@ -1039,15 +1039,40 @@ exports.addReview = async (req, res) => {
       return res.status(400).json({ success: false, error: "You can only review completed sessions" });
     }
 
-    await sequelize.query(
-      `UPDATE appointments 
-       SET rating = :rating, review = :review
-       WHERE id = :id`,
-      {
-        replacements: { id, rating: Number(rating), review },
-        type: QueryTypes.UPDATE
-      }
+    // Check if review already exists for this appointment
+    const [existing] = await sequelize.query(
+      `SELECT id FROM therapist_reviews WHERE appointment_id = :id`,
+      { replacements: { id }, type: QueryTypes.SELECT }
     );
+
+    if (existing) {
+      // Update existing review
+      await sequelize.query(
+        `UPDATE therapist_reviews 
+         SET rating = :rating, review = :review
+         WHERE appointment_id = :id`,
+        {
+          replacements: { id, rating: Number(rating), review },
+          type: QueryTypes.UPDATE
+        }
+      );
+    } else {
+      // Insert new review
+      await sequelize.query(
+        `INSERT INTO therapist_reviews (therapist_id, patient_id, appointment_id, rating, review)
+         VALUES (:therapistId, :patientId, :id, :rating, :review)`,
+        {
+          replacements: { 
+            therapistId: appt.therapist_id, 
+            patientId: appt.patient_id, 
+            id, 
+            rating: Number(rating), 
+            review 
+          },
+          type: QueryTypes.INSERT
+        }
+      );
+    }
 
     return res.json({ success: true, message: "Review submitted successfully" });
   } catch (error) {

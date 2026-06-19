@@ -817,7 +817,24 @@ exports.getProfile = async (req, res) => {
 
     profile.availability = availabilityObj;
 
-    // 5️⃣ Send response
+    // 5️⃣ Fetch average rating and reviews
+    const [[avgRatingRow]] = await sequelize.query(
+      `SELECT AVG(rating) as avg_rating FROM therapist_reviews WHERE therapist_id = :userId AND rating IS NOT NULL`,
+      { replacements: { userId: profile.user_id }, type: QueryTypes.SELECT }
+    );
+    profile.avgRating = parseFloat(avgRatingRow?.avg_rating || 0).toFixed(1);
+
+    const reviews = await sequelize.query(
+      `SELECT r.id, r.rating, r.review, r.created_at, u.name as patient_name
+       FROM therapist_reviews r
+       JOIN users u ON u.id = r.patient_id
+       WHERE r.therapist_id = :userId AND r.review IS NOT NULL AND r.review != ''
+       ORDER BY r.created_at DESC LIMIT 20`,
+      { replacements: { userId: profile.user_id }, type: QueryTypes.SELECT }
+    );
+    profile.reviews = reviews;
+
+    // 6️⃣ Send response
     res.json({
       status: true,
       data: profile,
@@ -1317,7 +1334,7 @@ exports.getDashboardStats = async (req, res) => {
 
     // Avg Rating
     const [[avgRatingRow]] = await sequelize.query(
-      `SELECT AVG(rating) as avg_rating FROM appointments WHERE therapist_id = :id AND rating IS NOT NULL`,
+      `SELECT AVG(rating) as avg_rating FROM therapist_reviews WHERE therapist_id = :id AND rating IS NOT NULL`,
       { replacements: { id: therapistId } }
     );
     const avgRating = parseFloat(avgRatingRow.avg_rating || 0).toFixed(1);
