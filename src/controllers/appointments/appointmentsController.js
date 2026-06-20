@@ -1015,7 +1015,7 @@ exports.acceptBookingRequest = async (req, res) => {
 
   try {
     const [appt] = await sequelize.query(
-      `SELECT status, patient_id, service_type_id FROM appointments WHERE id = :id FOR UPDATE`,
+      `SELECT status, patient_id, service_type_id, therapist_id FROM appointments WHERE id = :id FOR UPDATE`,
       { replacements: { id }, type: QueryTypes.SELECT, transaction: t }
     );
 
@@ -1023,7 +1023,13 @@ exports.acceptBookingRequest = async (req, res) => {
       await t.rollback();
       return res.status(404).json({ success: false, error: "Appointment not found" });
     }
-    if (appt.status !== 'Searching' && appt.status !== 'Searching Therapist') {
+
+    const isAvailable = 
+      appt.status === 'Searching' || 
+      appt.status === 'Searching Therapist' || 
+      (appt.status === 'Pending' && !appt.therapist_id);
+
+    if (!isAvailable) {
       await t.rollback();
       return res.status(400).json({ success: false, error: "Appointment already accepted or cancelled" });
     }
