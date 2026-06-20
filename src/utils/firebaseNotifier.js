@@ -75,3 +75,27 @@ exports.sendToAllTherapists = async (title, body, data = {}, topic = "all_therap
     console.error("Error sending notification to all therapists:", error);
   }
 };
+
+/**
+ * Sends a multicast notification to multiple therapists using their tokens.
+ * @param {string[]} tokens - Array of FCM device tokens.
+ * @param {string} title - The notification title.
+ * @param {string} body - The notification body.
+ * @param {object} data - Optional data payload.
+ */
+exports.sendToMultipleTherapists = async (tokens, title, body, data = {}) => {
+  if (!tokens || tokens.length === 0) return;
+
+  const message = {
+    notification: { title, body },
+    data,
+    tokens
+  };
+
+  try {
+    const response = await getMessaging().sendEachForMulticast(message);
+    console.log("Successfully sent multicast notification:", response.successCount, "successes,", response.failureCount, "failures");
+  } catch (error) {
+    console.error("Error sending multicast notification:", error);
+  }
+};

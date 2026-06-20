@@ -949,12 +949,42 @@ exports.createBookingRequest = async (req, res) => {
     const appointmentId = rows[0]?.id;
 
     try {
-      // Send Multicast Push Notification to all therapists about a new booking request
-      await firebaseNotifier.sendToAllTherapists(
-        "New Booking Request Available",
-        `A new request for ${bookingData.therapyType} on ${bookingData.date} is available. Accept it before someone else does!`,
-        { appointmentId: String(appointmentId), type: "service_first_booking" }
+      // Fetch FCM tokens of ACTIVE therapists with matching specialty who are FREE at this date & time
+      const tokensQuery = await sequelize.query(
+        `SELECT u.fcm_token 
+         FROM users u
+         JOIN therapist_profiles tp ON tp.user_id = u.id
+         WHERE u.role = 'therapist' 
+           AND u.status = 'active'
+           AND tp.profile_status = 'approved'
+           AND u.fcm_token IS NOT NULL 
+           AND :serviceTypeId::int = ANY(tp.specialty)
+           AND NOT EXISTS (
+             SELECT 1 FROM appointments a2
+             WHERE a2.therapist_id = u.id
+               AND a2.date = :bookingDate
+               AND a2.time = :bookingTime
+               AND a2.status NOT IN ('Cancelled', 'Completed')
+           )`,
+        {
+          replacements: { 
+            serviceTypeId: bookingData.serviceTypeId,
+            bookingDate: bookingData.date,
+            bookingTime: bookingData.time
+          },
+          type: QueryTypes.SELECT
+        }
       );
+      const tokens = tokensQuery.map(row => row.fcm_token).filter(Boolean);
+
+      if (tokens.length > 0) {
+        await firebaseNotifier.sendToMultipleTherapists(
+          tokens,
+          "New Booking Request Available",
+          `A new request for ${bookingData.therapyType} on ${bookingData.date} is available. Accept it before someone else does!`,
+          { appointmentId: String(appointmentId), type: "service_first_booking" }
+        );
+      }
     } catch (fcmErr) {
       console.error("Failed to send service-first FCM notification:", fcmErr);
     }
@@ -982,6 +1012,11 @@ exports.getAvailableRequests = async (req, res) => {
 
     if (therapistId) {
       query += `
+        AND EXISTS (
+          SELECT 1 FROM therapist_profiles tp
+          WHERE tp.user_id = :therapistId
+            AND a.service_type_id::int = ANY(tp.specialty)
+        )
         AND NOT EXISTS (
           SELECT 1 FROM appointments a2
           WHERE a2.therapist_id = :therapistId

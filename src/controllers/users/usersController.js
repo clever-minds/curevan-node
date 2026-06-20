@@ -923,6 +923,16 @@ exports.approveChangeRequest = async (req, res) => {
       { replacements: { id: requestId, admin: req.user.id }, transaction: t }
     );
 
+    /* ---------- MARK PROFILE AS APPROVED ---------- */
+    if (profileId) {
+      await sequelize.query(
+        `UPDATE therapist_profiles
+         SET profile_status='approved'
+         WHERE id=:profileId`,
+        { replacements: { profileId }, transaction: t }
+      );
+    }
+
     await t.commit();
 
     return res.status(200).json({ success: true, message: "Change request approved successfully" });

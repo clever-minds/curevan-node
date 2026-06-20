@@ -781,12 +781,18 @@ exports.getProfile = async (req, res) => {
 
     const profile = result[0];
 
-    // 2️⃣ Convert specialty to array
-    profile.specialty = Array.isArray(profile.specialty)
+    // 2️⃣ Convert specialty to array and map to names
+    const serviceTypesRows = await sequelize.query('SELECT id, name FROM service_types', { type: QueryTypes.SELECT });
+    const idToName = {};
+    serviceTypesRows.forEach(st => { idToName[st.id] = st.name; });
+
+    let specArray = Array.isArray(profile.specialty)
       ? profile.specialty
       : profile.specialty
       ? profile.specialty.replace(/[{}]/g, "").split(",")
       : [];
+      
+    profile.specialty = specArray.map(id => idToName[id] || id);
 
     // 3️⃣ Fetch therapist availability
     const availabilities = await sequelize.query(
@@ -997,6 +1003,10 @@ exports.listUsersWithProfiles = async (req, res) => {
       );
 
 
+      const serviceTypesRows = await sequelize.query('SELECT id, name FROM service_types', { type: QueryTypes.SELECT });
+      const idToName = {};
+      serviceTypesRows.forEach(st => { idToName[st.id] = st.name; });
+
       const usersWithAvailability = users.map(user => {
 
         const userAvail = availabilities
@@ -1014,6 +1024,13 @@ exports.listUsersWithProfiles = async (req, res) => {
 
           }, {});
 
+        let specArray = Array.isArray(user.specialty)
+          ? user.specialty
+          : user.specialty
+          ? user.specialty.replace(/[{}]/g, "").split(",")
+          : [];
+        user.specialty = specArray.map(id => idToName[id] || id);
+
         return {
           ...user,
           availability: userAvail
@@ -1027,9 +1044,17 @@ exports.listUsersWithProfiles = async (req, res) => {
       });
     }
 
+    const serviceTypesRows = await sequelize.query('SELECT id, name FROM service_types', { type: QueryTypes.SELECT });
+    const idToName = {};
+    serviceTypesRows.forEach(st => { idToName[st.id] = st.name; });
+
     res.json({
       status: true,
-      data: users.map(u => ({ ...u, availability: [] }))
+      data: users.map(u => {
+        let specArray = Array.isArray(u.specialty) ? u.specialty : (u.specialty ? u.specialty.replace(/[{}]/g, "").split(",") : []);
+        u.specialty = specArray.map(id => idToName[id] || id);
+        return { ...u, availability: [] };
+      })
     });
 
   } catch (error) {
@@ -1213,9 +1238,17 @@ exports.listUsersWithProfilesInRadius = async (req, res) => {
       }
     );
 
+    const serviceTypesRows = await sequelize.query('SELECT id, name FROM service_types', { type: QueryTypes.SELECT });
+    const idToName = {};
+    serviceTypesRows.forEach(st => { idToName[st.id] = st.name; });
+
     res.json({
       status: true,
-      data: users
+      data: users.map(u => {
+        let specArray = Array.isArray(u.specialty) ? u.specialty : (u.specialty ? u.specialty.replace(/[{}]/g, "").split(",") : []);
+        u.specialty = specArray.map(id => idToName[id] || id);
+        return u;
+      })
     });
 
   } catch (error) {
