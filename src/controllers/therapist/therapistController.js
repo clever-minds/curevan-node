@@ -1203,6 +1203,7 @@ exports.listUsersWithProfilesInRadius = async (req, res) => {
         tp.specialty,
         tp.hourly_rate,
         tp.service_radius_km,
+        media.file_path as image,
         ROUND(
           (
             6371 * acos(
@@ -1217,6 +1218,8 @@ exports.listUsersWithProfilesInRadius = async (req, res) => {
       FROM users u
       JOIN therapist_profiles tp
         ON tp.user_id = u.id
+      LEFT JOIN media
+        ON tp.profile_image = media.id
       WHERE 
         u.role = 'therapist'
         AND u.latitude IS NOT NULL
