@@ -729,7 +729,7 @@ exports.getPCRByBookingId = async (req, res) => {
 
 exports.updatePcr = async (req, res) => {
   const { appointmentId } = req.params;
-  const data = req.body;
+  const data = req.body || {};
 
   if (!appointmentId) {
     return res.status(400).json({ success: false, error: "PCR Id is required" });
@@ -910,7 +910,7 @@ exports.updatePcr = async (req, res) => {
 
 // ✅ 1. CREATE BOOKING REQUEST (Status = Searching)
 exports.createBookingRequest = async (req, res) => {
-  const { bookingData } = req.body;
+  const { bookingData } = req.body || {};
 
   try {
     if (!bookingData) {
@@ -1009,7 +1009,7 @@ exports.getAvailableRequests = async (req, res) => {
 // ✅ 3. ACCEPT BOOKING REQUEST
 exports.acceptBookingRequest = async (req, res) => {
   const { id } = req.params;
-  const { therapistId, therapistName, therapistPhone } = req.body;
+  const { therapistId, therapistName, therapistPhone } = req.body || {};
 
   const t = await sequelize.transaction();
 
@@ -1076,7 +1076,7 @@ exports.acceptBookingRequest = async (req, res) => {
 // ✅ 4. UPDATE APPOINTMENT STATUS (Tracking Flow)
 exports.updateAppointmentStatus = async (req, res) => {
   const { id } = req.params;
-  const { status } = req.body; 
+  const { status } = req.body || {}; 
 
   try {
     await sequelize.query(
@@ -1097,7 +1097,7 @@ exports.updateAppointmentStatus = async (req, res) => {
 // ✅ ADD REVIEW
 exports.addReview = async (req, res) => {
   const { id } = req.params;
-  const { rating, review } = req.body;
+  const { rating, review } = req.body || {};
 
   try {
     const [appt] = await sequelize.query(
