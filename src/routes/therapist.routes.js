@@ -22,6 +22,7 @@ router.get("/listnearby",responseHandler, therapistController.listUsersWithProfi
 
 // Dashboard
 router.get("/dashboard-stats/:therapistId", authMiddleware, responseHandler, therapistController.getDashboardStats);
+router.get("/earnings/:therapistId", authMiddleware, responseHandler, therapistController.getEarnings);
 
 module.exports = router;
 

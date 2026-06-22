@@ -1452,3 +1452,114 @@ exports.getDashboardStats = async (req, res) => {
     res.status(500).json({ status: false, message: "Server error" });
   }
 };
+
+/* =========================
+   GET EARNINGS
+========================= */
+exports.getEarnings = async (req, res) => {
+  try {
+    const { therapistId } = req.params;
+
+    // Fetch payout history (summarized by week)
+    const payoutHistoryQuery = await sequelize.query(
+      `SELECT 
+         week_start,
+         SUM(net_amount) as total_amount,
+         COUNT(source_id) as number_of_sessions
+       FROM payout_items
+       WHERE therapist_id = :id AND state = 'Paid'
+       GROUP BY week_start
+       ORDER BY week_start DESC`,
+      { replacements: { id: therapistId }, type: QueryTypes.SELECT }
+    );
+
+    const payoutHistory = payoutHistoryQuery.map(row => ({
+      payoutId: 'PO-' + new Date(row.week_start).getTime(),
+      period: `Week of ${new Date(row.week_start).toLocaleDateString()}`,
+      payoutDate: row.week_start,
+      totalAmount: parseFloat(row.total_amount || 0),
+      status: 'Paid',
+      numberOfSessions: parseInt(row.number_of_sessions || 0)
+    }));
+
+    // Fetch individual earnings records
+    const earningsHistoryQuery = await sequelize.query(
+      `SELECT 
+         p.*,
+         a.patient_name as appointment_patient_name,
+         a.date as appointment_date,
+         a.mode as appointment_mode
+       FROM payout_items p
+       LEFT JOIN appointments a ON p.source_id = a.id AND p.type = 'service'
+       WHERE p.therapist_id = :id
+       ORDER BY p.created_at DESC`,
+      { replacements: { id: therapistId }, type: QueryTypes.SELECT }
+    );
+
+    const earningsHistory = earningsHistoryQuery.map(row => ({
+      source: row.type === 'service' ? 'BK-' + row.source_id : 'ORD-' + row.source_id,
+      patientName: row.appointment_patient_name,
+      sessionDate: row.appointment_date || row.created_at,
+      grossAmount: parseFloat(row.gross_amount || 0),
+      platformFee: parseFloat(row.platform_fee_amount || 0),
+      gstOnPlatformFee: parseFloat(row.gst_on_platform_fee || 0),
+      preTdsPayable: parseFloat(row.pre_tds_payable || 0),
+      tdsDeducted: parseFloat(row.tds_deducted || 0),
+      netPayable: parseFloat(row.net_amount || 0),
+      status: row.state === 'Paid' ? 'Paid' : (row.state === 'onHold' ? 'On-Hold' : 'Payout Scheduled'),
+      type: row.type,
+      mode: row.appointment_mode || 'Clinic',
+      reason: row.state === 'onHold' ? 'Awaiting verification' : undefined
+    }));
+
+    // Daily Net Earnings (Last 30 days)
+    const dailyEarningsData = Object.values(earningsHistory.reduce((acc, item) => {
+      const date = new Date(item.sessionDate).toISOString().split('T')[0];
+      if (!acc[date]) acc[date] = { date, net: 0 };
+      acc[date].net += item.netPayable;
+      return acc;
+    }, {})).sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
+
+    // Mode Split Data
+    const modeSplitDataRaw = earningsHistory.reduce((acc, item) => {
+      if (item.type === 'service') {
+         acc[item.mode] = (acc[item.mode] || 0) + 1;
+      }
+      return acc;
+    }, {});
+
+    const colorMap = {
+      'Home Visit': 'hsl(var(--primary))',
+      'Online': 'hsl(var(--accent))',
+      'Clinic': 'hsl(var(--muted-foreground))'
+    };
+
+    const modeSplitData = Object.keys(modeSplitDataRaw).map(key => ({
+       name: key,
+       value: modeSplitDataRaw[key],
+       fill: colorMap[key] || colorMap['Clinic']
+    }));
+
+    // Summaries
+    const summary = earningsHistory.reduce((acc, item) => {
+      if (item.type === 'service') acc.totalServices += item.netPayable;
+      if (item.type === 'product') acc.totalProducts += item.netPayable;
+      return acc;
+    }, { totalServices: 0, totalProducts: 0 });
+
+    res.json({
+      status: true,
+      data: {
+        earningsHistory,
+        payoutHistory,
+        dailyEarningsData,
+        modeSplitData,
+        summary
+      }
+    });
+
+  } catch (error) {
+    console.error("getEarnings error:", error);
+    res.status(500).json({ status: false, message: "Server error" });
+  }
+};
