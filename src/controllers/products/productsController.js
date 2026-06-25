@@ -838,6 +838,98 @@ exports.getProduct = async (req, res) => {
   }
 };
 
+exports.getRecommendedProducts = async (req, res) => {
+  try {
+    const { service_type_id, category_id } = req.query;
+    
+    let whereClause = 'WHERE p.is_recommended = true';
+    if (service_type_id) {
+      whereClause += ' AND p.service_type_id = :service_type_id';
+    }
+    if (category_id) {
+      whereClause += ' AND p.category_id = :category_id';
+    }
+
+    const products = await sequelize.query(
+      `SELECT q.*, 
+        CASE 
+          WHEN q.offer IS NOT NULL THEN
+            CASE 
+              WHEN q.offer->>'type' = 'percent' OR q.offer->>'type' = 'percentage' THEN 
+                ROUND(q.price * (1 - CAST(q.offer->>'value' AS NUMERIC) / 100.0), 2)
+              WHEN q.offer->>'type' IN ('flat', 'fixed') THEN 
+                GREATEST(0::numeric, ROUND(q.price - CAST(q.offer->>'value' AS NUMERIC), 2))
+              ELSE q.price
+            END
+          ELSE q.price
+        END AS "discountedPrice"
+      FROM (
+        SELECT 
+        p.*,
+        p.title AS name,
+          p.selling_price AS price,
+          COALESCE(p.gst_slab, 0) AS "gstPercent",
+          CASE 
+              WHEN p.is_tax_inclusive THEN ROUND(p.selling_price - (p.selling_price / (1 + COALESCE(p.gst_slab,0)/100.0)), 2)
+              ELSE ROUND(p.selling_price * (COALESCE(p.gst_slab,0)/100.0), 2)
+          END AS "gstAmount",
+        p.category_id AS "categoryId",
+        c.name AS categoryname,
+        i.on_hand AS "onHand",
+        i.reserved,
+        i.reorder_point,
+        m.file_path AS "featuredImage",
+        (SELECT COALESCE(AVG(rating), 0) FROM reviews WHERE product_id = p.id) AS "averageRating",
+        (SELECT COUNT(*) FROM reviews WHERE product_id = p.id) AS "totalReviews",
+        (
+          SELECT jsonb_build_object(
+            'id', o.id,
+            'name', o.name,
+            'type', o.type,
+            'value', o.value,
+            'scope', o.scope,
+            'description', o.description
+          )
+          FROM offers o
+          WHERE o.is_active = true 
+            AND (o.valid_from IS NULL OR o.valid_from <= CURRENT_DATE)
+            AND (o.valid_to IS NULL OR o.valid_to >= CURRENT_DATE)
+            AND (
+              (o.scope = 'product' AND o.product_id = p.id) OR
+              (o.scope = 'category' AND o.category_id = p.category_id) OR
+              (o.scope = 'global') OR
+              (p.id = ANY(o.applicable_products)) OR
+              (p.category_id = ANY(o.applicable_categories))
+            )
+          ORDER BY 
+            CASE 
+              WHEN o.scope = 'product' THEN 1
+              WHEN p.id = ANY(o.applicable_products) THEN 2
+              WHEN o.scope = 'category' THEN 3
+              WHEN p.category_id = ANY(o.applicable_categories) THEN 4
+              ELSE 5 
+            END ASC
+          LIMIT 1
+        ) AS offer
+      FROM products p
+      LEFT JOIN categories c ON c.id = p.category_id
+      LEFT JOIN inventory i ON i.product_id = p.id
+      LEFT JOIN media m ON m.id = p.image_ids[1]
+      ${whereClause}
+      ) q`,
+      { 
+        replacements: { service_type_id, category_id },
+        type: QueryTypes.SELECT 
+      }
+    );
+
+    return res.success(products, "Recommended products fetched successfully");
+  } catch (error) {
+    console.error("Error in getRecommendedProducts:", error);
+    return res.error("Failed to fetch recommended products");
+  }
+};
+
 exports.getProductFrontendById = async (req, res) => {
   try {
     const { id } = req.params;
