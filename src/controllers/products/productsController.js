@@ -762,6 +762,12 @@ exports.deleteProduct = async (req, res) => {
 
 exports.getProduct = async (req, res) => {
   try {
+    const { category_id } = req.query;
+    let whereClause = '';
+    if (category_id) {
+      whereClause = 'WHERE p.category_id = :category_id';
+    }
+
     const products = await sequelize.query(
       `SELECT q.*, 
         CASE 
@@ -827,8 +833,12 @@ exports.getProduct = async (req, res) => {
       LEFT JOIN categories c ON c.id = p.category_id
       LEFT JOIN inventory i ON i.product_id = p.id
       LEFT JOIN media m ON m.id = p.image_ids[1]
+      ${whereClause}
       ) q`,
-      { type: QueryTypes.SELECT }
+      { 
+        replacements: { category_id },
+        type: QueryTypes.SELECT 
+      }
     );
 
     return res.success(products, "Products fetched successfully");
