@@ -21,8 +21,7 @@ exports.listServiceTypes = async (req, res) => {
 // ✅ ADD SERVICE TYPE
 exports.addServiceType = async (req, res) => {
   try {
-    const { name, is_active } = req.body;
-    const icon_path = req.file ? req.file.filename : null;
+    const { name, is_active, fa_icon, description } = req.body;
 
     if (!name) {
       return res.error("Name is required");
@@ -31,10 +30,15 @@ exports.addServiceType = async (req, res) => {
     const isActive = is_active !== undefined ? is_active : true;
 
     await sequelize.query(
-      `INSERT INTO service_types (name, is_active, icon_path)
-       VALUES (:name, :is_active, :icon_path)`,
+      `INSERT INTO service_types (name, is_active, fa_icon, description)
+       VALUES (:name, :is_active, :fa_icon, :description)`,
       {
-        replacements: { name, is_active: isActive, icon_path },
+        replacements: { 
+          name, 
+          is_active: isActive, 
+          fa_icon: fa_icon || null,
+          description: description || null
+        },
         type: QueryTypes.INSERT,
       }
     );
@@ -53,8 +57,7 @@ exports.addServiceType = async (req, res) => {
 exports.updateServiceType = async (req, res) => {
   try {
     const { id } = req.params;
-    const { name, is_active } = req.body;
-    const icon_path = req.file ? req.file.filename : null;
+    const { name, is_active, fa_icon, description } = req.body;
 
     if (!name) {
       return res.error("Name is required");
@@ -64,17 +67,20 @@ exports.updateServiceType = async (req, res) => {
        UPDATE service_types
        SET name = :name,
            is_active = :is_active,
+           fa_icon = :fa_icon,
+           description = :description,
            updated_at = CURRENT_TIMESTAMP
+       WHERE id = :id
     `;
-    
-    if (icon_path) {
-      updateQuery += `, icon_path = :icon_path`;
-    }
-    
-    updateQuery += ` WHERE id = :id`;
 
     await sequelize.query(updateQuery, {
-      replacements: { id, name, is_active, icon_path },
+      replacements: { 
+        id, 
+        name, 
+        is_active, 
+        fa_icon: fa_icon || null,
+        description: description || null
+      },
       type: QueryTypes.UPDATE,
     });
 
