@@ -154,7 +154,9 @@ exports.addProduct = async (req, res) => {
       image_ids = [],
       stock = 0,
       reorderPoint = 0,
-      additional_features = []
+      additional_features = [],
+      is_recommended = false,
+      service_type_id = null
     } = req.body;
 
     // 2️⃣ Validate required fields
@@ -180,7 +182,7 @@ exports.addProduct = async (req, res) => {
           length_cm, width_cm, height_cm, weight_kg,
           manufacturer, country_of_origin, packer, importer, batch_number,
           manufacturing_date, expiry_date, tags,
-          image_ids, additional_features
+          image_ids, additional_features, is_recommended, service_type_id
         ) VALUES (
           :productType, :title, :subtitle, :shortDescription, :longDescription,
           :brand, :sku, :category, :mrp, :sellingPrice,
@@ -189,7 +191,7 @@ exports.addProduct = async (req, res) => {
           :length_cm, :width_cm, :height_cm, :weight_kg,
           :manufacturer, :country_of_origin, :packer, :importer, :batch_number,
           :manufacturing_date, :expiry_date, :tags::json,
-          ARRAY[:imageIds]::integer[], :additional_features::json
+          ARRAY[:imageIds]::integer[], :additional_features::json, :is_recommended, :service_type_id
         )
         RETURNING id`,
       {
@@ -223,7 +225,9 @@ exports.addProduct = async (req, res) => {
           expiry_date: toLocalDbDate(expiry_date),
           tags: tagsJSON,
           imageIds: imageIdsArray,
-          additional_features: additionalFeaturesJSON
+          additional_features: additionalFeaturesJSON,
+          is_recommended: is_recommended || false,
+          service_type_id: service_type_id || null
         },
         type: QueryTypes.INSERT,
         transaction: t
@@ -536,7 +540,9 @@ exports.updateProduct = async (req, res) => {
       manufacturing_date = null,
       expiry_date = null,
       tags = [],
-      additional_features = []
+      additional_features = [],
+      is_recommended = false,
+      service_type_id = null
     } = req.body;
 
     // ---------------- IMAGE IDS (INTEGER ARRAY) ----------------
@@ -579,7 +585,9 @@ exports.updateProduct = async (req, res) => {
         manufacturing_date = :manufacturing_date,
         expiry_date = :expiry_date,
         tags = :tags::json,
-        additional_features = :additional_features::json
+        additional_features = :additional_features::json,
+        is_recommended = :is_recommended,
+        service_type_id = :service_type_id
     `;
 
     // update image_ids only if provided
@@ -619,7 +627,9 @@ exports.updateProduct = async (req, res) => {
       manufacturing_date: toLocalDbDate(manufacturing_date),
       expiry_date: toLocalDbDate(expiry_date),
       tags: tagsJSON,
-      additional_features: additionalFeaturesJSON
+      additional_features: additionalFeaturesJSON,
+      is_recommended: is_recommended || false,
+      service_type_id: service_type_id || null
     };
 
     if (imageIds.length > 0) {
