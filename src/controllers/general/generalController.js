@@ -505,7 +505,9 @@ exports.listKnowledgeBase = async (req, res) => {
 
 exports.listKnowledgeBasepublic = async (req, res) => {
   try {
-  console.log("listKnowledgeBasepublic called");
+    console.log("listKnowledgeBasepublic called");
+    
+    const { authorId } = req.query;
 
     let query = `
       SELECT 
@@ -546,10 +548,19 @@ exports.listKnowledgeBasepublic = async (req, res) => {
       LEFT JOIN users u ON u.id = kb.author_id::int
       WHERE kb.content_type = 'post'
       AND kb.status = 'published'
-      ORDER BY kb.created_at DESC
     `;
 
+    const replacements = {};
+
+    if (authorId) {
+      query += ` AND kb.author_id::int = :authorId`;
+      replacements.authorId = authorId;
+    }
+
+    query += ` ORDER BY kb.created_at DESC`;
+
     const items = await sequelize.query(query, {
+      replacements,
       type: QueryTypes.SELECT,
     });
 
