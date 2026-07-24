@@ -27,19 +27,21 @@ exports.listCart = async (req, res) => {
          c.quantity,
          c.created_at AS "createdAt",
          c.updated_at AS "updatedAt",
+         c.variant_id AS "variantId",
          p.title as name,
-         p.selling_price AS price,
+         COALESCE(pv.selling_price, p.selling_price) AS price,
          COALESCE(p.gst_slab, 0) AS "gstPercent",
          CASE 
-            WHEN p.is_tax_inclusive THEN ROUND(p.selling_price - (p.selling_price / (1 + COALESCE(p.gst_slab,0)/100.0)), 2)
-            ELSE ROUND(p.selling_price * (COALESCE(p.gst_slab,0)/100.0), 2)
+            WHEN p.is_tax_inclusive THEN ROUND(COALESCE(pv.selling_price, p.selling_price) - (COALESCE(pv.selling_price, p.selling_price) / (1 + COALESCE(p.gst_slab,0)/100.0)), 2)
+            ELSE ROUND(COALESCE(pv.selling_price, p.selling_price) * (COALESCE(p.gst_slab,0)/100.0), 2)
          END AS "gstAmount",
          p.long_description as description,
          p.category_id AS "categoryId",
          p.status AS "isActive",
          p.is_coupon_excluded AS "isCouponExcluded",
          p.is_tax_inclusive AS "isTaxInclusive",
-         p.sku,
+         COALESCE(pv.sku, p.sku) AS sku,
+         pv.attributes AS "variantAttributes",
          p.hsn_code AS "hsnCode",
          m.file_path AS "featuredImage",
          (
@@ -74,6 +76,7 @@ exports.listCart = async (req, res) => {
          ) AS offer
        FROM cart c
        JOIN products p ON c.product_id = p.id
+       LEFT JOIN product_variants pv ON c.variant_id = pv.id
        LEFT JOIN media m ON m.id = p.image_ids[1]
        WHERE c.user_id = :userId
        ORDER BY c.id DESC

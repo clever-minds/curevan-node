@@ -156,7 +156,8 @@ exports.addProduct = async (req, res) => {
       reorderPoint = 0,
       additional_features = [],
       is_recommended = false,
-      service_type_id = null
+      service_type_id = null,
+      variants = []
     } = req.body;
 
     // 2️⃣ Validate required fields
@@ -236,22 +237,63 @@ exports.addProduct = async (req, res) => {
 
     const productId = product[0].id;
 
-    // 6️⃣ Insert inventory
-    await sequelize.query(
-      `INSERT INTO inventory (product_id, sku, warehouse_id, on_hand, reorder_point)
-       VALUES (:productId, :sku, :warehouse_id, :stock, :reorderPoint)`,
-      {
-        replacements: {
-          productId,
-          sku,
-          stock,
-          warehouse_id: 0, // default warehouse
-          reorderPoint
-        },
-        type: QueryTypes.INSERT,
-        transaction: t
+    // 6️⃣ Handle Variants and Inventory
+    if (variants && Array.isArray(variants) && variants.length > 0) {
+      for (const variant of variants) {
+        // Insert variant
+        await sequelize.query(
+          `INSERT INTO product_variants (product_id, sku, mrp, selling_price, attributes, stock, reorder_point)
+           VALUES (:productId, :sku, :mrp, :sellingPrice, :attributes::jsonb, :stock, :reorderPoint)`,
+          {
+            replacements: {
+              productId,
+              sku: variant.sku,
+              mrp: variant.mrp || null,
+              sellingPrice: variant.sellingPrice || null,
+              attributes: JSON.stringify(variant.attributes || {}),
+              stock: variant.stock || 0,
+              reorderPoint: variant.reorderPoint || 0
+            },
+            type: QueryTypes.INSERT,
+            transaction: t
+          }
+        );
+
+        // Insert inventory for each variant
+        await sequelize.query(
+          `INSERT INTO inventory (product_id, sku, warehouse_id, on_hand, reorder_point)
+           VALUES (:productId, :sku, :warehouse_id, :stock, :reorderPoint)`,
+          {
+            replacements: {
+              productId,
+              sku: variant.sku,
+              stock: variant.stock || 0,
+              warehouse_id: 0,
+              reorderPoint: variant.reorderPoint || 0
+            },
+            type: QueryTypes.INSERT,
+            transaction: t
+          }
+        );
       }
-    );
+    } else {
+      // 6️⃣ Insert inventory for single product
+      await sequelize.query(
+        `INSERT INTO inventory (product_id, sku, warehouse_id, on_hand, reorder_point)
+         VALUES (:productId, :sku, :warehouse_id, :stock, :reorderPoint)`,
+        {
+          replacements: {
+            productId,
+            sku,
+            stock,
+            warehouse_id: 0, // default warehouse
+            reorderPoint
+          },
+          type: QueryTypes.INSERT,
+          transaction: t
+        }
+      );
+    }
 
     // 7️⃣ Commit transaction
     await t.commit();
@@ -338,6 +380,7 @@ exports.listProducts = async (req, res) => {
           m.file_path AS "featuredImage",
           (SELECT COALESCE(AVG(rating), 0) FROM reviews WHERE product_id = p.id) AS "averageRating",
           (SELECT COUNT(*) FROM reviews WHERE product_id = p.id) AS "totalReviews",
+          (SELECT COALESCE(json_agg(pv.*), '[]') FROM product_variants pv WHERE pv.product_id = p.id) AS variants,
           (
             SELECT jsonb_build_object(
               'id', o.id,
@@ -428,6 +471,7 @@ exports.getProductById = async (req, res) => {
           ) FILTER (WHERE m.id IS NOT NULL),
           '[]'
         ) AS images,
+        (SELECT COALESCE(json_agg(pv.*), '[]') FROM product_variants pv WHERE pv.product_id = p.id) AS variants,
         (
           SELECT jsonb_build_object(
             'id', o.id,
