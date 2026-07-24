@@ -1073,6 +1073,20 @@ exports.getProductFrontendById = async (req, res) => {
           '[]'
         ) AS images,
         (
+          SELECT COALESCE(json_agg(
+            jsonb_build_object(
+              'id', pv.id,
+              'sku', pv.sku,
+              'mrp', pv.mrp,
+              'sellingPrice', pv.selling_price,
+              'attributes', pv.attributes,
+              'stock', pv.stock
+            )
+          ), '[]')
+          FROM product_variants pv
+          WHERE pv.product_id = p.id
+        ) AS variants,
+        (
           SELECT jsonb_build_object(
             'id', o.id,
             'name', o.name,
