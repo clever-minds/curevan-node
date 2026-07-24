@@ -586,7 +586,8 @@ exports.updateProduct = async (req, res) => {
       tags = [],
       additional_features = [],
       is_recommended = false,
-      service_type_id = null
+      service_type_id = null,
+      variants = []
     } = req.body;
 
     // ---------------- IMAGE IDS (INTEGER ARRAY) ----------------
@@ -687,26 +688,68 @@ exports.updateProduct = async (req, res) => {
       transaction: t
     });
 
-    // ---------------- INVENTORY UPDATE ----------------
-    await sequelize.query(
-      `
-      UPDATE inventory SET
-        sku = :sku,
-        on_hand = :stock,
-        reorder_point = :reorderPoint
-      WHERE product_id = :id
-      `,
-      {
-        replacements: {
-          id,
-          sku,
-          stock: stock || 0,
-          reorderPoint: reorderPoint || 0
-        },
-        type: QueryTypes.UPDATE,
-        transaction: t
+    // ---------------- VARIANTS & INVENTORY UPDATE ----------------
+    if (variants && Array.isArray(variants) && variants.length > 0) {
+      // Clear old variants & inventory
+      await sequelize.query(`DELETE FROM product_variants WHERE product_id = :id`, { replacements: { id }, type: QueryTypes.DELETE, transaction: t });
+      await sequelize.query(`DELETE FROM inventory WHERE product_id = :id`, { replacements: { id }, type: QueryTypes.DELETE, transaction: t });
+
+      for (const variant of variants) {
+        await sequelize.query(
+          `INSERT INTO product_variants (product_id, sku, mrp, selling_price, attributes, stock, reorder_point)
+           VALUES (:productId, :sku, :mrp, :sellingPrice, :attributes::jsonb, :stock, :reorderPoint)`,
+          {
+            replacements: {
+              productId: id,
+              sku: variant.sku,
+              mrp: variant.mrp || null,
+              sellingPrice: variant.sellingPrice || null,
+              attributes: JSON.stringify(variant.attributes || {}),
+              stock: variant.stock || 0,
+              reorderPoint: variant.reorderPoint || 0
+            },
+            type: QueryTypes.INSERT,
+            transaction: t
+          }
+        );
+
+        await sequelize.query(
+          `INSERT INTO inventory (product_id, sku, warehouse_id, on_hand, reorder_point)
+           VALUES (:productId, :sku, :warehouse_id, :stock, :reorderPoint)`,
+          {
+            replacements: {
+              productId: id,
+              sku: variant.sku,
+              stock: variant.stock || 0,
+              warehouse_id: 0,
+              reorderPoint: variant.reorderPoint || 0
+            },
+            type: QueryTypes.INSERT,
+            transaction: t
+          }
+        );
       }
-    );
+    } else {
+      // Single product, delete variants
+      await sequelize.query(`DELETE FROM product_variants WHERE product_id = :id`, { replacements: { id }, type: QueryTypes.DELETE, transaction: t });
+      
+      const [results, metadata] = await sequelize.query(
+        `UPDATE inventory SET sku = :sku, on_hand = :stock, reorder_point = :reorderPoint WHERE product_id = :id`,
+        {
+          replacements: { id, sku, stock: stock || 0, reorderPoint: reorderPoint || 0 },
+          type: QueryTypes.UPDATE,
+          transaction: t
+        }
+      );
+
+      // If no inventory existed, insert it
+      if (!metadata || metadata.rowCount === 0) {
+        await sequelize.query(
+          `INSERT INTO inventory (product_id, sku, warehouse_id, on_hand, reorder_point) VALUES (:id, :sku, :warehouse_id, :stock, :reorderPoint)`,
+          { replacements: { id, sku, stock: stock || 0, warehouse_id: 0, reorderPoint: reorderPoint || 0 }, type: QueryTypes.INSERT, transaction: t }
+        );
+      }
+    }
 
     await t.commit();
 
