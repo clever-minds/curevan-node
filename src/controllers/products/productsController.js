@@ -242,8 +242,8 @@ exports.addProduct = async (req, res) => {
       for (const variant of variants) {
         // Insert variant
         await sequelize.query(
-          `INSERT INTO product_variants (product_id, sku, mrp, selling_price, attributes, stock, reorder_point)
-           VALUES (:productId, :sku, :mrp, :sellingPrice, :attributes::jsonb, :stock, :reorderPoint)`,
+          `INSERT INTO product_variants (product_id, sku, mrp, selling_price, attributes, stock, reorder_point, image_id)
+           VALUES (:productId, :sku, :mrp, :sellingPrice, :attributes::jsonb, :stock, :reorderPoint, :imageId)`,
           {
             replacements: {
               productId,
@@ -252,7 +252,8 @@ exports.addProduct = async (req, res) => {
               sellingPrice: variant.sellingPrice || null,
               attributes: JSON.stringify(variant.attributes || {}),
               stock: variant.stock || 0,
-              reorderPoint: variant.reorderPoint || 0
+              reorderPoint: variant.reorderPoint || 0,
+              imageId: variant.imageId || null
             },
             type: QueryTypes.INSERT,
             transaction: t
@@ -471,7 +472,26 @@ exports.getProductById = async (req, res) => {
           ) FILTER (WHERE m.id IS NOT NULL),
           '[]'
         ) AS images,
-        (SELECT COALESCE(json_agg(pv.*), '[]') FROM product_variants pv WHERE pv.product_id = p.id) AS variants,
+        (
+          SELECT COALESCE(json_agg(
+            jsonb_build_object(
+              'id', pv.id,
+              'product_id', pv.product_id,
+              'sku', pv.sku,
+              'mrp', pv.mrp,
+              'selling_price', pv.selling_price,
+              'attributes', pv.attributes,
+              'stock', pv.stock,
+              'reorder_point', pv.reorder_point,
+              'is_active', pv.is_active,
+              'image_id', pv.image_id,
+              'imageUrl', m_variant.file_path
+            )
+          ), '[]') 
+          FROM product_variants pv 
+          LEFT JOIN media m_variant ON m_variant.id = pv.image_id
+          WHERE pv.product_id = p.id
+        ) AS variants,
         (
           SELECT jsonb_build_object(
             'id', o.id,
@@ -696,8 +716,8 @@ exports.updateProduct = async (req, res) => {
 
       for (const variant of variants) {
         await sequelize.query(
-          `INSERT INTO product_variants (product_id, sku, mrp, selling_price, attributes, stock, reorder_point)
-           VALUES (:productId, :sku, :mrp, :sellingPrice, :attributes::jsonb, :stock, :reorderPoint)`,
+          `INSERT INTO product_variants (product_id, sku, mrp, selling_price, attributes, stock, reorder_point, image_id)
+           VALUES (:productId, :sku, :mrp, :sellingPrice, :attributes::jsonb, :stock, :reorderPoint, :imageId)`,
           {
             replacements: {
               productId: id,
@@ -706,7 +726,8 @@ exports.updateProduct = async (req, res) => {
               sellingPrice: variant.sellingPrice || null,
               attributes: JSON.stringify(variant.attributes || {}),
               stock: variant.stock || 0,
-              reorderPoint: variant.reorderPoint || 0
+              reorderPoint: variant.reorderPoint || 0,
+              imageId: variant.imageId || null
             },
             type: QueryTypes.INSERT,
             transaction: t
@@ -1080,10 +1101,13 @@ exports.getProductFrontendById = async (req, res) => {
               'mrp', pv.mrp,
               'sellingPrice', pv.selling_price,
               'attributes', pv.attributes,
-              'stock', pv.stock
+              'stock', pv.stock,
+              'imageId', pv.image_id,
+              'imageUrl', m_variant.file_path
             )
           ), '[]')
           FROM product_variants pv
+          LEFT JOIN media m_variant ON m_variant.id = pv.image_id
           WHERE pv.product_id = p.id
         ) AS variants,
         (
