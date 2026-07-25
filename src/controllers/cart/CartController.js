@@ -100,7 +100,7 @@ exports.addToCart = async (req, res) => {
   try {
     console.log("Add to cart request body:", req.body);
     const userId = req.user.id;
-    const { product_id, quantity } = req.body;
+    const { product_id, quantity, variant_id } = req.body;
 
     if (!product_id || !quantity) {
       return res.error("Product and quantity are required");
@@ -108,9 +108,9 @@ exports.addToCart = async (req, res) => {
 
     // Check if item already exists in cart
     const [existing] = await sequelize.query(
-      `SELECT id, quantity FROM cart WHERE user_id = :userId AND product_id = :productId`,
+      `SELECT id, quantity FROM cart WHERE user_id = :userId AND product_id = :productId AND (variant_id = :variantId OR (variant_id IS NULL AND :variantId IS NULL))`,
       {
-        replacements: { userId, productId: product_id },
+        replacements: { userId, productId: product_id, variantId: variant_id || null },
         type: QueryTypes.SELECT,
       }
     );
@@ -126,9 +126,9 @@ exports.addToCart = async (req, res) => {
     } else {
       // Insert new cart item
       await sequelize.query(
-        `INSERT INTO cart (user_id, product_id, quantity)
-         VALUES (:userId, :productId, :quantity)`,
-        { replacements: { userId, productId: product_id, quantity }, type: QueryTypes.INSERT }
+        `INSERT INTO cart (user_id, product_id, quantity, variant_id)
+         VALUES (:userId, :productId, :quantity, :variantId)`,
+        { replacements: { userId, productId: product_id, quantity, variantId: variant_id || null }, type: QueryTypes.INSERT }
       );
     }
 
