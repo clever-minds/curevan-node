@@ -902,12 +902,13 @@ exports.createOrderFromCart = async (req, res) => {
         SELECT 
          c.product_id,
          c.quantity,
+         c.variant_id,
          p.title,
-         p.selling_price,
-         p.selling_price AS price,
+         COALESCE(pv.selling_price, p.selling_price) AS selling_price,
+         COALESCE(pv.selling_price, p.selling_price) AS price,
          p.category_id,
-         p.mrp,
-         p.sku,
+         COALESCE(pv.mrp, p.mrp) AS mrp,
+         COALESCE(pv.sku, p.sku) AS sku,
          p.hsn_code,
          p.gst_slab,
          p.is_tax_inclusive,
@@ -944,6 +945,7 @@ exports.createOrderFromCart = async (req, res) => {
          ) AS offer
        FROM cart c
        JOIN products p ON c.product_id = p.id
+       LEFT JOIN product_variants pv ON c.variant_id = pv.id
        WHERE c.user_id = :userId
       ) q`,
       {
@@ -1221,7 +1223,8 @@ exports.createOrderFromCart = async (req, res) => {
            hsn_code,
            tax_rate_pct,
            offer_name,
-           discount_amount
+           discount_amount,
+           variant_id
          ) VALUES (
            :orderId,
            :sku,
@@ -1232,7 +1235,8 @@ exports.createOrderFromCart = async (req, res) => {
            :hsnCode,
            :taxRate,
            :offerName,
-           :discountAmount
+           :discountAmount,
+           :variantId
          )`,
         {
           replacements: {
@@ -1245,7 +1249,8 @@ exports.createOrderFromCart = async (req, res) => {
             hsnCode: item.hsn_code,
             taxRate: item.gst_slab,
             offerName: itemOfferName,
-            discountAmount: itemDiscountAmount
+            discountAmount: itemDiscountAmount,
+            variantId: item.variant_id || null
           },
           type: QueryTypes.INSERT,
           transaction
@@ -1632,7 +1637,8 @@ exports.myOrders = async (req, res) => {
               'price', oi.price,
               'mrp', oi.mrp,
               'hsnCode', oi.hsn_code,
-              'taxRate', oi.tax_rate_pct
+              'taxRate', oi.tax_rate_pct,
+              'variantAttributes', pv.attributes
             )
           ) FILTER (WHERE oi.id IS NOT NULL),
           '[]'
@@ -1640,6 +1646,7 @@ exports.myOrders = async (req, res) => {
       FROM orders o
       -- Join order_items
       LEFT JOIN order_items oi ON o.id = oi.order_id
+      LEFT JOIN product_variants pv ON oi.variant_id = pv.id
       -- Join order_addresses table for billing & shipping
       LEFT JOIN order_addresses oa_billing 
         ON o.billing_address_id = oa_billing.id
@@ -1733,7 +1740,8 @@ exports.getOrderById = async (req, res) => {
               'qty', oi.qty,
               'price', oi.price,
               'mrp', oi.mrp,
-              'taxRatePct', oi.tax_rate_pct
+              'taxRatePct', oi.tax_rate_pct,
+              'variantAttributes', pv.attributes
             )
           ) FILTER (WHERE oi.id IS NOT NULL),
           '[]'
@@ -1741,6 +1749,7 @@ exports.getOrderById = async (req, res) => {
 
       FROM orders o
       LEFT JOIN order_items oi ON o.id = oi.order_id
+      LEFT JOIN product_variants pv ON oi.variant_id = pv.id
       LEFT JOIN order_addresses sa ON o.shipping_address_id = sa.id
       LEFT JOIN order_addresses ba ON o.billing_address_id = ba.id
       LEFT JOIN invoices i ON o.id = i.order_id
@@ -1910,13 +1919,15 @@ exports.getInvoiceById = async (req, res) => {
                       'gst_amount', ROUND(oi.price - (oi.price / (1 + (oi.tax_rate_pct/100)))::numeric, 2),
                       'cgst', CASE WHEN :isIntra THEN ROUND((oi.price - (oi.price / (1 + (oi.tax_rate_pct/100)))) / 2, 2) ELSE 0 END,
                       'sgst', CASE WHEN :isIntra THEN ROUND((oi.price - (oi.price / (1 + (oi.tax_rate_pct/100)))) / 2, 2) ELSE 0 END,
-                      'igst', CASE WHEN NOT :isIntra THEN ROUND((oi.price - (oi.price / (1 + (oi.tax_rate_pct/100)))), 2) ELSE 0 END
+                      'igst', CASE WHEN NOT :isIntra THEN ROUND((oi.price - (oi.price / (1 + (oi.tax_rate_pct/100)))), 2) ELSE 0 END,
+                      'variantAttributes', pv.attributes
                     )
                   ) FILTER (WHERE oi.id IS NOT NULL),
                   '[]'
                 ) AS items
          FROM orders o
          LEFT JOIN order_items oi ON o.id = oi.order_id
+         LEFT JOIN product_variants pv ON oi.variant_id = pv.id
          WHERE o.id = :orderId
          GROUP BY o.id`,
         {
