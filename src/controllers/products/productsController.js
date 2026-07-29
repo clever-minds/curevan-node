@@ -157,7 +157,9 @@ exports.addProduct = async (req, res) => {
       additional_features = [],
       is_recommended = false,
       service_type_id = null,
-      variants = []
+      variants = [],
+      sub_category_id = null,
+      bundleItems = []
     } = req.body;
 
     // 2️⃣ Validate required fields
@@ -183,7 +185,7 @@ exports.addProduct = async (req, res) => {
           length_cm, width_cm, height_cm, weight_kg,
           manufacturer, country_of_origin, packer, importer, batch_number,
           manufacturing_date, expiry_date, tags,
-          image_ids, additional_features, is_recommended, service_type_id
+          image_ids, additional_features, is_recommended, service_type_id, sub_category_id
         ) VALUES (
           :productType, :title, :subtitle, :shortDescription, :longDescription,
           :brand, :sku, :category, :mrp, :sellingPrice,
@@ -192,7 +194,7 @@ exports.addProduct = async (req, res) => {
           :length_cm, :width_cm, :height_cm, :weight_kg,
           :manufacturer, :country_of_origin, :packer, :importer, :batch_number,
           :manufacturing_date, :expiry_date, :tags::json,
-          ARRAY[:imageIds]::integer[], :additional_features::json, :is_recommended, :service_type_id
+          ARRAY[:imageIds]::integer[], :additional_features::json, :is_recommended, :service_type_id, :sub_category_id
         )
         RETURNING id`,
       {
@@ -228,7 +230,8 @@ exports.addProduct = async (req, res) => {
           imageIds: imageIdsArray,
           additional_features: additionalFeaturesJSON,
           is_recommended: is_recommended || false,
-          service_type_id: service_type_id || null
+          service_type_id: service_type_id || null,
+          sub_category_id: sub_category_id || null
         },
         type: QueryTypes.INSERT,
         transaction: t
@@ -294,6 +297,26 @@ exports.addProduct = async (req, res) => {
           transaction: t
         }
       );
+    }
+
+    // Insert bundle items if productType is Bundle
+    if (productType === 'Bundle' && bundleItems && Array.isArray(bundleItems) && bundleItems.length > 0) {
+      for (const item of bundleItems) {
+        await sequelize.query(
+          `INSERT INTO product_bundle_items (bundle_product_id, component_product_id, component_variant_sku, quantity)
+           VALUES (:bundleProductId, :componentProductId, :componentVariantSku, :quantity)`,
+          {
+            replacements: {
+              bundleProductId: productId,
+              componentProductId: item.componentProductId,
+              componentVariantSku: item.componentVariantSku || null,
+              quantity: item.quantity || 1
+            },
+            type: QueryTypes.INSERT,
+            transaction: t
+          }
+        );
+      }
     }
 
     // 7️⃣ Commit transaction
@@ -493,6 +516,24 @@ exports.getProductById = async (req, res) => {
           WHERE pv.product_id = p.id
         ) AS variants,
         (
+          SELECT COALESCE(json_agg(
+            jsonb_build_object(
+              'id', pbi.id,
+              'bundle_product_id', pbi.bundle_product_id,
+              'component_product_id', pbi.component_product_id,
+              'component_variant_sku', pbi.component_variant_sku,
+              'quantity', pbi.quantity,
+              'component_title', cp.title,
+              'component_image_url', (SELECT file_path FROM media WHERE id = cp.image_ids[1] LIMIT 1),
+              'component_stock', ci.on_hand
+            )
+          ), '[]')
+          FROM product_bundle_items pbi
+          JOIN products cp ON cp.id = pbi.component_product_id
+          LEFT JOIN inventory ci ON ci.product_id = cp.id
+          WHERE pbi.bundle_product_id = p.id
+        ) AS "bundleItems",
+        (
           SELECT jsonb_build_object(
             'id', o.id,
             'name', o.name,
@@ -604,10 +645,11 @@ exports.updateProduct = async (req, res) => {
       manufacturing_date = null,
       expiry_date = null,
       tags = [],
-      additional_features = [],
       is_recommended = false,
       service_type_id = null,
-      variants = []
+      variants = [],
+      sub_category_id = null,
+      bundleItems = []
     } = req.body;
 
     // ---------------- IMAGE IDS (INTEGER ARRAY) ----------------
@@ -652,7 +694,8 @@ exports.updateProduct = async (req, res) => {
         tags = :tags::json,
         additional_features = :additional_features::json,
         is_recommended = :is_recommended,
-        service_type_id = :service_type_id
+        service_type_id = :service_type_id,
+        sub_category_id = :sub_category_id
     `;
 
     // update image_ids only if provided
@@ -694,7 +737,8 @@ exports.updateProduct = async (req, res) => {
       tags: tagsJSON,
       additional_features: additionalFeaturesJSON,
       is_recommended: is_recommended || false,
-      service_type_id: service_type_id || null
+      service_type_id: service_type_id || null,
+      sub_category_id: sub_category_id || null
     };
 
     if (imageIds.length > 0) {
@@ -769,6 +813,29 @@ exports.updateProduct = async (req, res) => {
           `INSERT INTO inventory (product_id, sku, warehouse_id, on_hand, reorder_point) VALUES (:id, :sku, :warehouse_id, :stock, :reorderPoint)`,
           { replacements: { id, sku, stock: stock || 0, warehouse_id: 0, reorderPoint: reorderPoint || 0 }, type: QueryTypes.INSERT, transaction: t }
         );
+      }
+    }
+
+    if (productType === 'Bundle') {
+      await sequelize.query(`DELETE FROM product_bundle_items WHERE bundle_product_id = :id`, { replacements: { id }, type: QueryTypes.DELETE, transaction: t });
+      
+      if (bundleItems && Array.isArray(bundleItems) && bundleItems.length > 0) {
+        for (const item of bundleItems) {
+          await sequelize.query(
+            `INSERT INTO product_bundle_items (bundle_product_id, component_product_id, component_variant_sku, quantity)
+             VALUES (:bundleProductId, :componentProductId, :componentVariantSku, :quantity)`,
+            {
+              replacements: {
+                bundleProductId: id,
+                componentProductId: item.componentProductId,
+                componentVariantSku: item.componentVariantSku || null,
+                quantity: item.quantity || 1
+              },
+              type: QueryTypes.INSERT,
+              transaction: t
+            }
+          );
+        }
       }
     }
 
@@ -870,10 +937,73 @@ exports.deleteProduct = async (req, res) => {
 
 exports.getProduct = async (req, res) => {
   try {
-    const { category_id } = req.query;
-    let whereClause = '';
+    const { 
+      category_id, sub_category_id, brand, minPrice, maxPrice, stockStatus, minRating,
+      colour, size, bodyPart, intendedUse, suitableUser, useType
+    } = req.query;
+
+    let whereClause = 'WHERE 1=1';
+    let replacements = {};
+
     if (category_id) {
-      whereClause = 'WHERE p.category_id = :category_id';
+      whereClause += ' AND p.category_id = :category_id';
+      replacements.category_id = category_id;
+    }
+    if (sub_category_id) {
+      whereClause += ' AND p.sub_category_id = :sub_category_id';
+      replacements.sub_category_id = sub_category_id;
+    }
+    if (brand) {
+      whereClause += ' AND p.brand = :brand';
+      replacements.brand = brand;
+    }
+    if (minPrice !== undefined && maxPrice !== undefined) {
+      whereClause += ' AND p.selling_price BETWEEN :minPrice AND :maxPrice';
+      replacements.minPrice = minPrice;
+      replacements.maxPrice = maxPrice;
+    } else if (minPrice !== undefined) {
+      whereClause += ' AND p.selling_price >= :minPrice';
+      replacements.minPrice = minPrice;
+    } else if (maxPrice !== undefined) {
+      whereClause += ' AND p.selling_price <= :maxPrice';
+      replacements.maxPrice = maxPrice;
+    }
+    
+    if (stockStatus === 'In Stock') {
+      whereClause += ' AND i.on_hand > 0';
+    } else if (stockStatus === 'Out of Stock') {
+      whereClause += ' AND (i.on_hand IS NULL OR i.on_hand <= 0)';
+    }
+
+    if (minRating) {
+      whereClause += ' AND (SELECT COALESCE(AVG(rating), 0) FROM reviews WHERE product_id = p.id) >= :minRating';
+      replacements.minRating = minRating;
+    }
+
+    // JSONB filters on additional_features
+    if (colour) {
+      whereClause += ' AND p.additional_features->>\'Colour\' = :colour';
+      replacements.colour = colour;
+    }
+    if (size) {
+      whereClause += ' AND p.additional_features->>\'Size\' = :size';
+      replacements.size = size;
+    }
+    if (bodyPart) {
+      whereClause += ' AND p.additional_features->>\'Body Part\' = :bodyPart';
+      replacements.bodyPart = bodyPart;
+    }
+    if (intendedUse) {
+      whereClause += ' AND p.additional_features->>\'Intended Use\' = :intendedUse';
+      replacements.intendedUse = intendedUse;
+    }
+    if (suitableUser) {
+      whereClause += ' AND p.additional_features->>\'Suitable User\' = :suitableUser';
+      replacements.suitableUser = suitableUser;
+    }
+    if (useType) {
+      whereClause += ' AND p.additional_features->>\'Use Type\' = :useType';
+      replacements.useType = useType;
     }
 
     const products = await sequelize.query(
@@ -907,6 +1037,24 @@ exports.getProduct = async (req, res) => {
         m.file_path AS "featuredImage",
         (SELECT COALESCE(AVG(rating), 0) FROM reviews WHERE product_id = p.id) AS "averageRating",
         (SELECT COUNT(*) FROM reviews WHERE product_id = p.id) AS "totalReviews",
+        (
+          SELECT COALESCE(json_agg(
+            jsonb_build_object(
+              'id', pbi.id,
+              'bundle_product_id', pbi.bundle_product_id,
+              'component_product_id', pbi.component_product_id,
+              'component_variant_sku', pbi.component_variant_sku,
+              'quantity', pbi.quantity,
+              'component_title', cp.title,
+              'component_image_url', (SELECT file_path FROM media WHERE id = cp.image_ids[1] LIMIT 1),
+              'component_stock', ci.on_hand
+            )
+          ), '[]')
+          FROM product_bundle_items pbi
+          JOIN products cp ON cp.id = pbi.component_product_id
+          LEFT JOIN inventory ci ON ci.product_id = cp.id
+          WHERE pbi.bundle_product_id = p.id
+        ) AS "bundleItems",
         (
           SELECT jsonb_build_object(
             'id', o.id,
@@ -944,7 +1092,7 @@ exports.getProduct = async (req, res) => {
       ${whereClause}
       ) q`,
       { 
-        replacements: { category_id },
+        replacements,
         type: QueryTypes.SELECT 
       }
     );

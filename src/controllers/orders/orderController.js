@@ -904,6 +904,7 @@ exports.createOrderFromCart = async (req, res) => {
          c.quantity,
          c.variant_id,
          p.title,
+         p.product_type,
          COALESCE(pv.selling_price, p.selling_price) AS selling_price,
          COALESCE(pv.selling_price, p.selling_price) AS price,
          p.category_id,
@@ -1006,13 +1007,46 @@ exports.createOrderFromCart = async (req, res) => {
     const inventoryMap = {};
     inventories.forEach(inv => inventoryMap[inv.product_id] = inv);
 
+    // Fetch bundle components for any bundles in cart
+    const bundleItemsInCart = cartItems.filter(item => item.product_type === 'Bundle');
+    const bundleComponentMap = {}; // bundle_product_id -> [{ component_product_id, quantity }]
+    if (bundleItemsInCart.length > 0) {
+      const bundleIds = bundleItemsInCart.map(item => item.product_id);
+      const components = await sequelize.query(
+        `SELECT pbi.bundle_product_id, pbi.component_product_id, pbi.quantity, i.on_hand, i.reserved, i.id as inventory_id
+         FROM product_bundle_items pbi
+         JOIN inventory i ON i.product_id = pbi.component_product_id
+         WHERE pbi.bundle_product_id IN (:bundleIds)`,
+        { replacements: { bundleIds }, type: QueryTypes.SELECT, transaction }
+      );
+      components.forEach(comp => {
+        if (!bundleComponentMap[comp.bundle_product_id]) bundleComponentMap[comp.bundle_product_id] = [];
+        bundleComponentMap[comp.bundle_product_id].push(comp);
+      });
+    }
+
     for (let item of cartItems) {
-      const inv = inventoryMap[item.product_id];
-      if (!inv || (inv.on_hand - inv.reserved) < item.quantity) {
-        await transaction.rollback();
-        return res.status(400).json({
-          error: `Insufficient stock for product: ${item.title}`
-        });
+      if (item.product_type === 'Bundle') {
+        const components = bundleComponentMap[item.product_id] || [];
+        if (components.length === 0) {
+          await transaction.rollback();
+          return res.status(400).json({ error: `Bundle ${item.title} has no components configured.` });
+        }
+        for (const comp of components) {
+          const totalRequired = comp.quantity * item.quantity;
+          if ((comp.on_hand - comp.reserved) < totalRequired) {
+            await transaction.rollback();
+            return res.status(400).json({ error: `Insufficient stock for a component of bundle: ${item.title}` });
+          }
+        }
+      } else {
+        const inv = inventoryMap[item.product_id];
+        if (!inv || (inv.on_hand - inv.reserved) < item.quantity) {
+          await transaction.rollback();
+          return res.status(400).json({
+            error: `Insufficient stock for product: ${item.title}`
+          });
+        }
       }
     }
 
@@ -1258,22 +1292,41 @@ exports.createOrderFromCart = async (req, res) => {
       );
 
       // Update inventory
-      const inv = inventoryMap[item.product_id];
-      await sequelize.query(
-        `UPDATE inventory
-         SET on_hand = on_hand - :qty,
-             reserved = reserved + :qty,
-             updated_at = CURRENT_TIMESTAMP
-         WHERE id = :inventoryId`,
-        {
-          replacements: {
-            qty: item.quantity,
-            inventoryId: inv.id
-          },
-          type: QueryTypes.UPDATE,
-          transaction
+      if (item.product_type === 'Bundle') {
+        const components = bundleComponentMap[item.product_id] || [];
+        for (const comp of components) {
+          const qtyToDeduct = comp.quantity * item.quantity;
+          await sequelize.query(
+            `UPDATE inventory
+             SET on_hand = on_hand - :qty,
+                 reserved = reserved + :qty,
+                 updated_at = CURRENT_TIMESTAMP
+             WHERE id = :inventoryId`,
+            {
+              replacements: { qty: qtyToDeduct, inventoryId: comp.inventory_id },
+              type: QueryTypes.UPDATE,
+              transaction
+            }
+          );
         }
-      );
+      } else {
+        const inv = inventoryMap[item.product_id];
+        await sequelize.query(
+          `UPDATE inventory
+           SET on_hand = on_hand - :qty,
+               reserved = reserved + :qty,
+               updated_at = CURRENT_TIMESTAMP
+           WHERE id = :inventoryId`,
+          {
+            replacements: {
+              qty: item.quantity,
+              inventoryId: inv.id
+            },
+            type: QueryTypes.UPDATE,
+            transaction
+          }
+        );
+      }
     }
 
     // 7️⃣ Insert Payment Transaction
