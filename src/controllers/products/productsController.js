@@ -645,6 +645,7 @@ exports.updateProduct = async (req, res) => {
       manufacturing_date = null,
       expiry_date = null,
       tags = [],
+      additional_features = [],
       is_recommended = false,
       service_type_id = null,
       variants = [],
