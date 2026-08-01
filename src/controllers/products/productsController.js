@@ -163,8 +163,11 @@ exports.addProduct = async (req, res) => {
     } = req.body;
 
     // 2️⃣ Validate required fields
-    if (!title || !sku || !category) {
-      return res.status(400).json({ message: 'Title, SKU and Category are required' });
+    if (!title || !category) {
+      return res.status(400).json({ message: 'Title and Category are required' });
+    }
+    if ((!variants || variants.length === 0) && !sku) {
+      return res.status(400).json({ message: 'SKU is required when no variants are provided' });
     }
 
     // 3️⃣ Prepare JSON fields
@@ -205,7 +208,7 @@ exports.addProduct = async (req, res) => {
           shortDescription,
           longDescription,
           brand,
-          sku,
+          sku: sku || null,
           category,
           mrp,
           sellingPrice,
@@ -652,6 +655,16 @@ exports.updateProduct = async (req, res) => {
       sub_category_id = null,
       bundleItems = []
     } = req.body;
+
+    // Validate Title and Category
+    if (!title || !category) {
+      return res.status(400).json({ message: 'Title and Category are required' });
+    }
+
+    // Validate SKU/variants
+    if ((!variants || variants.length === 0) && !sku) {
+      return res.status(400).json({ message: 'SKU is required when no variants are provided' });
+    }
 
     // ---------------- IMAGE IDS (INTEGER ARRAY) ----------------
     const imageIds = Array.isArray(image_ids)
