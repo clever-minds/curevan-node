@@ -306,14 +306,17 @@ exports.addProduct = async (req, res) => {
     if (productType === 'Bundle' && bundleItems && Array.isArray(bundleItems) && bundleItems.length > 0) {
       for (const item of bundleItems) {
         await sequelize.query(
-          `INSERT INTO product_bundle_items (bundle_product_id, component_product_id, component_variant_sku, quantity)
-           VALUES (:bundleProductId, :componentProductId, :componentVariantSku, :quantity)`,
+          `INSERT INTO product_bundle_items (bundle_product_id, component_product_id, component_variant_sku, quantity, selling_price, discount, gst_slab)
+           VALUES (:bundleProductId, :componentProductId, :componentVariantSku, :quantity, :sellingPrice, :discount, :gstSlab)`,
           {
             replacements: {
               bundleProductId: productId,
               componentProductId: item.componentProductId,
               componentVariantSku: item.componentVariantSku || null,
-              quantity: item.quantity || 1
+              quantity: item.quantity || 1,
+              sellingPrice: item.sellingPrice || 0,
+              discount: item.discount || 0,
+              gstSlab: item.gstSlab || 0
             },
             type: QueryTypes.INSERT,
             transaction: t
@@ -526,6 +529,9 @@ exports.getProductById = async (req, res) => {
               'component_product_id', pbi.component_product_id,
               'component_variant_sku', pbi.component_variant_sku,
               'quantity', pbi.quantity,
+              'selling_price', pbi.selling_price,
+              'discount', pbi.discount,
+              'gst_slab', pbi.gst_slab,
               'component_title', cp.title,
               'component_image_url', (SELECT file_path FROM media WHERE id = cp.image_ids[1] LIMIT 1),
               'component_stock', ci.on_hand
@@ -836,14 +842,17 @@ exports.updateProduct = async (req, res) => {
       if (bundleItems && Array.isArray(bundleItems) && bundleItems.length > 0) {
         for (const item of bundleItems) {
           await sequelize.query(
-            `INSERT INTO product_bundle_items (bundle_product_id, component_product_id, component_variant_sku, quantity)
-             VALUES (:bundleProductId, :componentProductId, :componentVariantSku, :quantity)`,
+            `INSERT INTO product_bundle_items (bundle_product_id, component_product_id, component_variant_sku, quantity, selling_price, discount, gst_slab)
+             VALUES (:bundleProductId, :componentProductId, :componentVariantSku, :quantity, :sellingPrice, :discount, :gstSlab)`,
             {
               replacements: {
                 bundleProductId: id,
                 componentProductId: item.componentProductId,
                 componentVariantSku: item.componentVariantSku || null,
-                quantity: item.quantity || 1
+                quantity: item.quantity || 1,
+                sellingPrice: item.sellingPrice || 0,
+                discount: item.discount || 0,
+                gstSlab: item.gstSlab || 0
               },
               type: QueryTypes.INSERT,
               transaction: t
@@ -1059,6 +1068,9 @@ exports.getProduct = async (req, res) => {
               'component_product_id', pbi.component_product_id,
               'component_variant_sku', pbi.component_variant_sku,
               'quantity', pbi.quantity,
+              'selling_price', pbi.selling_price,
+              'discount', pbi.discount,
+              'gst_slab', pbi.gst_slab,
               'component_title', cp.title,
               'component_image_url', (SELECT file_path FROM media WHERE id = cp.image_ids[1] LIMIT 1),
               'component_stock', ci.on_hand
