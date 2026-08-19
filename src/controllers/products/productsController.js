@@ -1293,6 +1293,31 @@ exports.getProductFrontendById = async (req, res) => {
           WHERE pv.product_id = p.id
         ) AS variants,
         (
+          SELECT COALESCE(json_agg(
+            jsonb_build_object(
+              'id', pbi.id,
+              'bundle_product_id', pbi.bundle_product_id,
+              'component_product_id', pbi.component_product_id,
+              'component_variant_sku', pbi.component_variant_sku,
+              'quantity', pbi.quantity,
+              'selling_price', pbi.selling_price,
+              'discount', pbi.discount,
+              'gst_slab', pbi.gst_slab,
+              'component_title', cp.title,
+              'component_image_url', (SELECT file_path FROM media WHERE id = cp.image_ids[1] LIMIT 1),
+              'component_stock', (
+                SELECT on_hand FROM inventory 
+                WHERE product_id = cp.id 
+                AND (sku = pbi.component_variant_sku OR pbi.component_variant_sku IS NULL OR pbi.component_variant_sku = '') 
+                LIMIT 1
+              )
+            )
+          ), '[]')
+          FROM product_bundle_items pbi
+          JOIN products cp ON cp.id = pbi.component_product_id
+          WHERE pbi.bundle_product_id = p.id
+        ) AS "bundle_items",
+        (
           SELECT jsonb_build_object(
             'id', o.id,
             'name', o.name,
