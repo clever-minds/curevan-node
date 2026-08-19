@@ -534,12 +534,16 @@ exports.getProductById = async (req, res) => {
               'gst_slab', pbi.gst_slab,
               'component_title', cp.title,
               'component_image_url', (SELECT file_path FROM media WHERE id = cp.image_ids[1] LIMIT 1),
-              'component_stock', ci.on_hand
+              'component_stock', (
+                SELECT on_hand FROM inventory 
+                WHERE product_id = cp.id 
+                AND (sku = pbi.component_variant_sku OR pbi.component_variant_sku IS NULL OR pbi.component_variant_sku = '') 
+                LIMIT 1
+              )
             )
           ), '[]')
           FROM product_bundle_items pbi
           JOIN products cp ON cp.id = pbi.component_product_id
-          LEFT JOIN inventory ci ON ci.product_id = cp.id
           WHERE pbi.bundle_product_id = p.id
         ) AS "bundleItems",
         (
@@ -1073,12 +1077,16 @@ exports.getProduct = async (req, res) => {
               'gst_slab', pbi.gst_slab,
               'component_title', cp.title,
               'component_image_url', (SELECT file_path FROM media WHERE id = cp.image_ids[1] LIMIT 1),
-              'component_stock', ci.on_hand
+              'component_stock', (
+                SELECT on_hand FROM inventory 
+                WHERE product_id = cp.id 
+                AND (sku = pbi.component_variant_sku OR pbi.component_variant_sku IS NULL OR pbi.component_variant_sku = '') 
+                LIMIT 1
+              )
             )
           ), '[]')
           FROM product_bundle_items pbi
           JOIN products cp ON cp.id = pbi.component_product_id
-          LEFT JOIN inventory ci ON ci.product_id = cp.id
           WHERE pbi.bundle_product_id = p.id
         ) AS "bundleItems",
         (
