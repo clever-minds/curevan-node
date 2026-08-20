@@ -1967,8 +1967,6 @@ exports.getInvoiceById = async (req, res) => {
                   json_agg(
                     jsonb_build_object(
                       'id', oi.id,
-                      'sku', oi.sku,
-                      'product_id', pv.product_id,
                       'name', oi.name,
                       'quantity', oi.qty,
                       'price', oi.price,
