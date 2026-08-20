@@ -1967,8 +1967,10 @@ exports.getInvoiceById = async (req, res) => {
                   json_agg(
                     jsonb_build_object(
                       'id', oi.id,
+                      'sku', oi.sku,
+                      'product_id', pv.product_id,
                       'name', oi.name,
-                      'qty', oi.qty,
+                      'quantity', oi.qty,
                       'price', oi.price,
                       'tax_rate_pct', oi.tax_rate_pct,
                       'price_excl_gst', ROUND(oi.price / (1 + (oi.tax_rate_pct/100))::numeric, 2),
@@ -2003,8 +2005,8 @@ exports.getInvoiceById = async (req, res) => {
             FROM products bp
             JOIN product_bundle_items pbi ON pbi.bundle_product_id = bp.id
             JOIN products cp ON cp.id = pbi.component_product_id
-            WHERE bp.title = :itemName OR bp.sku = :itemSku OR bp.id = (SELECT product_id FROM product_variants WHERE id = (SELECT variant_id FROM order_items WHERE id = :itemId LIMIT 1))
-          `, { replacements: { itemName: item.name, itemSku: item.sku || '', itemId: item.id }, type: QueryTypes.SELECT });
+            WHERE bp.id = :itemProductId OR bp.sku = :itemSku OR bp.title = :itemName
+          `, { replacements: { itemName: item.name, itemSku: item.sku || 'UNKNOWN_SKU', itemProductId: item.product_id || -1 }, type: QueryTypes.SELECT });
 
           if (bundleQuery.length > 0) {
             item.components = bundleQuery.map(comp => {
