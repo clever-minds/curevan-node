@@ -1976,7 +1976,30 @@ exports.getInvoiceById = async (req, res) => {
                       'cgst', CASE WHEN :isIntra THEN ROUND((oi.price - (oi.price / (1 + (oi.tax_rate_pct/100)))) / 2, 2) ELSE 0 END,
                       'sgst', CASE WHEN :isIntra THEN ROUND((oi.price - (oi.price / (1 + (oi.tax_rate_pct/100)))) / 2, 2) ELSE 0 END,
                       'igst', CASE WHEN NOT :isIntra THEN ROUND((oi.price - (oi.price / (1 + (oi.tax_rate_pct/100)))), 2) ELSE 0 END,
-                      'variantAttributes', pv.attributes
+                      'variantAttributes', pv.attributes,
+                      'components', (
+                        SELECT COALESCE(
+                          json_agg(
+                            jsonb_build_object(
+                              'name', cp.title,
+                              'sku', pbi.component_variant_sku,
+                              'qty', pbi.quantity,
+                              'price', pbi.selling_price,
+                              'gst_slab', pbi.gst_slab,
+                              'discount', pbi.discount,
+                              'price_excl_gst', ROUND(pbi.selling_price / (1 + (pbi.gst_slab/100))::numeric, 2),
+                              'gst_amount', ROUND(pbi.selling_price - (pbi.selling_price / (1 + (pbi.gst_slab/100)))::numeric, 2),
+                              'cgst', CASE WHEN :isIntra THEN ROUND((pbi.selling_price - (pbi.selling_price / (1 + (pbi.gst_slab/100)))) / 2, 2) ELSE 0 END,
+                              'sgst', CASE WHEN :isIntra THEN ROUND((pbi.selling_price - (pbi.selling_price / (1 + (pbi.gst_slab/100)))) / 2, 2) ELSE 0 END,
+                              'igst', CASE WHEN NOT :isIntra THEN ROUND((pbi.selling_price - (pbi.selling_price / (1 + (pbi.gst_slab/100)))), 2) ELSE 0 END
+                            )
+                          ), '[]'::json
+                        )
+                        FROM products bp
+                        JOIN product_bundle_items pbi ON pbi.bundle_product_id = bp.id
+                        JOIN products cp ON cp.id = pbi.component_product_id
+                        WHERE bp.sku = oi.sku AND bp.product_type = 'Bundle'
+                      )
                     )
                   ) FILTER (WHERE oi.id IS NOT NULL),
                   '[]'
