@@ -1013,10 +1013,13 @@ exports.createOrderFromCart = async (req, res) => {
     if (bundleItemsInCart.length > 0) {
       const bundleIds = bundleItemsInCart.map(item => item.product_id);
       const components = await sequelize.query(
-        `SELECT pbi.bundle_product_id, pbi.component_product_id, pbi.quantity, i.on_hand, i.reserved, i.id as inventory_id
+        `SELECT DISTINCT ON (pbi.component_product_id, pbi.component_variant_sku) 
+           pbi.bundle_product_id, pbi.component_product_id, pbi.quantity, i.on_hand, i.reserved, i.id as inventory_id
          FROM product_bundle_items pbi
          JOIN inventory i ON i.product_id = pbi.component_product_id
-         WHERE pbi.bundle_product_id IN (:bundleIds)`,
+           AND (i.sku = pbi.component_variant_sku OR pbi.component_variant_sku IS NULL OR pbi.component_variant_sku = '')
+         WHERE pbi.bundle_product_id IN (:bundleIds)
+         ORDER BY pbi.component_product_id, pbi.component_variant_sku, i.id`,
         { replacements: { bundleIds }, type: QueryTypes.SELECT, transaction }
       );
       components.forEach(comp => {
