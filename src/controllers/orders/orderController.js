@@ -2101,6 +2101,6 @@ exports.getInvoiceById = async (req, res) => {
 
   } catch (error) {
     console.error(error);
-    return res.error("Server error");
+    return res.error("Server error: " + error.message);
   }
 };
