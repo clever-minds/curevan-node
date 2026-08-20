@@ -1979,10 +1979,9 @@ exports.getInvoiceById = async (req, res) => {
                       'variantAttributes', pv.attributes,
                         'components', '[]'::json
                       )
-                    )
-                  ) FILTER (WHERE oi.id IS NOT NULL),
-                  '[]'
-                ) AS items
+                    ),
+                    '[]'
+                  ) AS items
          FROM orders o
          LEFT JOIN order_items oi ON o.id = oi.order_id
          LEFT JOIN product_variants pv ON oi.variant_id = pv.id
