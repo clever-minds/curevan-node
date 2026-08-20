@@ -1998,7 +1998,7 @@ exports.getInvoiceById = async (req, res) => {
                         FROM products bp
                         JOIN product_bundle_items pbi ON pbi.bundle_product_id = bp.id
                         JOIN products cp ON cp.id = pbi.component_product_id
-                        WHERE bp.sku = oi.sku AND bp.product_type = 'Bundle'
+                        WHERE bp.id = pv.product_id AND bp.product_type = 'Bundle'
                       )
                     )
                   ) FILTER (WHERE oi.id IS NOT NULL),
