@@ -1977,28 +1977,7 @@ exports.getInvoiceById = async (req, res) => {
                       'sgst', CASE WHEN :isIntra THEN ROUND((oi.price - (oi.price / (1 + (oi.tax_rate_pct/100)))) / 2, 2) ELSE 0 END,
                       'igst', CASE WHEN NOT :isIntra THEN ROUND((oi.price - (oi.price / (1 + (oi.tax_rate_pct/100)))), 2) ELSE 0 END,
                       'variantAttributes', pv.attributes,
-                      'components', (
-                        SELECT COALESCE(
-                          json_agg(
-                            jsonb_build_object(
-                              'name', cp.title,
-                              'sku', pbi.component_variant_sku,
-                              'qty', pbi.quantity,
-                              'price', pbi.selling_price,
-                              'gst_slab', pbi.gst_slab,
-                              'discount', pbi.discount,
-                              'price_excl_gst', ROUND(pbi.selling_price / (1 + (pbi.gst_slab/100))::numeric, 2),
-                              'gst_amount', ROUND(pbi.selling_price - (pbi.selling_price / (1 + (pbi.gst_slab/100)))::numeric, 2),
-                              'cgst', CASE WHEN :isIntra THEN ROUND((pbi.selling_price - (pbi.selling_price / (1 + (pbi.gst_slab/100)))) / 2, 2) ELSE 0 END,
-                              'sgst', CASE WHEN :isIntra THEN ROUND((pbi.selling_price - (pbi.selling_price / (1 + (pbi.gst_slab/100)))) / 2, 2) ELSE 0 END,
-                              'igst', CASE WHEN NOT :isIntra THEN ROUND((pbi.selling_price - (pbi.selling_price / (1 + (pbi.gst_slab/100)))), 2) ELSE 0 END
-                            )
-                          ), '[]'::json
-                        )
-                        FROM products bp
-                        JOIN product_bundle_items pbi ON pbi.bundle_product_id = bp.id
-                        JOIN products cp ON cp.id = pbi.component_product_id
-                        WHERE (bp.id = pv.product_id OR bp.sku = oi.sku)
+                        'components', '[]'::json
                       )
                     )
                   ) FILTER (WHERE oi.id IS NOT NULL),
@@ -2015,10 +1994,50 @@ exports.getInvoiceById = async (req, res) => {
         }
       );
 
+      const orderSource = order[0] || null;
+      if (orderSource && orderSource.items) {
+        for (let item of orderSource.items) {
+          // If it's a bundle, fetch components manually to guarantee they are found
+          const bundleQuery = await sequelize.query(`
+            SELECT cp.title as name, pbi.component_variant_sku as sku, pbi.quantity as qty, pbi.selling_price as price, pbi.gst_slab, pbi.discount
+            FROM products bp
+            JOIN product_bundle_items pbi ON pbi.bundle_product_id = bp.id
+            JOIN products cp ON cp.id = pbi.component_product_id
+            WHERE bp.title = :itemName OR bp.sku = :itemSku OR bp.id = (SELECT product_id FROM product_variants WHERE id = (SELECT variant_id FROM order_items WHERE id = :itemId LIMIT 1))
+          `, { replacements: { itemName: item.name, itemSku: item.sku || '', itemId: item.id }, type: QueryTypes.SELECT });
+
+          if (bundleQuery.length > 0) {
+            item.components = bundleQuery.map(comp => {
+              const price = Number(comp.price) || 0;
+              const gst_slab = Number(comp.gst_slab) || 0;
+              const price_excl_gst = Number((price / (1 + (gst_slab/100))).toFixed(2));
+              const gst_amount = Number((price - price_excl_gst).toFixed(2));
+              const cgst = isIntraState ? Number((gst_amount / 2).toFixed(2)) : 0;
+              const sgst = isIntraState ? Number((gst_amount / 2).toFixed(2)) : 0;
+              const igst = !isIntraState ? gst_amount : 0;
+              
+              return {
+                name: comp.name,
+                sku: comp.sku,
+                qty: comp.qty,
+                price: comp.price,
+                gst_slab: comp.gst_slab,
+                discount: comp.discount || 0,
+                price_excl_gst,
+                gst_amount,
+                cgst,
+                sgst,
+                igst
+              };
+            });
+          }
+        }
+      }
+
       return res.success(
         {
           invoice: invoiceData,
-          source: order[0] || null,
+          source: orderSource,
           type: "order",
         },
         "Invoice fetched successfully"
