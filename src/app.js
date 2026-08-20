@@ -24,6 +24,13 @@ app.use(cors({
   credentials: true
 }));
 app.use(express.json({ limit: "600mb" }));
+app.use((err, req, res, next) => {
+  if (err instanceof SyntaxError && err.status === 400 && "body" in err) {
+    console.error("[Error] Invalid JSON from " + req.ip + " to " + req.originalUrl + ":", err.message);
+    return res.status(400).send({ success: false, message: "Invalid JSON format" });
+  }
+  next(err);
+});
 app.use(express.urlencoded({ limit: "600mb", extended: true }));
 app.use("/uploads", express.static(path.join(__dirname, "..", "uploads")));
 app.use('/api/auth', require('./routes/auth.routes'));
