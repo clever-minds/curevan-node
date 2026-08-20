@@ -1998,7 +1998,11 @@ exports.getInvoiceById = async (req, res) => {
 
       const orderSource = order[0] || null;
       if (orderSource && orderSource.items) {
-        for (let item of orderSource.items) {
+        let itemsArr = typeof orderSource.items === 'string' ? JSON.parse(orderSource.items) : orderSource.items;
+        
+        for (let item of itemsArr) {
+          if (!item || typeof item !== 'object') continue;
+          
           // If it's a bundle, fetch components manually to guarantee they are found
           const bundleQuery = await sequelize.query(`
             SELECT cp.title as name, pbi.component_variant_sku as sku, pbi.quantity as qty, pbi.selling_price as price, pbi.gst_slab, pbi.discount
@@ -2006,7 +2010,14 @@ exports.getInvoiceById = async (req, res) => {
             JOIN product_bundle_items pbi ON pbi.bundle_product_id = bp.id
             JOIN products cp ON cp.id = pbi.component_product_id
             WHERE bp.id = :itemProductId OR bp.sku = :itemSku OR bp.title = :itemName
-          `, { replacements: { itemName: item.name, itemSku: item.sku || 'UNKNOWN_SKU', itemProductId: item.product_id || -1 }, type: QueryTypes.SELECT });
+          `, { 
+            replacements: { 
+              itemName: item.name || '', 
+              itemSku: item.sku || 'UNKNOWN_SKU', 
+              itemProductId: item.product_id || -1 
+            }, 
+            type: QueryTypes.SELECT 
+          });
 
           if (bundleQuery.length > 0) {
             item.components = bundleQuery.map(comp => {
@@ -2034,6 +2045,7 @@ exports.getInvoiceById = async (req, res) => {
             });
           }
         }
+        orderSource.items = itemsArr;
       }
 
       return res.success(
