@@ -800,7 +800,8 @@ exports.updateKnowledgeBaseStatus = async (req, res) => {
       UPDATE knowledge_base
       SET
         status = :status,
-        updated_at = :updatedAt
+        updated_at = :updatedAt,
+        published_at = CASE WHEN :status = 'published' AND published_at IS NULL THEN CURRENT_TIMESTAMP ELSE published_at END
       WHERE id = :id
       `,
       {
