@@ -768,7 +768,7 @@ exports.updateKnowledgeBase = async (req, res) => {
         duration_min = :durationMin,
         sop_version = :sopVersion,
         faqs = :faqs,
-        published_at = :publishedAt,
+        published_at = CASE WHEN :status = 'published' AND published_at IS NULL THEN CURRENT_TIMESTAMP ELSE COALESCE(:publishedAt, published_at) END,
         updated_at = :updatedAt
       WHERE id = :id
       `,
