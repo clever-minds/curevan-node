@@ -1936,9 +1936,14 @@ exports.getInvoiceById = async (req, res) => {
     const userId = req.user.id;
     const userRole = req.user.role;
 
+    let queryCondition = "invoice_number = :invoiceId";
+    if (/^\d+$/.test(invoiceId)) {
+      queryCondition = "id = :invoiceId OR invoice_number = :invoiceId";
+    }
+
     // 1️⃣ Get Invoice
     const invoice = await sequelize.query(
-      `SELECT * FROM invoices WHERE id = :invoiceId`,
+      `SELECT * FROM invoices WHERE ${queryCondition}`,
       {
         replacements: { invoiceId },
         type: QueryTypes.SELECT,
