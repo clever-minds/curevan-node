@@ -184,6 +184,10 @@ exports.registerTherapist = async (req, res) => {
   const t = await sequelize.transaction();
 
   try {
+    let payload = req.body;
+    if (payload.data && typeof payload.data === 'string') {
+        try { payload = JSON.parse(payload.data); } catch(e) {}
+    }
     const {
       email,
       password,
@@ -216,7 +220,12 @@ exports.registerTherapist = async (req, res) => {
       serviceRadiusKm,
 
       availability // ✅ NEW
-    } = req.body;
+    } = payload;
+    
+    if (!password) {
+       console.log("No password in payload", payload);
+       throw new Error("data and salt arguments required");
+    }
 
     const hash = await bcrypt.hash(password, 10);
     const uid = uuidv4();
