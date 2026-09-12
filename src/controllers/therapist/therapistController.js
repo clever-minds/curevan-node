@@ -242,21 +242,7 @@ exports.registerTherapist = async (req, res) => {
        :fullAddress,:lat,:lng)
       RETURNING *`,
       {
-        replacements: {
-          uid,
-          email,
-          password: hash,
-          name: fullName,
-          phone: mobile,
-          line1,
-          line2,
-          city,
-          state,
-          pin,
-          fullAddress,
-          lat,
-          lng
-        },
+        replacements: { uid, email, password: hash, name: fullName || null, phone: mobile || null, line1: line1 || null, line2: line2 || null, city: city || null, state: state || null, pin: pin || null, fullAddress: fullAddress || null, lat: lat || null, lng: lng || null },
         type: QueryTypes.INSERT,
         transaction: t
       }
@@ -283,20 +269,7 @@ exports.registerTherapist = async (req, res) => {
        :service_radius_km,:specialty)
       RETURNING *`,
       {
-        replacements: {
-          user_id: user.id,
-          bio,
-          qualification,
-          registration_no: registrationNo,
-          experience_years: experienceYears,
-          hourly_rate: hourlyRate,
-          membership_plan: membershipPlan,
-          pan_number: panNumber,
-          bank_account_number: bankAccountNumber,
-          bank_ifsc_code: bankIfscCode,
-          service_radius_km: serviceRadiusKm || 10,
-          specialty: pgSpecialty
-        },
+        replacements: { user_id: user.id, bio: bio || null, qualification: qualification || null, registration_no: registrationNo || null, experience_years: experienceYears || null, hourly_rate: hourlyRate || null, membership_plan: membershipPlan || null, pan_number: panNumber || null, bank_account_number: bankAccountNumber || null, bank_ifsc_code: bankIfscCode || null, service_radius_km: serviceRadiusKm || 10, specialty: pgSpecialty || null },
         type: QueryTypes.INSERT,
         transaction: t
       }
