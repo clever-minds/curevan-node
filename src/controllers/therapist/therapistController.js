@@ -283,7 +283,7 @@ exports.registerTherapist = async (req, res) => {
            :e_start, :e_end)`,
           {
             replacements: {
-              therapist_id: user.id, // ⚠️ important (user.id)
+              therapist_id: therapist.id, // changed to therapist.id since FK points to therapist_profiles.id
               day,
               enabled: slot.enabled,
               m_start: slot.morning?.start || null,
