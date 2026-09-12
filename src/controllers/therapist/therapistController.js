@@ -257,19 +257,9 @@ exports.registerTherapist = async (req, res) => {
 
     /* ---------- PROFILE ---------- */
     const profileResult = await sequelize.query(
-      `INSERT INTO therapist_profiles
-      (user_id,bio,qualification,registration_no,
-       experience_years,hourly_rate,membership_plan,
-       pan_number,bank_account_number,bank_ifsc_code,
-       service_radius_km,specialty)
-      VALUES
-      (:user_id,:bio,:qualification,:registration_no,
-       :experience_years,:hourly_rate,:membership_plan,
-       :pan_number,:bank_account_number,:bank_ifsc_code,
-       :service_radius_km,:specialty)
-      RETURNING *`,
+      `INSERT INTO therapist_profiles\n      (user_id,bio,qualification,registration_no,\n       experience_years,hourly_rate,membership_plan,\n       pan_number,bank_account_number,bank_ifsc_code,\n       service_radius_km,specialty,\n       address_line1,address_line2,city,state,pin,\n       full_address,latitude,longitude)\n      VALUES\n      (:user_id,:bio,:qualification,:registration_no,\n       :experience_years,:hourly_rate,:membership_plan,\n       :pan_number,:bank_account_number,:bank_ifsc_code,\n       :service_radius_km,:specialty,\n       :line1,:line2,:city,:state,:pin,\n       :fullAddress,:lat,:lng)\n      RETURNING *`,
       {
-        replacements: { user_id: user.id, bio: bio || null, qualification: qualification || null, registration_no: registrationNo || null, experience_years: experienceYears || null, hourly_rate: hourlyRate || null, membership_plan: membershipPlan || null, pan_number: panNumber || null, bank_account_number: bankAccountNumber || null, bank_ifsc_code: bankIfscCode || null, service_radius_km: serviceRadiusKm || 10, specialty: pgSpecialty || null },
+        replacements: { user_id: user.id, bio: bio || null, qualification: qualification || null, registration_no: registrationNo || null, experience_years: experienceYears || null, hourly_rate: hourlyRate || null, membership_plan: membershipPlan || null, pan_number: panNumber || null, bank_account_number: bankAccountNumber || null, bank_ifsc_code: bankIfscCode || null, service_radius_km: serviceRadiusKm || 10, specialty: pgSpecialty || null, line1: line1 || null, line2: line2 || null, city: city || null, state: state || null, pin: pin || null, fullAddress: fullAddress || null, lat: lat || null, lng: lng || null },
         type: QueryTypes.INSERT,
         transaction: t
       }
