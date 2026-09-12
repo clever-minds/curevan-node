@@ -3,13 +3,14 @@ const router = express.Router();
 const therapistController = require("../controllers/therapist/therapistController");
 const authMiddleware = require("../middlewares/authMiddleware");
 const responseHandler = require("../middlewares/responseHandler");
+const upload = require("../middlewares/upload.middleware");
 // Profile
 router.get(
   "/list",
   responseHandler,
   therapistController.listUsersWithProfiles
 );
-router.post("/register",responseHandler, therapistController.registerTherapist);
+router.post("/register", upload.any(), responseHandler, therapistController.registerTherapist);
 router.get("/profile/:userId",authMiddleware,responseHandler, therapistController.getProfile);
 router.put("/profile/:userId", authMiddleware, therapistController.updateProfile);
 
