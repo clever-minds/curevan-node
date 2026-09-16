@@ -21,7 +21,7 @@ async function deleteUsers() {
     // Delete from related tables (Due to foreign keys, we might need to delete from dependent tables first)
     await sequelize.query(`DELETE FROM user_roles WHERE user_id IN (:userIds)`, { replacements: { userIds } });
     await sequelize.query(`DELETE FROM therapist_profiles WHERE user_id IN (:userIds)`, { replacements: { userIds } });
-    await sequelize.query(`DELETE FROM change_requests WHERE user_id IN (:userIds)`, { replacements: { userIds } });
+    await sequelize.query(`DELETE FROM change_requests WHERE user_id IN (:userIds)`; await sequelize.query(`DELETE FROM pcr WHERE therapist_id IN (:userIds)`, { replacements: { userIds } }), { replacements: { userIds } });
     
     // Delete users
     await sequelize.query(`DELETE FROM users WHERE id IN (:userIds)`, { replacements: { userIds } });
