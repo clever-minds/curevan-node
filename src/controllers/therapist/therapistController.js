@@ -93,21 +93,7 @@ const transporter = require("../../config/mailer");
 
 //     const user = userResult[0][0];
 
-    /* ---------- USER ROLES (Fix for Admin Panel) ---------- */
-    await sequelize.query(
-      `INSERT INTO roles (name) VALUES ('therapist') ON CONFLICT (name) DO NOTHING`,
-      { type: QueryTypes.INSERT, transaction: t }
-    );
-    await sequelize.query(
-      `INSERT INTO user_roles (user_id, role_id)
-       SELECT :user_id, id FROM roles WHERE name = 'therapist'
-       ON CONFLICT DO NOTHING`,
-      {
-        replacements: { user_id: user.id },
-        type: QueryTypes.INSERT,
-        transaction: t
-      }
-    );
+
 
 
 //     /* ---------- SPECIALTY FORMAT ---------- */
@@ -175,17 +161,7 @@ const transporter = require("../../config/mailer");
 
 //     const therapist = profileResult[0][0];
 
-    /* ---------- CREATE INITIAL APPROVAL REQUEST ---------- */
-    await sequelize.query(
-      `INSERT INTO change_requests
-       (user_id, role, entity_id, section, changes)
-       VALUES (:user_id, 'therapist', :user_id, 'Therapist Profile', '{}')`,
-      {
-        replacements: { user_id: user.id },
-        type: QueryTypes.INSERT,
-        transaction: t
-      }
-    );
+
 
 //     await t.commit();
 
