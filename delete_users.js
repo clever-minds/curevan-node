@@ -1,4 +1,4 @@
-const { sequelize } = require('C:\\curevan_node\\src\\config\\db.js');
+const { sequelize } = require('./src/config/db.js');
 
 async function deleteUsers() {
   try {
