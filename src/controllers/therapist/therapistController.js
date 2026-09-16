@@ -229,17 +229,18 @@ exports.registerTherapist = async (req, res) => {
 
     const hash = await bcrypt.hash(password, 10);
     const uid = uuidv4();
+    const verificationToken = uuidv4();
 
     /* ---------- USERS ---------- */
     const userResult = await sequelize.query(
       `INSERT INTO users
       (uid,email,password,name,phone,role,
        address_line1,address_line2,city,state,pin,
-       full_address,latitude,longitude)
+       full_address,latitude,longitude,is_verified,verification_code)
       VALUES
       (:uid,:email,:password,:name,:phone,'therapist',
        :line1,:line2,:city,:state,:pin,
-       :fullAddress,:lat,:lng)
+       :fullAddress,:lat,:lng,false,:verificationToken)
       RETURNING *`,
       {
         replacements: { uid, email, password: hash, name: fullName || null, phone: mobile || null, line1: line1 || null, line2: line2 || null, city: city || null, state: state || null, pin: pin || null, fullAddress: fullAddress || null, lat: lat || null, lng: lng || null, verificationToken },
