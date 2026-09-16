@@ -783,7 +783,7 @@ exports.getProfile = async (req, res) => {
         u.longitude AS lng
       FROM therapist_profiles tp
       JOIN users u ON u.id = tp.user_id
-      WHERE tp.user_id = :userId
+      WHERE tp.user_id::text = :userId OR u.uid = :userId
       `,
       {
         replacements: { userId },
