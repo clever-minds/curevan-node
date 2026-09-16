@@ -290,12 +290,21 @@ exports.registerTherapist = async (req, res) => {
     const therapist = profileResult[0][0];
 
     /* ---------- CREATE INITIAL APPROVAL REQUEST ---------- */
+    const initialChanges = JSON.stringify({
+      "Name": { "new": fullName || "N/A" },
+      "Email": { "new": email || "N/A" },
+      "Phone": { "new": mobile || "N/A" },
+      "State": { "new": state || "N/A" },
+      "City": { "new": city || "N/A" },
+      "Specialty": { "new": specialty ? (Array.isArray(specialty) ? specialty.join(", ") : specialty) : "N/A" }
+    });
+
     await sequelize.query(
       `INSERT INTO change_requests
        (user_id, role, entity_id, section, changes)
-       VALUES (:user_id, 'therapist', :user_id, 'Therapist Profile', '{}')`,
+       VALUES (:user_id, 'therapist', :user_id, 'Therapist Profile', :changes)`,
       {
-        replacements: { user_id: user.id },
+        replacements: { user_id: user.id, changes: initialChanges },
         type: QueryTypes.INSERT,
         transaction: t
       }
