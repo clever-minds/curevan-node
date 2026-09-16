@@ -1110,8 +1110,7 @@ exports.listChangeRequests = async (req, res) => {
     let replacements = {};
 
     if (roles.includes("admin.super")) {
-      whereClause = "WHERE cr.role = :role";
-      replacements.role = "admin";
+      whereClause = "";
     } else if (roles.includes("admin.therapy")) {
       const [admin] = await sequelize.query(
         `SELECT state_admin_name FROM users WHERE id = :id`,
