@@ -175,6 +175,18 @@ const transporter = require("../../config/mailer");
 
 //     const therapist = profileResult[0][0];
 
+    /* ---------- CREATE INITIAL APPROVAL REQUEST ---------- */
+    await sequelize.query(
+      `INSERT INTO change_requests
+       (user_id, role, entity_id, section, changes)
+       VALUES (:user_id, 'therapist', :user_id, 'Therapist Profile', '{}')`,
+      {
+        replacements: { user_id: user.id },
+        type: QueryTypes.INSERT,
+        transaction: t
+      }
+    );
+
 //     await t.commit();
 
 //     res.status(201).json({
