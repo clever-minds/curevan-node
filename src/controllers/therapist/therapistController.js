@@ -2,7 +2,6 @@ const { QueryTypes } = require("sequelize");
 const { sequelize } = require("../../config/db");
 const { v4: uuidv4 } = require("uuid");
 const bcrypt = require("bcrypt");
-const transporter = require("../../config/mailer");
 
 
 /* =========================
@@ -50,7 +49,6 @@ const transporter = require("../../config/mailer");
 
 //     const hash = await bcrypt.hash(password, 10);
 //     const uid = uuidv4();
-    const verificationToken = uuidv4();
 
 
 //     /* ---------- USERS TABLE ---------- */
@@ -162,24 +160,6 @@ const transporter = require("../../config/mailer");
 
 //     await t.commit();
 
-    try {
-      await transporter.sendMail({
-        from: `"Curevan" <${process.env.MAIL_USER}>`,
-        to: email,
-        subject: "Verify your Email - Curevan",
-        html: `
-          <h2>Email Verification</h2>
-          <p>Hi ${fullName || 'Therapist'},</p>
-          <p>Please click the link below to verify your email address:</p>
-          <br>
-          <a href="${process.env.FRONTEND_URL}/verify-email?token=${verificationToken}" style="display:inline-block;padding:10px 20px;background:#007bff;color:#fff;text-decoration:none;border-radius:5px;">Verify Email</a>
-        `
-      });
-    } catch (mailError) {
-      console.error("Failed to send verification email:", mailError);
-    }
-
-
 //     res.status(201).json({
 //       status: true,
 //       message: "Therapist Registered",
@@ -250,18 +230,16 @@ exports.registerTherapist = async (req, res) => {
     const hash = await bcrypt.hash(password, 10);
     const uid = uuidv4();
 
-    const verificationToken = uuidv4();
-
     /* ---------- USERS ---------- */
     const userResult = await sequelize.query(
       `INSERT INTO users
       (uid,email,password,name,phone,role,
        address_line1,address_line2,city,state,pin,
-       full_address,latitude,longitude,is_verified,verification_code)
+       full_address,latitude,longitude)
       VALUES
       (:uid,:email,:password,:name,:phone,'therapist',
        :line1,:line2,:city,:state,:pin,
-       :fullAddress,:lat,:lng,false,:verificationToken)
+       :fullAddress,:lat,:lng)
       RETURNING *`,
       {
         replacements: { uid, email, password: hash, name: fullName || null, phone: mobile || null, line1: line1 || null, line2: line2 || null, city: city || null, state: state || null, pin: pin || null, fullAddress: fullAddress || null, lat: lat || null, lng: lng || null, verificationToken },
