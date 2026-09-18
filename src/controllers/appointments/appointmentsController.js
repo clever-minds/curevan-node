@@ -1056,7 +1056,7 @@ exports.acceptBookingRequest = async (req, res) => {
 
   try {
     const [appt] = await sequelize.query(
-      `SELECT status, patient_id, service_type_id, therapist_id FROM appointments WHERE id = :id FOR UPDATE`,
+      `SELECT status, patient_id, service_type_id, therapist_id, date FROM appointments WHERE id = :id FOR UPDATE`,
       { replacements: { id }, type: QueryTypes.SELECT, transaction: t }
     );
 
