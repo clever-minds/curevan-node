@@ -960,7 +960,13 @@ exports.createBookingRequest = async (req, res) => {
            AND u.fcm_token IS NOT NULL 
            AND :serviceTypeId::int = ANY(tp.specialty)
            AND NOT EXISTS (
-             SELECT 1 FROM appointments a2
+          SELECT 1 FROM therapist_leaves tl
+          JOIN therapist_profiles tp_tl ON tl.therapist_id = tp_tl.id
+          WHERE tp_tl.user_id = :therapistId
+            AND tl.leave_date = a.date
+        )
+        AND NOT EXISTS (
+          SELECT 1 FROM appointments a2
              WHERE a2.therapist_id = u.id
                AND a2.date = :bookingDate
                AND a2.time = :bookingTime
