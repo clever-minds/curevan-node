@@ -12,8 +12,8 @@ async function run() {
     console.log('Creating Therapist...');
     const therapistUid = uuidv4();
     const [therapistResult] = await sequelize.query(
-      `INSERT INTO users (uid, name, email, password, role, status, created_at, updated_at) 
-       VALUES (:uid, 'Dummy Therapist', 'therapist@curevan.com', :password, 'therapist', 'active', NOW(), NOW())
+      `INSERT INTO users (uid, name, email, password, role, status, address_line1, city, state, pin, country, latitude, longitude, created_at, updated_at) 
+       VALUES (:uid, 'Dummy Therapist', 'therapist@curevan.com', :password, 'therapist', 'active', 'Ashwamegh Nagar, Tandalja, Near Fire Brigade', 'Vadodara', 'Gujarat', '390012', 'India', 22.2882, 73.1585, NOW(), NOW())
        RETURNING id`,
       { replacements: { uid: therapistUid, password: dummyPassword }, type: sequelize.QueryTypes.INSERT }
     );
@@ -26,8 +26,8 @@ async function run() {
 
     await sequelize.query(
       `INSERT INTO therapist_profiles 
-       (user_id, name, specialty, address_line1, city, state, pin, country, latitude, longitude, experience_years, bio) 
-       VALUES (:id, 'Dummy Therapist', '{1,2,4}', 'Ashwamegh Nagar, Tandalja, Near Fire Brigade', 'Vadodara', 'Gujarat', '390012', 'India', 22.2882, 73.1585, 5, 'Dummy therapist profile')`,
+       (user_id, specialty, full_address, experience_years, bio, profile_status) 
+       VALUES (:id, '{1,2,4}', 'Ashwamegh Nagar, Tandalja, Near Fire Brigade, Vadodara, Gujarat 390012', 5, 'Dummy therapist profile', 'approved')`,
       { replacements: { id: therapistId }, type: sequelize.QueryTypes.INSERT }
     );
     console.log(`Created therapist user with id ${therapistId}`);
