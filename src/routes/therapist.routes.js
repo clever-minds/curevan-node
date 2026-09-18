@@ -1,3 +1,4 @@
+const therapistAvailabilityController = require("../controllers/therapist/therapistAvailabilityController");
 const therapistLeavesController = require("../controllers/therapist/therapistLeavesController");
 const express = require("express");
 const router = express.Router();
@@ -33,6 +34,11 @@ router.get("/earnings/:therapistId", authMiddleware, responseHandler, therapistC
 router.post("/leaves", authMiddleware, responseHandler, therapistLeavesController.addLeave);
 router.get("/leaves", authMiddleware, responseHandler, therapistLeavesController.listLeaves);
 router.delete("/leaves/:id", authMiddleware, responseHandler, therapistLeavesController.deleteLeave);
+
+
+// --- Availability ---
+router.post("/availability", authMiddleware, responseHandler, therapistAvailabilityController.setAvailability);
+router.get("/availability", authMiddleware, responseHandler, therapistAvailabilityController.getAvailability);
 
 module.exports = router;
 
