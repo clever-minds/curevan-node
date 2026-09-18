@@ -1120,6 +1120,33 @@ exports.acceptBookingRequest = async (req, res) => {
   }
 };
 
+// ✅ 3b. REJECT BOOKING REQUEST
+exports.rejectBookingRequest = async (req, res) => {
+  const { id } = req.params;
+  const { therapistId } = req.body || {};
+
+  try {
+    const [appt] = await sequelize.query(
+      `SELECT status, therapist_id FROM appointments WHERE id = :id`,
+      { replacements: { id }, type: QueryTypes.SELECT }
+    );
+
+    if (!appt || appt.status !== 'Pending Approval' || appt.therapist_id != therapistId) {
+      return res.status(400).json({ success: false, error: "Invalid appointment or unauthorized" });
+    }
+
+    await sequelize.query(
+      `UPDATE appointments SET status = 'Cancelled', therapist_id = NULL WHERE id = :id`,
+      { replacements: { id }, type: QueryTypes.UPDATE }
+    );
+
+    return res.json({ success: true, message: "Booking request declined" });
+  } catch (error) {
+    console.error("Error rejecting booking:", error);
+    return res.status(500).json({ success: false, error: "Failed to reject booking" });
+  }
+};
+
 // ✅ 4. UPDATE APPOINTMENT STATUS (Tracking Flow)
 exports.updateAppointmentStatus = async (req, res) => {
   const { id } = req.params;
