@@ -1088,7 +1088,7 @@ exports.acceptBookingRequest = async (req, res) => {
     const isAvailable = 
       appt.status === 'Searching' || 
       appt.status === 'Searching Therapist' || 
-      (appt.status === 'Pending' && !appt.therapist_id) ||
+      appt.status === 'Pending' ||
       appt.status === 'Pending Approval';
 
     if (!isAvailable) {
@@ -1144,7 +1144,7 @@ exports.acceptBookingRequest = async (req, res) => {
 // ✅ 3b. REJECT BOOKING REQUEST
 exports.rejectBookingRequest = async (req, res) => {
   const { id } = req.params;
-  const { therapistId } = req.body || {};
+  const userId = req.user.id;
 
   try {
     const [appt] = await sequelize.query(
@@ -1152,7 +1152,7 @@ exports.rejectBookingRequest = async (req, res) => {
       { replacements: { id }, type: QueryTypes.SELECT }
     );
 
-    if (!appt || appt.status !== 'Pending Approval' || appt.therapist_id != therapistId) {
+    if (!appt || (appt.status !== 'Pending Approval' && appt.status !== 'Pending') || appt.therapist_id != userId) {
       return res.status(400).json({ success: false, error: "Invalid appointment or unauthorized" });
     }
 
