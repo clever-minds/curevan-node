@@ -182,6 +182,26 @@ exports.createBookingAndInvoice = async (req, res) => {
       return res.status(400).json({ success: false, error: "Booking data and payment details required" });
     }
     // --------------------------
+    
+    // Check if therapist is on leave
+    if (bookingData.therapistId) {
+      const [leaves] = await sequelize.query(
+        `SELECT 1 FROM therapist_leaves tl
+         JOIN therapist_profiles tp ON tl.therapist_id = tp.id
+         WHERE tp.user_id = :therapistId
+           AND :bookingDate >= tl.start_date AND :bookingDate <= tl.end_date`,
+        {
+          replacements: { therapistId: bookingData.therapistId, bookingDate: bookingData.date },
+          type: sequelize.QueryTypes.SELECT,
+          transaction: t
+        }
+      );
+      if (leaves) {
+        await t.rollback();
+        return res.status(400).json({ success: false, error: "Therapist is on leave on this date" });
+      }
+    }
+
     // 1️⃣ Insert appointment
     // --------------------------
       const [rows] = await sequelize.query(
