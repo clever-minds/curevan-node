@@ -210,9 +210,9 @@ exports.createBookingAndInvoice = async (req, res) => {
           mode: bookingData.mode || null,
           notes: bookingData.notes || null,
           serviceAddress: bookingData.addressId || null, 
-          status: "Pending",
+          status: bookingData.status || "Pending",
           verificationStatus: "Pending",
-          paymentStatus: "Paid",
+          paymentStatus: bookingData.paymentStatus || "Pending",
           pcrStatus: "not_started",
           reports: bookingData.reports ? JSON.stringify(bookingData.reports) : null,
         },
@@ -958,12 +958,12 @@ exports.createBookingRequest = async (req, res) => {
            AND u.status = 'active'
            AND tp.profile_status = 'approved'
            AND u.fcm_token IS NOT NULL 
-           AND :serviceTypeId::int = ANY(tp.specialty)
+           AND :serviceTypeId::text = ANY(tp.specialty)
            AND NOT EXISTS (
           SELECT 1 FROM therapist_leaves tl
           JOIN therapist_profiles tp_tl ON tl.therapist_id = tp_tl.id
-          WHERE tp_tl.user_id = :therapistId
-            AND tl.leave_date = a.date
+          WHERE tp_tl.user_id = u.id
+            AND :bookingDate >= tl.start_date AND :bookingDate <= tl.end_date
         )
         AND NOT EXISTS (
           SELECT 1 FROM appointments a2
@@ -1013,7 +1013,7 @@ exports.getAvailableRequests = async (req, res) => {
          a.date, a.time, a.mode, a.status, a.service_amount AS "serviceAmount",
          a.notes, a.created_at AS "createdAt", a.service_address_id AS "serviceAddress"
        FROM appointments a
-       WHERE a.status IN ('Searching', 'Searching Therapist')
+       WHERE (a.status IN ('Searching', 'Searching Therapist') OR (a.status = 'Pending Approval' AND a.therapist_id = :therapistId))
     `;
 
     if (therapistId) {
@@ -1068,7 +1068,8 @@ exports.acceptBookingRequest = async (req, res) => {
     const isAvailable = 
       appt.status === 'Searching' || 
       appt.status === 'Searching Therapist' || 
-      (appt.status === 'Pending' && !appt.therapist_id);
+      (appt.status === 'Pending' && !appt.therapist_id) ||
+      appt.status === 'Pending Approval';
 
     if (!isAvailable) {
       await t.rollback();
@@ -1080,7 +1081,7 @@ exports.acceptBookingRequest = async (req, res) => {
        SET therapist_id = :therapistId, 
            therapist_name = :therapistName, 
            therapist_phone = :therapistPhone,
-           status = 'Accepted'
+           status = CASE WHEN status = 'Pending Approval' THEN 'Payment Pending' ELSE 'Payment Pending' END
        WHERE id = :id`,
       {
         replacements: { id, therapistId, therapistName, therapistPhone: therapistPhone || null },
@@ -1144,6 +1145,42 @@ exports.rejectBookingRequest = async (req, res) => {
   } catch (error) {
     console.error("Error rejecting booking:", error);
     return res.status(500).json({ success: false, error: "Failed to reject booking" });
+  }
+};
+
+// ✅ Cancel Appointment
+exports.cancelAppointment = async (req, res) => {
+  const { id } = req.params;
+  const userId = req.user.id;
+  
+  try {
+    const [appt] = await sequelize.query(
+      `SELECT status, therapist_id, patient_id FROM appointments WHERE id = :id`,
+      { replacements: { id }, type: QueryTypes.SELECT }
+    );
+
+    if (!appt) {
+      return res.status(404).json({ success: false, error: "Appointment not found" });
+    }
+
+    if (appt.status === 'Completed' || appt.status === 'Cancelled') {
+      return res.status(400).json({ success: false, error: "Appointment cannot be cancelled at this stage" });
+    }
+
+    // Allow therapist or patient to cancel
+    if (appt.therapist_id != userId && appt.patient_id != userId) {
+      return res.status(403).json({ success: false, error: "Unauthorized to cancel this appointment" });
+    }
+
+    await sequelize.query(
+      `UPDATE appointments SET status = 'Cancelled' WHERE id = :id`,
+      { replacements: { id }, type: QueryTypes.UPDATE }
+    );
+
+    return res.json({ success: true, message: "Appointment Cancelled" });
+  } catch (error) {
+    console.error("Error cancelling appointment:", error);
+    return res.status(500).json({ success: false, error: "Failed to cancel appointment" });
   }
 };
 
@@ -1226,5 +1263,30 @@ exports.addReview = async (req, res) => {
   } catch (error) {
     console.error("Error submitting review:", error);
     return res.status(500).json({ success: false, error: "Failed to submit review" });
+  }
+};
+
+// ✅ CONFIRM PAYMENT
+exports.confirmPayment = async (req, res) => {
+  const { id } = req.params;
+  const { paymentId, gateway } = req.body;
+  try {
+    const [appt] = await sequelize.query(
+      `SELECT status FROM appointments WHERE id = :id`,
+      { replacements: { id }, type: QueryTypes.SELECT }
+    );
+    if (!appt || appt.status !== 'Payment Pending') {
+      return res.status(400).json({ success: false, error: "Invalid appointment state for payment" });
+    }
+    
+    await sequelize.query(
+      `UPDATE appointments SET status = 'Confirmed', payment_status = 'Paid' WHERE id = :id`,
+      { replacements: { id }, type: QueryTypes.UPDATE }
+    );
+    
+    return res.json({ success: true, message: "Payment confirmed, appointment booked" });
+  } catch(e) {
+    console.error(e);
+    return res.status(500).json({ success: false, error: "Payment confirmation failed" });
   }
 };

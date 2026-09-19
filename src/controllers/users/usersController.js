@@ -1041,9 +1041,11 @@ exports.getChangeRequestById = async (req, res) => {
         cr.reviewed_at,
         u.name,
         u.email,
-        u.state_admin_name AS state
+        u.state_admin_name AS state,
+        row_to_json(tp) AS therapist_profile
       FROM change_requests cr
       JOIN users u ON u.id = cr.user_id
+      LEFT JOIN therapist_profiles tp ON tp.user_id = cr.user_id
       ${whereClause}
       LIMIT 1
       `,
@@ -1051,6 +1053,14 @@ exports.getChangeRequestById = async (req, res) => {
     );
 
     if (!request) return res.error("Change request not found");
+
+    if (request.changes && typeof request.changes === 'string') {
+        try {
+            request.changes = JSON.parse(request.changes);
+        } catch (e) {
+            console.error("Failed to parse changes JSON:", e);
+        }
+    }
 
     return res.success(request, "Change request fetched successfully");
 
@@ -1106,11 +1116,11 @@ exports.listChangeRequests = async (req, res) => {
 
     if (!userId || isNaN(userId)) return res.error("Invalid user ID");
 
-    let whereClause = "";
+    let whereClause = "WHERE cr.role IN ('super admin', 'super_admin', 'therapist', 'ecom admin', 'ecom_admin', 'admin.super', 'admin.ecom', 'admin.therapy', 'admin')";
     let replacements = {};
 
     if (roles.includes("admin.super")) {
-      whereClause = "";
+      // Use default whereClause
     } else if (roles.includes("admin.therapy")) {
       const [admin] = await sequelize.query(
         `SELECT state_admin_name FROM users WHERE id = :id`,
@@ -1119,7 +1129,7 @@ exports.listChangeRequests = async (req, res) => {
 
       if (!admin) return res.error("Admin state not found");
 
-      whereClause = "WHERE cr.role = :role AND u.state = :state";
+      whereClause = "WHERE cr.role = :role AND u.state = :state AND cr.role IN ('super admin', 'super_admin', 'therapist', 'ecom admin', 'ecom_admin', 'admin.super', 'admin.ecom', 'admin.therapy', 'admin')";
       replacements.role = "therapist";
       replacements.state = admin.state_admin_name;
     } else {
@@ -1141,9 +1151,11 @@ exports.listChangeRequests = async (req, res) => {
         cr.reviewed_at,
         u.name,
         u.email,
-        u.state_admin_name AS state
+        u.state_admin_name AS state,
+        row_to_json(tp) AS therapist_profile
       FROM change_requests cr
       JOIN users u ON u.id = cr.user_id
+      LEFT JOIN therapist_profiles tp ON tp.user_id = cr.user_id
       ${whereClause}
       ORDER BY cr.created_at DESC
       `,

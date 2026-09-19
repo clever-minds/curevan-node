@@ -26,6 +26,12 @@ router.post("/accept/:id", authMiddleware, responseHandler, appointmentsControll
 // ✅ PUT update appointment status
 router.put("/status/:id", authMiddleware, responseHandler, appointmentsController.updateAppointmentStatus);
 
+// ✅ POST confirm payment
+router.post("/:id/pay", authMiddleware, responseHandler, appointmentsController.confirmPayment);
+
+// ✅ PATCH cancel appointment
+router.patch("/:id/cancel", authMiddleware, responseHandler, appointmentsController.cancelAppointment);
+
 router.post("/create-appointment", authMiddleware,responseHandler, appointmentsController.createBookingAndInvoice);
 
 // ✅ POST submit review

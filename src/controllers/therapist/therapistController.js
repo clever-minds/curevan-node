@@ -291,12 +291,26 @@ exports.registerTherapist = async (req, res) => {
 
     /* ---------- CREATE INITIAL APPROVAL REQUEST ---------- */
     const initialChanges = JSON.stringify({
-      "Name": { "new": fullName || "N/A" },
-      "Email": { "new": email || "N/A" },
-      "Phone": { "new": mobile || "N/A" },
-      "State": { "new": state || "N/A" },
-      "City": { "new": city || "N/A" },
-      "Specialty": { "new": specialty ? (Array.isArray(specialty) ? specialty.join(", ") : specialty) : "N/A" }
+      "fullName": { "old": null, "new": fullName || "N/A" },
+      "email": { "old": null, "new": email || "N/A" },
+      "mobile": { "old": null, "new": mobile || "N/A" },
+      "bio": { "old": null, "new": bio || "N/A" },
+      "qualification": { "old": null, "new": qualification || "N/A" },
+      "experienceYears": { "old": null, "new": experienceYears || "N/A" },
+      "registrationNo": { "old": null, "new": registrationNo || "N/A" },
+      "hourlyRate": { "old": null, "new": hourlyRate || "N/A" },
+      "membershipPlan": { "old": null, "new": membershipPlan || "N/A" },
+      "panNumber": { "old": null, "new": panNumber || "N/A" },
+      "bankAccountNumber": { "old": null, "new": bankAccountNumber || "N/A" },
+      "bankIfscCode": { "old": null, "new": bankIfscCode || "N/A" },
+      "line1": { "old": null, "new": line1 || "N/A" },
+      "line2": { "old": null, "new": line2 || "N/A" },
+      "city": { "old": null, "new": city || "N/A" },
+      "state": { "old": null, "new": state || "N/A" },
+      "pin": { "old": null, "new": pin || "N/A" },
+      "fullAddress": { "old": null, "new": fullAddress || "N/A" },
+      "serviceRadiusKm": { "old": null, "new": serviceRadiusKm || "N/A" },
+      "specialty": { "old": null, "new": specialty ? (Array.isArray(specialty) ? specialty.join(", ") : specialty) : "N/A" }
     });
 
     await sequelize.query(
@@ -1591,5 +1605,85 @@ exports.getEarnings = async (req, res) => {
   } catch (error) {
     console.error("getEarnings error:", error);
     res.status(500).json({ status: false, message: "Server error" });
+  }
+};
+
+/* =========================
+   LEAVES (UNAVAILABLE DATES)
+========================= */
+exports.addLeave = async (req, res) => {
+  try {
+    const { therapistId, leave_date, reason } = req.body;
+    if (!therapistId || !leave_date) {
+      return res.status(400).json({ error: "therapistId and leave_date are required" });
+    }
+
+    const [profile] = await sequelize.query(
+      "SELECT id FROM therapist_profiles WHERE user_id = :therapistId OR id = :therapistId LIMIT 1",
+      { replacements: { therapistId }, type: QueryTypes.SELECT }
+    );
+
+    if (!profile) return res.status(404).json({ error: "Therapist profile not found" });
+
+    await sequelize.query(
+      `INSERT INTO therapist_leaves (therapist_id, leave_date, reason) 
+       VALUES (:id, :leave_date, :reason)
+       ON CONFLICT (therapist_id, leave_date) DO NOTHING`,
+      {
+        replacements: { id: profile.id, leave_date, reason: reason || null },
+        type: QueryTypes.INSERT
+      }
+    );
+
+    return res.status(200).json({ message: "Leave added successfully" });
+  } catch (error) {
+    console.error("Error adding leave:", error);
+    return res.status(500).json({ error: "Failed to add leave" });
+  }
+};
+
+exports.removeLeave = async (req, res) => {
+  try {
+    const date = req.params.date;
+    const therapistId = req.query.therapistId || req.body.therapistId || req.user.id;
+
+    const [profile] = await sequelize.query(
+      "SELECT id FROM therapist_profiles WHERE user_id = :therapistId OR id = :therapistId LIMIT 1",
+      { replacements: { therapistId }, type: QueryTypes.SELECT }
+    );
+
+    if (!profile) return res.status(404).json({ error: "Therapist profile not found" });
+
+    await sequelize.query(
+      "DELETE FROM therapist_leaves WHERE therapist_id = :id AND leave_date = :date",
+      { replacements: { id: profile.id, date }, type: QueryTypes.DELETE }
+    );
+
+    return res.status(200).json({ message: "Leave removed successfully" });
+  } catch (error) {
+    console.error("Error removing leave:", error);
+    return res.status(500).json({ error: "Failed to remove leave" });
+  }
+};
+
+exports.getLeaves = async (req, res) => {
+  try {
+    const therapistId = req.params.therapistId;
+    const [profile] = await sequelize.query(
+      "SELECT id FROM therapist_profiles WHERE user_id = :therapistId OR id = :therapistId LIMIT 1",
+      { replacements: { therapistId }, type: QueryTypes.SELECT }
+    );
+
+    if (!profile) return res.status(404).json({ error: "Therapist profile not found" });
+
+    const leaves = await sequelize.query(
+      "SELECT leave_date, reason FROM therapist_leaves WHERE therapist_id = :id ORDER BY leave_date ASC",
+      { replacements: { id: profile.id }, type: QueryTypes.SELECT }
+    );
+
+    return res.status(200).json({ data: leaves, message: "Leaves fetched successfully" });
+  } catch (error) {
+    console.error("Error fetching leaves:", error);
+    return res.status(500).json({ error: "Failed to fetch leaves" });
   }
 };
