@@ -1191,7 +1191,7 @@ exports.cancelAppointment = async (req, res) => {
   
   try {
     const [appt] = await sequelize.query(
-      `SELECT status, therapist_id, patient_id FROM appointments WHERE id = :id`,
+      `SELECT status, therapist_id, patient_id, date, time FROM appointments WHERE id = :id`,
       { replacements: { id }, type: QueryTypes.SELECT }
     );
 
@@ -1324,5 +1324,42 @@ exports.confirmPayment = async (req, res) => {
   } catch(e) {
     console.error(e);
     return res.status(500).json({ success: false, error: "Payment confirmation failed" });
+  }
+};
+
+
+// ? Reschedule Appointment
+exports.rescheduleAppointment = async (req, res) => {
+  const { id } = req.params;
+  const { date, time } = req.body;
+  const userId = req.user.id;
+
+  try {
+    const [appt] = await sequelize.query(
+      `SELECT status, patient_id FROM appointments WHERE id = :id`,
+      { replacements: { id }, type: QueryTypes.SELECT }
+    );
+
+    if (!appt) {
+      return res.status(404).json({ success: false, error: "Appointment not found" });
+    }
+
+    if (appt.patient_id != userId) {
+      return res.status(403).json({ success: false, error: "Unauthorized to reschedule this appointment" });
+    }
+
+    if (appt.status === 'Completed' || appt.status === 'Cancelled') {
+      return res.status(400).json({ success: false, error: "Cannot reschedule at this stage" });
+    }
+
+    await sequelize.query(
+      `UPDATE appointments SET date = :date, time = :time, status = 'Searching Therapist', therapist_id = NULL WHERE id = :id`,
+      { replacements: { id, date, time }, type: QueryTypes.UPDATE }
+    );
+
+    return res.json({ success: true, message: "Appointment rescheduled successfully" });
+  } catch (error) {
+    console.error("Error rescheduling appointment:", error);
+    return res.status(500).json({ success: false, error: "Failed to reschedule appointment" });
   }
 };
