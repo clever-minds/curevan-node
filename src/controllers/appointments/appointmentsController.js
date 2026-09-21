@@ -1173,7 +1173,7 @@ exports.rejectBookingRequest = async (req, res) => {
     }
 
     await sequelize.query(
-      `UPDATE appointments SET status = 'Cancelled' WHERE id = :id`,
+      `UPDATE appointments SET status = 'Searching Therapist', therapist_id = NULL WHERE id = :id`,
       { replacements: { id }, type: QueryTypes.UPDATE }
     );
 
