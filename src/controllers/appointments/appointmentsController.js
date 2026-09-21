@@ -1137,7 +1137,7 @@ exports.acceptBookingRequest = async (req, res) => {
   } catch (error) {
     await t.rollback();
     console.error("Error accepting booking:", error);
-    return res.status(500).json({ success: false, error: "Failed to accept booking" });
+    return res.status(500).json({ success: false, error: "Failed to accept booking: " + error.message });
   }
 };
 
