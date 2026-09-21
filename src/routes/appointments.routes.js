@@ -23,6 +23,9 @@ router.get("/requests/available", authMiddleware, responseHandler, appointmentsC
 // ✅ POST accept booking request
 router.post("/accept/:id", authMiddleware, responseHandler, appointmentsController.acceptBookingRequest);
 
+// ✅ POST reject booking request
+router.post("/reject/:id", authMiddleware, responseHandler, appointmentsController.rejectBookingRequest);
+
 // ✅ PUT update appointment status
 router.put("/status/:id", authMiddleware, responseHandler, appointmentsController.updateAppointmentStatus);
 
