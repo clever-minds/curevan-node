@@ -300,7 +300,35 @@ exports.createBookingAndInvoice = async (req, res) => {
     // --------------------------
     // ✅ Commit transaction
     // --------------------------
+    
+    // --- Send Pay Now Email to Patient ---
+    const [patientInfo] = await sequelize.query(
+      `SELECT email, user_name FROM users WHERE id = :patientId`,
+      { replacements: { patientId: appt.patient_id }, type: QueryTypes.SELECT, transaction: t }
+    );
+    if (patientInfo && patientInfo.email) {
+      try {
+        await transporter.sendMail({
+          from: `"Curevan Appointments" <${process.env.MAIL_USER}>`,
+          to: patientInfo.email,
+          subject: "Therapist Assigned - Action Required: Pay Now",
+          html: `
+            <h3>Therapist Assigned</h3>
+            <p>Hi ${patientInfo.user_name},</p>
+            <p>Great news! A therapist (${therapistName}) has accepted your appointment request for ${appt.date}.</p>
+            <p>Please log in to your dashboard and complete the payment to confirm your booking.</p>
+            <p><a href="https://curevan.com/dashboard">Click here to Pay Now</a></p>
+            <p>Thank you.</p>
+          `
+        });
+      } catch (e) {
+        console.error("Failed to send pay now email", e);
+      }
+    }
+    // -------------------------------------
+
     await t.commit();
+
 
     try {
       // Send Targeted Push Notification to the Therapist for Direct Booking
@@ -970,7 +998,34 @@ exports.createBookingRequest = async (req, res) => {
 
     try {
       // Fetch FCM tokens of ACTIVE therapists with matching specialty who are FREE at this date & time
+      
+      // --- Send Pending Email to Patient ---
+      const [patientUser] = await sequelize.query(
+        `SELECT email, user_name FROM users WHERE id = :patientId`,
+        { replacements: { patientId: bookingData.patientId }, type: QueryTypes.SELECT }
+      );
+      if (patientUser && patientUser.email) {
+        try {
+          await transporter.sendMail({
+            from: `"Curevan Appointments" <${process.env.MAIL_USER}>`,
+            to: patientUser.email,
+            subject: "Appointment Request Received (Pending)",
+            html: `
+              <h3>Appointment Request Pending</h3>
+              <p>Hi ${patientUser.user_name || bookingData.patientName},</p>
+              <p>Your request for a ${bookingData.therapyType} session on ${bookingData.date} at ${bookingData.time} has been received.</p>
+              <p>Please wait for a therapist to accept your request. We will notify you once accepted.</p>
+              <p>Thank you.</p>
+            `
+          });
+        } catch (e) {
+          console.error("Failed to send pending email", e);
+        }
+      }
+      // -------------------------------------
+
       const tokensQuery = await sequelize.query(
+
         `SELECT u.fcm_token 
          FROM users u
          JOIN therapist_profiles tp ON tp.user_id = u.id
