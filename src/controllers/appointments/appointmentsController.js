@@ -1110,27 +1110,39 @@ exports.acceptBookingRequest = async (req, res) => {
       }
     );
 
-    await sequelize.query(
-      `INSERT INTO pcr (
-        appointment_id, patient_id, therapist_id, service_type_id,
-        chief_complaint, assessment, diagnosis, treatment_provided, plan_of_care,
-        bp, hr, rr, temp, status, version, created_at, locked_at, history
-      ) VALUES (
-        :id, :patientId, :therapistId, :serviceTypeId,
-        '', '', '', '', '', '', '', '', '',
-        'not_started', 1, NOW(), NOW(), '[]'
-      )`,
-      {
-        replacements: {
-          id,
-          patientId: appt.patient_id,
-          therapistId,
-          serviceTypeId: appt.service_type_id
-        },
-        type: QueryTypes.INSERT,
-        transaction: t
-      }
+    const [pcrExists] = await sequelize.query(
+      `SELECT 1 FROM pcr WHERE appointment_id = :id LIMIT 1`,
+      { replacements: { id }, type: QueryTypes.SELECT, transaction: t }
     );
+
+    if (pcrExists) {
+      await sequelize.query(
+        `UPDATE pcr SET therapist_id = :therapistId WHERE appointment_id = :id`,
+        { replacements: { id, therapistId }, type: QueryTypes.UPDATE, transaction: t }
+      );
+    } else {
+      await sequelize.query(
+        `INSERT INTO pcr (
+          appointment_id, patient_id, therapist_id, service_type_id,
+          chief_complaint, assessment, diagnosis, treatment_provided, plan_of_care,
+          bp, hr, rr, temp, status, version, created_at, locked_at, history
+        ) VALUES (
+          :id, :patientId, :therapistId, :serviceTypeId,
+          '', '', '', '', '', '', '', '', '',
+          'not_started', 1, NOW(), NOW(), '[]'
+        )`,
+        {
+          replacements: {
+            id,
+            patientId: appt.patient_id,
+            therapistId,
+            serviceTypeId: appt.service_type_id
+          },
+          type: QueryTypes.INSERT,
+          transaction: t
+        }
+      );
+    }
 
     await t.commit();
     return res.json({ success: true, message: "Booking accepted successfully" });
@@ -1152,7 +1164,11 @@ exports.rejectBookingRequest = async (req, res) => {
       { replacements: { id }, type: QueryTypes.SELECT }
     );
 
-    if (!appt || (appt.status !== 'Pending Approval' && appt.status !== 'Pending') || appt.therapist_id != userId) {
+    if (!appt) {
+      return res.status(404).json({ success: false, error: "Appointment not found" });
+    }
+
+    if ((appt.status !== 'Pending Approval' && appt.status !== 'Pending') || appt.therapist_id != userId) {
       return res.status(400).json({ success: false, error: "Invalid appointment or unauthorized" });
     }
 
