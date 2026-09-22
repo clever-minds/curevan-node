@@ -1415,7 +1415,7 @@ exports.rescheduleAppointment = async (req, res) => {
   
       // Update the appointment
       await sequelize.query(
-        `UPDATE appointments SET date = :date, time = :time, status = 'Searching Therapist', therapist_id = NULL WHERE id = :id`,
+        `UPDATE appointments SET date = :date, time = :time WHERE id = :id`,
         { replacements: { id, date, time }, type: QueryTypes.UPDATE }
       );
       
