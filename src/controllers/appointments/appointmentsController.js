@@ -1419,11 +1419,11 @@ exports.rescheduleAppointment = async (req, res) => {
       );
       
       // Fetch users for notifications
-      const [patient] = await sequelize.query(`SELECT email, user_name, fcm_token FROM users WHERE id = :patientId`, { replacements: { patientId: appt.patient_id }, type: QueryTypes.SELECT });
+      const [patient] = await sequelize.query(`SELECT email, name, fcm_token FROM users WHERE id = :patientId`, { replacements: { patientId: appt.patient_id }, type: QueryTypes.SELECT });
       
       let therapist = null;
       if (appt.therapist_id) {
-          const [t] = await sequelize.query(`SELECT email, user_name, fcm_token FROM users WHERE id = :therapistId`, { replacements: { therapistId: appt.therapist_id }, type: QueryTypes.SELECT });
+          const [t] = await sequelize.query(`SELECT email, name, fcm_token FROM users WHERE id = :therapistId`, { replacements: { therapistId: appt.therapist_id }, type: QueryTypes.SELECT });
           therapist = t;
       }
       
@@ -1437,7 +1437,7 @@ exports.rescheduleAppointment = async (req, res) => {
               from: mailSender,
               to: patient.email,
               subject: "Your Appointment is Rescheduled",
-              html: `<p>Hi ${patient.user_name || 'Patient'},</p><p>Your appointment has been successfully rescheduled to ${date} at ${time}.</p>`
+              html: `<p>Hi ${patient.name || 'Patient'},</p><p>Your appointment has been successfully rescheduled to ${date} at ${time}.</p>`
           }).catch(e => console.error("Patient email error:", e));
       }
       
@@ -1446,7 +1446,7 @@ exports.rescheduleAppointment = async (req, res) => {
               from: mailSender,
               to: therapist.email,
               subject: "Appointment Rescheduled",
-              html: `<p>Hi ${therapist.user_name || 'Therapist'},</p><p>An appointment previously assigned to you has been rescheduled by the patient to ${date} at ${time}. You have been unassigned from this session.</p>`
+              html: `<p>Hi ${therapist.name || 'Therapist'},</p><p>An appointment previously assigned to you has been rescheduled by the patient to ${date} at ${time}. You have been unassigned from this session.</p>`
           }).catch(e => console.error("Therapist email error:", e));
       }
       
