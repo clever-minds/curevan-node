@@ -58,6 +58,6 @@ router.patch(
 // ✅ DELETE appointment
 //router.delete("/delete/:id", authMiddleware, appointmentsController.deleteAppointment);
 
-router.put("/reschedule/:id", authenticateUser, rescheduleAppointment);
+router.put("/reschedule/:id", authMiddleware, responseHandler, appointmentsController.rescheduleAppointment);
 
 module.exports = router;
