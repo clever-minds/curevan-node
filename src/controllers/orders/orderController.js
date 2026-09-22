@@ -1957,7 +1957,25 @@ exports.getInvoiceById = async (req, res) => {
     const invoiceData = invoice[0];
 
     // 2️⃣ Role based access control
-    if (userRole !== "admin" && invoiceData.user_id !== userId) {
+    const allowedRoles = ["admin", "superadmin", "super_admin", "therapyAdmin"];
+    let isAuthorized = false;
+
+    if (allowedRoles.includes(userRole)) {
+      isAuthorized = true;
+    } else if (invoiceData.user_id === userId) {
+      isAuthorized = true;
+    } else if (invoiceData.booking_id) {
+      // Check if user is the therapist for this appointment
+      const [appt] = await sequelize.query(
+        `SELECT therapist_id FROM appointments WHERE id = :bookingId`,
+        { replacements: { bookingId: invoiceData.booking_id }, type: QueryTypes.SELECT }
+      );
+      if (appt && appt.therapist_id === userId) {
+        isAuthorized = true;
+      }
+    }
+
+    if (!isAuthorized) {
       return res.error("Forbidden");
     }
 
