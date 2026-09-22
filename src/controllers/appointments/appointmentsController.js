@@ -315,7 +315,7 @@ exports.createBookingAndInvoice = async (req, res) => {
           html: `
             <h3>Therapist Assigned</h3>
             <p>Hi ${patientInfo.name},</p>
-            <p>Great news! A therapist (${therapistName}) has accepted your appointment request for ${bookingData.date}.<//p>
+            <p>Great news! A therapist (${therapistName}) has accepted your appointment request for ${bookingData.date}.</p>
             <p>Please log in to your dashboard and complete the payment to confirm your booking.</p>
             <p><a href="https://curevan.com/dashboard">Click here to Pay Now</a></p>
             <p>Thank you.</p>
