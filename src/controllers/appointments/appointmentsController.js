@@ -303,8 +303,8 @@ exports.createBookingAndInvoice = async (req, res) => {
     
     // --- Send Pay Now Email to Patient ---
     const [patientInfo] = await sequelize.query(
-      `SELECT email, user_name FROM users WHERE id = :patientId`,
-      { replacements: { patientId: appt.patient_id }, type: QueryTypes.SELECT, transaction: t }
+      `SELECT email, name FROM users WHERE id = :patientId`,
+      { replacements: { patientId: bookingData.patientId }, type: QueryTypes.SELECT, transaction: t }
     );
     if (patientInfo && patientInfo.email) {
       try {
@@ -314,8 +314,8 @@ exports.createBookingAndInvoice = async (req, res) => {
           subject: "Therapist Assigned - Action Required: Pay Now",
           html: `
             <h3>Therapist Assigned</h3>
-            <p>Hi ${patientInfo.user_name},</p>
-            <p>Great news! A therapist (${therapistName}) has accepted your appointment request for ${appt.date}.</p>
+            <p>Hi ${patientInfo.name},</p>
+            <p>Great news! A therapist (${therapistName}) has accepted your appointment request for ${bookingData.date}.<//p>
             <p>Please log in to your dashboard and complete the payment to confirm your booking.</p>
             <p><a href="https://curevan.com/dashboard">Click here to Pay Now</a></p>
             <p>Thank you.</p>
@@ -1001,7 +1001,7 @@ exports.createBookingRequest = async (req, res) => {
       
       // --- Send Pending Email to Patient ---
       const [patientUser] = await sequelize.query(
-        `SELECT email, user_name FROM users WHERE id = :patientId`,
+        `SELECT email, name FROM users WHERE id = :patientId`,
         { replacements: { patientId: bookingData.patientId }, type: QueryTypes.SELECT }
       );
       if (patientUser && patientUser.email) {
