@@ -1938,7 +1938,7 @@ exports.getInvoiceById = async (req, res) => {
 
     let queryCondition = "invoice_number = :invoiceId";
     if (/^\d+$/.test(invoiceId)) {
-      queryCondition = "id = :invoiceId OR invoice_number = :invoiceId";
+      queryCondition = "id = :invoiceId OR invoice_number = :invoiceId OR booking_id = :invoiceId OR order_id = :invoiceId";
     }
 
     // 1️⃣ Get Invoice
