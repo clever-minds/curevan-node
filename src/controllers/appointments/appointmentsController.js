@@ -1399,7 +1399,12 @@ exports.rescheduleAppointment = async (req, res) => {
         return res.status(404).json({ success: false, error: "Appointment not found" });
       }
   
-      if (appt.patient_id != userId) {
+      const userRole = req.user.role;
+      const isAdmin = ['superadmin', 'admin', 'super_admin', 'therapyAdmin'].includes(userRole);
+      const isAssignedTherapist = (appt.therapist_id == userId);
+      const isPatient = (appt.patient_id == userId);
+
+      if (!isAdmin && !isAssignedTherapist && !isPatient) {
         return res.status(403).json({ success: false, error: "Unauthorized to reschedule this appointment" });
       }
   
