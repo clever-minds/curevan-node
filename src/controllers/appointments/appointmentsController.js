@@ -1403,8 +1403,9 @@ exports.rescheduleAppointment = async (req, res) => {
       const isAdmin = ['superadmin', 'admin', 'super_admin', 'therapyAdmin'].includes(userRole);
       const isAssignedTherapist = (appt.therapist_id == userId);
       const isPatient = (appt.patient_id == userId);
+        const isTherapist = (userRole === 'therapist');
 
-      if (!isAdmin && !isAssignedTherapist && !isPatient) {
+        if (!isAdmin && !isAssignedTherapist && !isPatient && !isTherapist) {
         return res.status(403).json({ success: false, error: "Unauthorized to reschedule this appointment" });
       }
   
