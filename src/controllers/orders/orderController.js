@@ -2082,27 +2082,22 @@ exports.getInvoiceById = async (req, res) => {
     if (invoiceData.booking_id) {
       const booking = await sequelize.query(
         `SELECT b.*, b.id as "bookingId",
-                COALESCE(
-                  json_agg(
-                    jsonb_build_object(
-                      'id', bi.id,
-                      'name', bi.name,
-                      'qty', bi.qty,
-                      'price', bi.price,
-                      'tax_rate_pct', bi.tax_rate_pct,
-                      'price_excl_gst', ROUND(bi.price / (1 + (bi.tax_rate_pct/100))::numeric, 2),
-                      'gst_amount', ROUND(bi.price - (bi.price / (1 + (bi.tax_rate_pct/100)))::numeric, 2),
-                      'cgst', CASE WHEN :isIntra THEN ROUND((bi.price - (bi.price / (1 + (bi.tax_rate_pct/100)))) / 2, 2) ELSE 0 END,
-                      'sgst', CASE WHEN :isIntra THEN ROUND((bi.price - (bi.price / (1 + (bi.tax_rate_pct/100)))) / 2, 2) ELSE 0 END,
-                      'igst', CASE WHEN NOT :isIntra THEN ROUND((bi.price - (bi.price / (1 + (bi.tax_rate_pct/100)))), 2) ELSE 0 END
-                    )
-                  ) FILTER (WHERE bi.id IS NOT NULL),
-                  '[]'
+                json_build_array(
+                  jsonb_build_object(
+                    'id', b.id,
+                    'name', b.therapy_type,
+                    'qty', 1,
+                    'price', b.total_amount,
+                    'tax_rate_pct', 0,
+                    'price_excl_gst', b.total_amount,
+                    'gst_amount', 0,
+                    'cgst', 0,
+                    'sgst', 0,
+                    'igst', 0
+                  )
                 ) AS items
-         FROM bookings b
-         LEFT JOIN booking_items bi ON b.id = bi.booking_id
-         WHERE b.id = :bookingId
-         GROUP BY b.id`,
+         FROM appointments b
+         WHERE b.id = :bookingId`,
         {
           replacements: { bookingId: invoiceData.booking_id, isIntra: isIntraState },
           type: QueryTypes.SELECT,
