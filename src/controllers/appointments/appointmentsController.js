@@ -428,6 +428,25 @@ exports.createBookingAndInvoice = async (req, res) => {
         { replacements: { patientId: bookingData.patientId }, type: QueryTypes.SELECT }
       );
 
+      let addressString = "";
+      if (bookingData.mode === "home" && bookingData.addressId) {
+        const [addr] = await sequelize.query(
+          `SELECT full_address, city, state, pincode FROM order_addresses WHERE id = :addressId`,
+          { replacements: { addressId: bookingData.addressId }, type: QueryTypes.SELECT }
+        );
+        if (addr) {
+          addressString = `${addr.full_address || ''}, ${addr.city || ''}, ${addr.state || ''} - ${addr.pincode || ''}`;
+        }
+      } else if (bookingData.mode === "clinic" && bookingData.therapistId) {
+        const [therapistProfile] = await sequelize.query(
+          `SELECT full_address FROM therapist_profiles WHERE user_id = :therapistId`,
+          { replacements: { therapistId: bookingData.therapistId }, type: QueryTypes.SELECT }
+        );
+        if (therapistProfile && therapistProfile.full_address) {
+          addressString = therapistProfile.full_address;
+        }
+      }
+
       if (patient?.email) {
         await transporter.sendMail({
           from: `"Curevan Appointments" <${process.env.MAIL_USER}>`,
@@ -442,6 +461,8 @@ exports.createBookingAndInvoice = async (req, res) => {
               <li><strong>Time:</strong> ${bookingData.time}</li>
               <li><strong>Therapist:</strong> ${bookingData.therapist}</li>
               <li><strong>Service:</strong> ${bookingData.therapyType}</li>
+              <li><strong>Mode:</strong> ${bookingData.mode ? bookingData.mode.toUpperCase() : 'Not Specified'}</li>
+              ${addressString ? `<li><strong>Address:</strong> ${addressString}</li>` : ''}
               <li><strong>Total Amount:</strong> ₹${bookingData.totalAmount}</li>
             </ul>
             <p>Thank you for choosing Curevan.</p>
