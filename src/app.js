@@ -48,6 +48,7 @@ app.use('/api/users', require('./routes/user.routes'));
 app.use('/api/orders', require('./routes/order.routes'));
 //app.use('/api/payments', require('./routes/payment.routes'));
 app.use('/api/therapists', require('./routes/therapist.routes'));
+app.use('/api/notifications', require('./routes/notifications.routes'));
 
 app.use('/api/appointments', require('./routes/appointments.routes'));
 app.use('/api/general', require('./routes/general.routes'));
