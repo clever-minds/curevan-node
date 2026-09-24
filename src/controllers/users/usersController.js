@@ -2,6 +2,7 @@ const { QueryTypes } = require("sequelize");
 const { sequelize } = require("../../config/db");
 const transporter = require("../../config/mailer");
 const { v4: uuidv4 } = require('uuid');
+const firebaseNotifier = require("../../utils/firebaseNotifier");
 
 
 // ✅ LIST USERS
@@ -939,7 +940,7 @@ exports.approveChangeRequest = async (req, res) => {
     /* ---------- SEND NOTIFICATION ---------- */
     try {
       const [userRows] = await sequelize.query(
-        "SELECT uid FROM users WHERE id = :userId",
+        "SELECT uid, fcm_token FROM users WHERE id = :userId",
         { replacements: { userId: request.user_id }, type: sequelize.QueryTypes.SELECT }
       );
       if (userRows && userRows.uid) {
@@ -955,6 +956,9 @@ exports.approveChangeRequest = async (req, res) => {
             }
           }
         );
+        if (userRows.fcm_token) {
+          firebaseNotifier.sendToTherapist(userRows.fcm_token, 'Profile Update Approved', 'Your profile changes have been reviewed and approved.').catch(e => {});
+        }
       }
     } catch (notifErr) {
       console.error("Failed to send PCR approval notification:", notifErr);
@@ -1039,6 +1043,9 @@ exports.rejectChangeRequest = async (req, res) => {
               }
             }
           );
+          if (userRows.fcm_token) {
+            firebaseNotifier.sendToTherapist(userRows.fcm_token, 'Profile Update Rejected', `Your profile changes were rejected. Reason: ${reason}`).catch(e => {});
+          }
         }
       }
     } catch (notifErr) {
