@@ -1291,7 +1291,7 @@ exports.createChangeRequest = async (req, res) => {
     }
 
     /* ---------- Flatten payload ---------- */
-    const newValues = clientData.data?.new || clientData;
+    const newValues = clientData.data?.new || clientData.data || clientData;
     const section = clientData.section?.new || clientData.section || "profile";
     const role = clientData.role?.new || clientData.role || req.user.role;
 
