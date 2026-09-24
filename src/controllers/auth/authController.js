@@ -1418,7 +1418,7 @@ exports.createChangeRequest = async (req, res) => {
 
         // Notify Admins
         const admins = await sequelize.query(
-          "SELECT uid FROM users WHERE role = 'admin'",
+          "SELECT u.uid FROM users u JOIN user_roles ur ON u.id = ur.user_id JOIN roles r ON ur.role_id = r.id WHERE r.name IN ('admin.super', 'admin.therapy')",
           { type: sequelize.QueryTypes.SELECT }
         );
         for (const admin of admins) {
