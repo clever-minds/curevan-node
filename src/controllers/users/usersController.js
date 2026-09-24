@@ -940,7 +940,7 @@ exports.approveChangeRequest = async (req, res) => {
     try {
       const [userRows] = await sequelize.query(
         "SELECT uid FROM users WHERE id = :userId",
-        { replacements: { userId: request.user_id }, type: sequelize.QueryTypes.SELECT, transaction: t }
+        { replacements: { userId: request.user_id }, type: sequelize.QueryTypes.SELECT }
       );
       if (userRows && userRows.uid) {
         await sequelize.query(
@@ -952,8 +952,7 @@ exports.approveChangeRequest = async (req, res) => {
               title: 'Profile Update Approved',
               message: 'Your profile changes have been reviewed and approved.',
               link: '/dashboard/account'
-            },
-            transaction: t
+            }
           }
         );
       }
