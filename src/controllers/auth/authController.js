@@ -1391,7 +1391,58 @@ exports.createChangeRequest = async (req, res) => {
       }
     );
 
-    return res.success(changes, "Change request submitted successfully");
+    
+    /* ---------- Send Notifications ---------- */
+    try {
+      const [userRows] = await sequelize.query(
+        "SELECT uid, name FROM users WHERE id = :userId",
+        { replacements: { userId }, type: sequelize.QueryTypes.SELECT }
+      );
+      if (userRows && userRows.uid) {
+        const userUid = userRows.uid;
+        const userName = userRows.name || 'Therapist';
+
+        // Notify Therapist
+        await sequelize.query(
+          "INSERT INTO notifications (user_uid, type, title, message, link) VALUES (:uid, :type, :title, :message, :link)",
+          {
+            replacements: {
+              uid: userUid,
+              type: 'profile_update',
+              title: 'Profile Update Requested',
+              message: 'Your profile update request has been submitted successfully and is pending approval.',
+              link: '/dashboard/therapist/profile'
+            }
+          }
+        );
+
+        // Notify Admins
+        const admins = await sequelize.query(
+          "SELECT uid FROM users WHERE role = 'admin'",
+          { type: sequelize.QueryTypes.SELECT }
+        );
+        for (const admin of admins) {
+          if (admin.uid) {
+            await sequelize.query(
+              "INSERT INTO notifications (user_uid, type, title, message, link) VALUES (:uid, :type, :title, :message, :link)",
+              {
+                replacements: {
+                  uid: admin.uid,
+                  type: 'profile_update_request',
+                  title: 'New Profile Update Request',
+                  message: `Therapist ${userName} has requested a profile update.`,
+                  link: '/dashboard/admin/profile-approvals'
+                }
+              }
+            );
+          }
+        }
+      }
+    } catch (notifErr) {
+      console.error("Failed to send PCR notifications:", notifErr);
+    }
+
+return res.success(changes, "Change request submitted successfully");
 
   } catch (error) {
     console.error(error);

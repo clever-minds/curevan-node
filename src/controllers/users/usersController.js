@@ -935,7 +935,33 @@ exports.approveChangeRequest = async (req, res) => {
 
     await t.commit();
 
-    return res.status(200).json({ success: true, message: "Change request approved successfully" });
+    
+    /* ---------- SEND NOTIFICATION ---------- */
+    try {
+      const [userRows] = await sequelize.query(
+        "SELECT uid FROM users WHERE id = :userId",
+        { replacements: { userId: request.user_id }, type: sequelize.QueryTypes.SELECT, transaction: t }
+      );
+      if (userRows && userRows.uid) {
+        await sequelize.query(
+          "INSERT INTO notifications (user_uid, type, title, message, link) VALUES (:uid, :type, :title, :message, :link)",
+          {
+            replacements: {
+              uid: userRows.uid,
+              type: 'profile_update_approved',
+              title: 'Profile Update Approved',
+              message: 'Your profile changes have been reviewed and approved.',
+              link: '/dashboard/account'
+            },
+            transaction: t
+          }
+        );
+      }
+    } catch (notifErr) {
+      console.error("Failed to send PCR approval notification:", notifErr);
+    }
+
+return res.status(200).json({ success: true, message: "Change request approved successfully" });
   } catch (error) {
     await t.rollback();
     console.error("ApproveChangeRequest error:", error);
@@ -989,7 +1015,38 @@ exports.rejectChangeRequest = async (req, res) => {
       }
     );
 
-    return res.success({}, "Request rejected successfully");
+    
+    /* ---------- SEND NOTIFICATION ---------- */
+    try {
+      const [reqRow] = await sequelize.query(
+        "SELECT user_id FROM change_requests WHERE id = :id",
+        { replacements: { id: requestId }, type: sequelize.QueryTypes.SELECT }
+      );
+      if (reqRow && reqRow.user_id) {
+        const [userRows] = await sequelize.query(
+          "SELECT uid FROM users WHERE id = :userId",
+          { replacements: { userId: reqRow.user_id }, type: sequelize.QueryTypes.SELECT }
+        );
+        if (userRows && userRows.uid) {
+          await sequelize.query(
+            "INSERT INTO notifications (user_uid, type, title, message, link) VALUES (:uid, :type, :title, :message, :link)",
+            {
+              replacements: {
+                uid: userRows.uid,
+                type: 'profile_update_rejected',
+                title: 'Profile Update Rejected',
+                message: `Your profile changes were rejected. Reason: ${reason}`,
+                link: '/dashboard/account'
+              }
+            }
+          );
+        }
+      }
+    } catch (notifErr) {
+      console.error("Failed to send PCR rejection notification:", notifErr);
+    }
+
+return res.success({}, "Request rejected successfully");
   } catch (error) {
     console.error(error);
     return res.error("Failed to reject request");
