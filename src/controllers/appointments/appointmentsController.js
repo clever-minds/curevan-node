@@ -1236,7 +1236,7 @@ exports.rejectBookingRequest = async (req, res) => {
 
   try {
     const [appt] = await sequelize.query(
-      `SELECT status, therapist_id FROM appointments WHERE id = :id`,
+      `SELECT status, therapist_id, patient_id, date FROM appointments WHERE id = :id`,
       { replacements: { id }, type: QueryTypes.SELECT }
     );
 

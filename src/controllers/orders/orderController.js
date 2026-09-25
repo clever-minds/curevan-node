@@ -1,6 +1,7 @@
 const { QueryTypes } = require("sequelize");
 const { sequelize } = require("../../config/db");
 const transporter = require("../../config/mailer");
+const firebaseNotifier = require("../../utils/firebaseNotifier");
 const { checkServiceability, getPickupLocations } = require("../../services/shiprocketService");
 
 // exports.createOrderFromCart = async (req, res) => {

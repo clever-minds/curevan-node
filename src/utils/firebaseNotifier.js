@@ -1,5 +1,16 @@
 const { initializeApp, cert } = require("firebase-admin/app");
 const { getMessaging } = require("firebase-admin/messaging");
+const { sequelize } = require("../config/db");
+
+const saveNotification = async (token, title, body, data) => {
+  try {
+    const [user] = await sequelize.query('SELECT id FROM users WHERE fcm_token = :token LIMIT 1', { replacements: { token }, type: sequelize.QueryTypes.SELECT });
+    if (user && user.id) {
+      await sequelize.query('INSERT INTO notifications (user_uid, type, title, message, link) VALUES (:uid, :type, :title, :message, :link)', { replacements: { uid: user.id, type: data?.type || 'system', title: title || '', message: body || '', link: data?.link || '' } });
+    }
+  } catch (err) { console.error('Error saving notification to db:', err); }
+};
+
 
 // Note: You must provide a valid service account JSON to initialize Firebase Admin.
 // For now, this handles the initialization safely if no credentials are provided yet.
@@ -48,6 +59,7 @@ exports.sendToTherapist = async (token, title, body, data = {}) => {
   try {
     const response = await getMessaging().send(message);
     console.log("Successfully sent notification to therapist:", response);
+    await saveNotification(token, title, body, data);
   } catch (error) {
     console.error("Error sending notification to therapist:", error);
   }
@@ -95,6 +107,9 @@ exports.sendToMultipleTherapists = async (tokens, title, body, data = {}) => {
   try {
     const response = await getMessaging().sendEachForMulticast(message);
     console.log("Successfully sent multicast notification:", response.successCount, "successes,", response.failureCount, "failures");
+    for (const t of tokens) {
+      await saveNotification(t, title, body, data);
+    }
   } catch (error) {
     console.error("Error sending multicast notification:", error);
   }
