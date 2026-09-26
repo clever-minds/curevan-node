@@ -41,3 +41,28 @@ exports.listNotifications = async (req, res) => {
     res.status(500).json({ status: false, message: "Server error" });
   }
 };
+
+exports.unreadCount = async (req, res) => {
+  try {
+    const { id } = req.params; 
+    const uid = String(id);
+
+    const [result] = await sequelize.query(
+      \SELECT COUNT(*) as count FROM notifications WHERE user_uid = :uid AND is_read = false\,
+      {
+        replacements: { uid },
+        type: QueryTypes.SELECT
+      }
+    );
+
+    res.json({
+      status: true,
+      data: {
+        count: parseInt(result.count || 0, 10)
+      }
+    });
+  } catch (error) {
+    console.error("unreadCount error:", error);
+    res.status(500).json({ status: false, message: "Server error" });
+  }
+};
