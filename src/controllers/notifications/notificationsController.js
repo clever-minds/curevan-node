@@ -3,12 +3,8 @@ const { sequelize } = require("../../config/db");
 
 exports.listNotifications = async (req, res) => {
   try {
-    const { QueryTypes } = require("sequelize");
-const { sequelize } = require("../../config/db");
-
-exports.listNotifications = async (req, res) => {
-  try {
-    const { id } = req.params; const uid = String(id);
+    const { id } = req.params; 
+    const uid = String(id);
 
     console.log("\n======================================");
     console.log("[BACKEND_API] /api/notifications/list/:id HIT!");
@@ -34,7 +30,6 @@ exports.listNotifications = async (req, res) => {
       }
     );
 
-    console.log(`[BACKEND_NOTIFICATION_LIST] Fetching for ID: ${uid}`);
     console.log(`[BACKEND_NOTIFICATION_LIST] Data returned:`, notifications);
 
     res.json({
