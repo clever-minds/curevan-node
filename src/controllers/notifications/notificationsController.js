@@ -5,6 +5,13 @@ exports.listNotifications = async (req, res) => {
   try {
     const { id } = req.params; const uid = String(id);
 
+    console.log(
+"======================================");
+    console.log("[BACKEND_API] /api/notifications/list/:id HIT!");
+    console.log("[BACKEND_API] req.params.id aayi hai: --->  <---");
+    console.log("======================================
+");
+
     const notifications = await sequelize.query(
       `SELECT 
         id, 
