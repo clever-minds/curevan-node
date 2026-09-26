@@ -24,6 +24,9 @@ exports.listNotifications = async (req, res) => {
       }
     );
 
+    console.log(`[BACKEND_NOTIFICATION_LIST] Fetching for UID: ${uid}`);
+    console.log(`[BACKEND_NOTIFICATION_LIST] Data returned:`, notifications);
+
     res.json({
       status: true,
       data: notifications
