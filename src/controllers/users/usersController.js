@@ -948,7 +948,7 @@ exports.approveChangeRequest = async (req, res) => {
       if (userRows && userRows.uid) {
         console.log("INSERTING NOTIFICATION FOR UID:", userRows.uid);
         console.log("[BACKEND_NOTIFICATION_INSERT_ATTEMPT] Attempting to insert notification into DB...");
-      await sequelize.query('INSERT INTO notifications (user_uid, type, title, message, link) VALUES (:uid, :type, :title, :message, :link)",
+      await sequelize.query("INSERT INTO notifications (user_uid, type, title, message, link) VALUES (:uid, :type, :title, :message, :link)",
           {
             replacements: {
               uid: userRows.uid,
@@ -1041,7 +1041,7 @@ exports.rejectChangeRequest = async (req, res) => {
         );
         if (userRows && userRows.uid) {
           console.log("[BACKEND_NOTIFICATION_INSERT_ATTEMPT] Attempting to insert notification into DB...");
-      await sequelize.query('INSERT INTO notifications (user_uid, type, title, message, link) VALUES (:uid, :type, :title, :message, :link)",
+      await sequelize.query("INSERT INTO notifications (user_uid, type, title, message, link) VALUES (:uid, :type, :title, :message, :link)",
             {
               replacements: {
                 uid: userRows.uid,
