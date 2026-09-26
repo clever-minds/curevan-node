@@ -1399,7 +1399,7 @@ exports.createChangeRequest = async (req, res) => {
         { replacements: { userId }, type: sequelize.QueryTypes.SELECT }
       );
       if (userRows && userRows.uid) {
-        const userUid = userRows.uid;
+        const userUid = String(userRows.id);
         const userName = userRows.name || 'Therapist';
 
         // Notify Therapist
@@ -1418,16 +1418,16 @@ exports.createChangeRequest = async (req, res) => {
 
         // Notify Admins
         const admins = await sequelize.query(
-          "SELECT u.uid FROM users u JOIN user_roles ur ON u.id = ur.user_id JOIN roles r ON ur.role_id = r.id WHERE r.name IN ('admin.super', 'admin.therapy')",
+          "SELECT u.id, u.uid FROM users u JOIN user_roles ur ON u.id = ur.user_id JOIN roles r ON ur.role_id = r.id WHERE r.name IN ('admin.super', 'admin.therapy')",
           { type: sequelize.QueryTypes.SELECT }
         );
         for (const admin of admins) {
-          if (admin.uid) {
+          if (admin.id) {
             console.log("[BACKEND_NOTIFICATION_INSERT_ATTEMPT] Attempting to insert notification into DB...");
       await sequelize.query("INSERT INTO notifications (user_uid, type, title, message, link) VALUES (:uid, :type, :title, :message, :link)",
               {
                 replacements: {
-                  uid: admin.uid,
+                  uid: String(admin.id),
                   type: 'profile_update_request',
                   title: 'New Profile Update Request',
                   message: `Therapist ${userName} has requested a profile update.`,

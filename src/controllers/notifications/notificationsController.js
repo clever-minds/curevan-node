@@ -3,7 +3,7 @@ const { sequelize } = require("../../config/db");
 
 exports.listNotifications = async (req, res) => {
   try {
-    const { uid } = req.params;
+    const { id } = req.params; const uid = String(id);
 
     const notifications = await sequelize.query(
       `SELECT 
@@ -24,7 +24,7 @@ exports.listNotifications = async (req, res) => {
       }
     );
 
-    console.log(`[BACKEND_NOTIFICATION_LIST] Fetching for UID: ${uid}`);
+    console.log(`[BACKEND_NOTIFICATION_LIST] Fetching for ID: ${uid}`);
     console.log(`[BACKEND_NOTIFICATION_LIST] Data returned:`, notifications);
 
     res.json({

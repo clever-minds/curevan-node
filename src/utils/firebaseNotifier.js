@@ -4,10 +4,10 @@ const { sequelize } = require("../config/db");
 
 const saveNotification = async (token, title, body, data) => {
   try {
-    const [user] = await sequelize.query('SELECT uid FROM users WHERE fcm_token = :token LIMIT 1', { replacements: { token }, type: sequelize.QueryTypes.SELECT });
-    if (user && user.uid) {
+    const [user] = await sequelize.query('SELECT id, uid FROM users WHERE fcm_token = :token LIMIT 1', { replacements: { token }, type: sequelize.QueryTypes.SELECT });
+    if (user && user.id) {
       console.log("[BACKEND_NOTIFICATION_INSERT_ATTEMPT] Attempting to insert notification into DB...");
-      await sequelize.query('INSERT INTO notifications (user_uid, type, title, message, link) VALUES (:uid, :type, :title, :message, :link)', { replacements: { uid: user.uid, type: data?.type || 'system', title: title || '', message: body || '', link: data?.link || '' } });
+      await sequelize.query('INSERT INTO notifications (user_uid, type, title, message, link) VALUES (:uid, :type, :title, :message, :link)', { replacements: { uid: String(user.id), type: data?.type || 'system', title: title || '', message: body || '', link: data?.link || '' } });
     }
   } catch (err) { console.error('Error saving notification to db:', err); }
 };

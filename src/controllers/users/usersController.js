@@ -941,17 +941,17 @@ exports.approveChangeRequest = async (req, res) => {
     try {
       console.log("SEND NOTIFICATION TRIGGERED for request:", request);
       const [userRows] = await sequelize.query(
-        "SELECT uid, fcm_token FROM users WHERE id = :userId",
+        "SELECT id, uid, fcm_token FROM users WHERE id = :userId",
         { replacements: { userId: request.user_id }, type: sequelize.QueryTypes.SELECT }
       );
       console.log("USER ROWS:", userRows);
-      if (userRows && userRows.uid) {
-        console.log("INSERTING NOTIFICATION FOR UID:", userRows.uid);
+      if (userRows && userRows.id) {
+        console.log("INSERTING NOTIFICATION FOR UID:", userRows.id);
         console.log("[BACKEND_NOTIFICATION_INSERT_ATTEMPT] Attempting to insert notification into DB...");
       await sequelize.query("INSERT INTO notifications (user_uid, type, title, message, link) VALUES (:uid, :type, :title, :message, :link)",
           {
             replacements: {
-              uid: userRows.uid,
+              uid: String(userRows.id),
               type: 'profile_update_approved',
               title: 'Profile Update Approved',
               message: 'Your profile changes have been reviewed and approved.',
@@ -1039,12 +1039,12 @@ exports.rejectChangeRequest = async (req, res) => {
           "SELECT uid FROM users WHERE id = :userId",
           { replacements: { userId: reqRow.user_id }, type: sequelize.QueryTypes.SELECT }
         );
-        if (userRows && userRows.uid) {
+        if (userRows && userRows.id) {
           console.log("[BACKEND_NOTIFICATION_INSERT_ATTEMPT] Attempting to insert notification into DB...");
       await sequelize.query("INSERT INTO notifications (user_uid, type, title, message, link) VALUES (:uid, :type, :title, :message, :link)",
             {
               replacements: {
-                uid: userRows.uid,
+                uid: String(userRows.id),
                 type: 'profile_update_rejected',
                 title: 'Profile Update Rejected',
                 message: `Your profile changes were rejected. Reason: ${reason}`,
