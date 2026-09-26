@@ -483,10 +483,7 @@ exports.updateUserRoles = async (req, res) => {
 //       bank_ifsc_code: "therapist_profiles",
 //       profile_status: "therapist_profiles",
 //       specialty: "therapist_profiles",
-//       full_address: "therapist_profiles",
-      kyc_license: "therapist_profiles",
-      kyc_id_proof: "therapist_profiles",
-      kyc_bank_proof: "therapist_profiles",
+//       full_address: "therapist_profiles",,
 //       profile_image: "therapist_profiles",
 //       kyc_id_proof: "therapist_profiles",
 //       kyc_license: "therapist_profiles",
@@ -630,9 +627,6 @@ exports.updateUserRoles = async (req, res) => {
 //       service_radius_km: "therapist_profiles",
 //       specialty: "therapist_profiles",
 //       full_address: "therapist_profiles",
-      kyc_license: "therapist_profiles",
-      kyc_id_proof: "therapist_profiles",
-      kyc_bank_proof: "therapist_profiles"
 //     };
 
 //     /* ---------- APPLY FIELD UPDATES ---------- */
@@ -855,7 +849,8 @@ exports.approveChangeRequest = async (req, res) => {
       full_address: "therapist_profiles",
       kyc_license: "therapist_profiles",
       kyc_id_proof: "therapist_profiles",
-      kyc_bank_proof: "therapist_profiles"
+      kyc_bank_proof: "therapist_profiles",
+      profile_image_id: "therapist_profiles"
     };
 
     /* ---------- APPLY FIELD UPDATES ---------- */
@@ -1254,4 +1249,5 @@ exports.listChangeRequests = async (req, res) => {
     return res.error("Failed to fetch change requests");
   }
 };
+
 
