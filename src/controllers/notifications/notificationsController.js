@@ -3,14 +3,17 @@ const { sequelize } = require("../../config/db");
 
 exports.listNotifications = async (req, res) => {
   try {
+    const { QueryTypes } = require("sequelize");
+const { sequelize } = require("../../config/db");
+
+exports.listNotifications = async (req, res) => {
+  try {
     const { id } = req.params; const uid = String(id);
 
-    console.log(
-"======================================");
+    console.log("\n======================================");
     console.log("[BACKEND_API] /api/notifications/list/:id HIT!");
-    console.log("[BACKEND_API] req.params.id aayi hai: --->  <---");
-    console.log("======================================
-");
+    console.log(`[BACKEND_API] req.params.id aayi hai: ---> ${id} <---`);
+    console.log("======================================\n");
 
     const notifications = await sequelize.query(
       `SELECT 
