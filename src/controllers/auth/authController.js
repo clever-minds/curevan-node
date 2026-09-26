@@ -1403,8 +1403,8 @@ exports.createChangeRequest = async (req, res) => {
         const userName = userRows.name || 'Therapist';
 
         // Notify Therapist
-        await sequelize.query(
-          "INSERT INTO notifications (user_uid, type, title, message, link) VALUES (:uid, :type, :title, :message, :link)",
+        console.log("[BACKEND_NOTIFICATION_INSERT_ATTEMPT] Attempting to insert notification into DB...");
+      await sequelize.query('INSERT INTO notifications (user_uid, type, title, message, link) VALUES (:uid, :type, :title, :message, :link)",
           {
             replacements: {
               uid: userUid,
@@ -1423,8 +1423,8 @@ exports.createChangeRequest = async (req, res) => {
         );
         for (const admin of admins) {
           if (admin.uid) {
-            await sequelize.query(
-              "INSERT INTO notifications (user_uid, type, title, message, link) VALUES (:uid, :type, :title, :message, :link)",
+            console.log("[BACKEND_NOTIFICATION_INSERT_ATTEMPT] Attempting to insert notification into DB...");
+      await sequelize.query('INSERT INTO notifications (user_uid, type, title, message, link) VALUES (:uid, :type, :title, :message, :link)",
               {
                 replacements: {
                   uid: admin.uid,
