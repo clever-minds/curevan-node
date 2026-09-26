@@ -1319,7 +1319,10 @@ exports.createChangeRequest = async (req, res) => {
       experienceYears: "experience_years",
       specialty: "specialty",
       bio: "bio",
-      qualification: "qualification"
+      qualification: "qualification",
+      kycLicense: "kyc_license",
+      kycIdProof: "kyc_id_proof",
+      kycBankProof: "kyc_bank_proof"
     };
 
     /* ---------- Fetch old data ---------- */
@@ -1332,7 +1335,7 @@ exports.createChangeRequest = async (req, res) => {
     const [oldProfile] = await sequelize.query(
       `SELECT bio, qualification, registration_no, hourly_rate, membership_plan,
               service_radius_km, experience_years, pan_number, bank_account_number, bank_ifsc_code,
-              full_address, specialty
+              full_address, specialty, kyc_license, kyc_id_proof, kyc_bank_proof
        FROM therapist_profiles WHERE user_id = :userId`,
       { replacements: { userId }, type: sequelize.QueryTypes.SELECT }
     );
@@ -1483,3 +1486,4 @@ exports.updateFcmToken = async (req, res) => {
     });
   }
 };
+

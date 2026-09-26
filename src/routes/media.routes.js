@@ -20,4 +20,7 @@ router.delete(
   media.deleteMedia
 );
 
+router.get('/url/:id', media.getMediaUrlById);
+
 module.exports = router;
+

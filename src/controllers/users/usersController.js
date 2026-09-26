@@ -484,6 +484,9 @@ exports.updateUserRoles = async (req, res) => {
 //       profile_status: "therapist_profiles",
 //       specialty: "therapist_profiles",
 //       full_address: "therapist_profiles",
+      kyc_license: "therapist_profiles",
+      kyc_id_proof: "therapist_profiles",
+      kyc_bank_proof: "therapist_profiles",
 //       profile_image: "therapist_profiles",
 //       kyc_id_proof: "therapist_profiles",
 //       kyc_license: "therapist_profiles",
@@ -626,7 +629,10 @@ exports.updateUserRoles = async (req, res) => {
 //       bank_ifsc_code: "therapist_profiles",
 //       service_radius_km: "therapist_profiles",
 //       specialty: "therapist_profiles",
-//       full_address: "therapist_profiles"
+//       full_address: "therapist_profiles",
+      kyc_license: "therapist_profiles",
+      kyc_id_proof: "therapist_profiles",
+      kyc_bank_proof: "therapist_profiles"
 //     };
 
 //     /* ---------- APPLY FIELD UPDATES ---------- */
@@ -808,7 +814,11 @@ exports.approveChangeRequest = async (req, res) => {
       country: "country",
       emergencyContact: "emergency_contact",
       email_opt_in: "email_notifications",
-      push_opt_in: "push_notifications"
+      push_opt_in: "push_notifications",
+      kycLicense: "kyc_license",
+      kycIdProof: "kyc_id_proof",
+      kycBankProof: "kyc_bank_proof",
+      profileImageId: "profile_image_id"
     };
 
     const fieldToTableMap = {
@@ -842,7 +852,10 @@ exports.approveChangeRequest = async (req, res) => {
       bank_ifsc_code: "therapist_profiles",
       service_radius_km: "therapist_profiles",
       specialty: "therapist_profiles",
-      full_address: "therapist_profiles"
+      full_address: "therapist_profiles",
+      kyc_license: "therapist_profiles",
+      kyc_id_proof: "therapist_profiles",
+      kyc_bank_proof: "therapist_profiles"
     };
 
     /* ---------- APPLY FIELD UPDATES ---------- */
@@ -1241,3 +1254,4 @@ exports.listChangeRequests = async (req, res) => {
     return res.error("Failed to fetch change requests");
   }
 };
+

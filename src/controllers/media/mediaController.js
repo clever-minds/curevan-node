@@ -118,3 +118,37 @@ exports.deleteMedia = async (req, res) => {
   }
 };
 
+
+/* =========================
+   GET MEDIA URL BY ID
+========================= */
+exports.getMediaUrlById = async (req, res) => {
+  try {
+    const { id } = req.params;
+    if (!id || isNaN(id)) return res.status(404).send("Not Found");
+
+    const result = await sequelize.query(
+      `SELECT file_path FROM media WHERE id = :id LIMIT 1`,
+      {
+        replacements: { id },
+        type: QueryTypes.SELECT,
+      }
+    );
+
+    if (!result || result.length === 0) {
+      return res.status(404).send("Not Found");
+    }
+
+    const filePath = result[0].file_path;
+    const MEDIA_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "https://api.curevan.com";
+    
+    // Redirect to the actual file URL
+    res.redirect(
+      ``
+    );
+  } catch (error) {
+    console.error("getMediaUrlById error:", error);
+    res.status(500).send("Server Error");
+  }
+};
+
