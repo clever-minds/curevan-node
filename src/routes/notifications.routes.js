@@ -7,4 +7,7 @@ router.get("/list/:id", authMiddleware, notificationsController.listNotification
 
 router.get('/unread-count/:id', authMiddleware, notificationsController.unreadCount);
 
+router.post('/read/:id', authMiddleware, notificationsController.markAsRead);
+
 module.exports = router;
+

@@ -66,3 +66,26 @@ exports.unreadCount = async (req, res) => {
     res.status(500).json({ status: false, message: "Server error" });
   }
 };
+
+exports.markAsRead = async (req, res) => {
+  try {
+    const { id } = req.params; 
+    
+    await sequelize.query(
+      \UPDATE notifications SET is_read = true WHERE id = :id\,
+      {
+        replacements: { id },
+        type: QueryTypes.UPDATE
+      }
+    );
+
+    res.json({
+      success: true,
+      status: true,
+      message: "Notification marked as read"
+    });
+  } catch (error) {
+    console.error("markAsRead error:", error);
+    res.status(500).json({ success: false, status: false, message: "Server error" });
+  }
+};
