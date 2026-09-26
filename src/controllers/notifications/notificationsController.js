@@ -48,7 +48,7 @@ exports.unreadCount = async (req, res) => {
     const uid = String(id);
 
     const [result] = await sequelize.query(
-      \SELECT COUNT(*) as count FROM notifications WHERE user_uid = :uid AND is_read = false\,
+      `SELECT COUNT(*) as count FROM notifications WHERE user_uid = :uid AND is_read = false`,
       {
         replacements: { uid },
         type: QueryTypes.SELECT
@@ -72,7 +72,7 @@ exports.markAsRead = async (req, res) => {
     const { id } = req.params; 
     
     await sequelize.query(
-      \UPDATE notifications SET is_read = true WHERE id = :id\,
+      `UPDATE notifications SET is_read = true WHERE id = :id`,
       {
         replacements: { id },
         type: QueryTypes.UPDATE
