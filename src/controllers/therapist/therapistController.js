@@ -838,6 +838,7 @@ exports.getProfile = async (req, res) => {
       ? profile.specialty.replace(/[{}]/g, "").split(",")
       : [];
       
+    profile.specialtyIds = specArray.map(id => Number(id) || id);
     profile.specialty = specArray.map(id => idToName[id] || id);
 
     // 3️⃣ Fetch therapist availability
@@ -1075,6 +1076,7 @@ exports.listUsersWithProfiles = async (req, res) => {
           : user.specialty
           ? user.specialty.replace(/[{}]/g, "").split(",")
           : [];
+        user.specialtyIds = specArray.map(id => Number(id) || id);
         user.specialty = specArray.map(id => idToName[id] || id);
 
         return {
@@ -1098,6 +1100,7 @@ exports.listUsersWithProfiles = async (req, res) => {
       status: true,
       data: users.map(u => {
         let specArray = Array.isArray(u.specialty) ? u.specialty : (u.specialty ? u.specialty.replace(/[{}]/g, "").split(",") : []);
+        u.specialtyIds = specArray.map(id => Number(id) || id);
         u.specialty = specArray.map(id => idToName[id] || id);
         return { ...u, availability: [] };
       })
@@ -1293,6 +1296,7 @@ exports.listUsersWithProfilesInRadius = async (req, res) => {
       status: true,
       data: users.map(u => {
         let specArray = Array.isArray(u.specialty) ? u.specialty : (u.specialty ? u.specialty.replace(/[{}]/g, "").split(",") : []);
+        u.specialtyIds = specArray.map(id => Number(id) || id);
         u.specialty = specArray.map(id => idToName[id] || id);
         return u;
       })

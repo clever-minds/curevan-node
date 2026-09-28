@@ -1355,14 +1355,14 @@ exports.createChangeRequest = async (req, res) => {
 
     /* ---------- Build final changes object ---------- */
     const changes = {};
-    const allKeys = new Set([...Object.keys(newValues), ...Object.keys(extraFields)]);
+    const allKeys = new Set(Object.keys(newValues));
 
     allKeys.forEach((key) => {
       // old value from DB
       let oldVal = oldData[fieldMapping[key] || key] ?? null;
 
       // new value from request or extra fields
-      let newVal = newValues[key] ?? extraFields[key];
+      let newVal = newValues[key];
 
       const stringify = (v) => (typeof v === "object" && v !== null ? JSON.stringify(v) : v);
 
