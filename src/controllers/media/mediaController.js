@@ -143,9 +143,7 @@ exports.getMediaUrlById = async (req, res) => {
     const MEDIA_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "https://api.curevan.com";
     
     // Redirect to the actual file URL
-    res.redirect(
-      ``
-    );
+    res.redirect(`${MEDIA_BASE_URL}${filePath}`);
   } catch (error) {
     console.error("getMediaUrlById error:", error);
     res.status(500).send("Server Error");
