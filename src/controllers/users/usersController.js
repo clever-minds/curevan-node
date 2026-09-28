@@ -1044,7 +1044,7 @@ exports.rejectChangeRequest = async (req, res) => {
       );
       if (reqRow && reqRow.user_id) {
         const [userRows] = await sequelize.query(
-          "SELECT uid FROM users WHERE id = :userId",
+          "SELECT id, uid, fcm_token FROM users WHERE id = :userId",
           { replacements: { userId: reqRow.user_id }, type: sequelize.QueryTypes.SELECT }
         );
         if (userRows && userRows.id) {
