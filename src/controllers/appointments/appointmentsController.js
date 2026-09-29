@@ -185,25 +185,7 @@ exports.createBookingAndInvoice = async (req, res) => {
     
         // Check if therapist is on leave
     if (bookingData.therapistId) {
-      // Add availability check
-      const [profile] = await sequelize.query("SELECT availability FROM therapist_profiles WHERE user_id = :therapistId LIMIT 1", { replacements: { therapistId: bookingData.therapistId }, type: sequelize.QueryTypes.SELECT, transaction: t });
-      if (profile && profile.availability) {
-        let avail = profile.availability;
-        if (typeof avail === "string") { try { avail = JSON.parse(avail); } catch (e) {} }
-        const availWindows = avail.windows || avail;
-        if (availWindows) {
-          const bookingDateObj = new Date(bookingData.date);
-          const days = ["sun", "mon", "tue", "wed", "thu", "fri", "sat"];
-          const dayName = days[bookingDateObj.getDay()];
-          const dayAvail = availWindows[dayName];
-          if (!dayAvail || dayAvail.enabled === false || dayAvail.enabled === "false" || dayAvail.enabled === 0 || dayAvail.enabled === "0") {
-            await t.rollback();
-            return res.status(400).json({ success: false, error: "Therapist is not available on this day." });
-          }
-        }
-      }
-
-      const [leaves] = await sequelize.query(
+      // Add availability check\n      const availabilityRows = await sequelize.query(\n        "SELECT day_of_week, is_enabled FROM therapist_availability ta JOIN therapist_profiles tp ON ta.therapist_id = tp.id WHERE tp.user_id = :therapistId",\n        { replacements: { therapistId: bookingData.therapistId }, type: sequelize.QueryTypes.SELECT, transaction: t }\n      );\n      \n      const bookingDateObj = new Date(bookingData.date);\n      const days = [\"sun\", \"mon\", \"tue\", \"wed\", \"thu\", \"fri\", \"sat\"];\n      const dayName = days[bookingDateObj.getDay()];\n      \n      const dayAvail = availabilityRows.find(row => row.day_of_week === dayName);\n      \n      if (!dayAvail || dayAvail.is_enabled === false || dayAvail.is_enabled === \"false\" || dayAvail.is_enabled === 0 || dayAvail.is_enabled === \"0\") {\n        await t.rollback();\n        return res.status(400).json({ success: false, error: \"Therapist is not available on this day.\" });\n      }\n\n      const [leaves] = await sequelize.query(
         `SELECT 1 FROM therapist_leaves tl
          JOIN therapist_profiles tp ON tl.therapist_id = tp.id
          WHERE tp.user_id = :therapistId
