@@ -885,6 +885,14 @@ exports.approveChangeRequest = async (req, res) => {
         }
       }
 
+      if (dbField === "experience_years" || dbField === "hourly_rate" || dbField === "service_radius_km") {
+        if (value === "N/A" || value === "" || isNaN(Number(value))) {
+          value = null;
+        } else {
+          value = Number(value);
+        }
+      }
+
       // skip nested objects
       if (typeof value === "object" && value !== null) continue;
 
