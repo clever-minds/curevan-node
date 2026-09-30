@@ -568,7 +568,7 @@ exports.updateUserRoles = async (req, res) => {
 
 //     /* ---------- GET PROFILE ID ---------- */
 //     const [profile] = await sequelize.query(
-//       `SELECT id FROM therapist_profiles WHERE user_id = :userId`,
+//       `SELECT id, profile_status FROM therapist_profiles WHERE user_id = :userId`,
 //       {
 //         replacements: { userId: request.user_id },
 //         type: sequelize.QueryTypes.SELECT,
@@ -780,7 +780,7 @@ exports.approveChangeRequest = async (req, res) => {
         transaction: t
       }
     );
-    const profileId = profile?.id || null;
+    const profileId = profile?.id || null;\n    const isNewRegistration = profile?.profile_status !== 'approved';
 
     /* ---------- FIELD MAPPINGS ---------- */
     const fieldMap = {
@@ -960,9 +960,9 @@ exports.approveChangeRequest = async (req, res) => {
           {
             replacements: {
               uid: String(userRows.id),
-              type: 'profile_update_approved',
-              title: 'Profile Update Approved',
-              message: 'Your profile changes have been reviewed and approved.',
+              type: isNewRegistration ? 'registration_approved' : 'profile_update_approved',
+              title: isNewRegistration ? 'Therapist ID Approved' : 'Profile Update Approved',
+              message: isNewRegistration ? 'Your therapist account registration and ID creation has been approved.' : 'Your profile changes have been reviewed and approved.',
               link: '/dashboard/account'
             }
           }
@@ -970,7 +970,7 @@ exports.approveChangeRequest = async (req, res) => {
         console.log("NOTIFICATION INSERTED SUCCESSFULLY");
         if (userRows.fcm_token) {
           console.log("SENDING FCM TO:", userRows.fcm_token);
-          firebaseNotifier.sendToTherapist(userRows.fcm_token, 'Profile Update Approved', 'Your profile changes have been reviewed and approved.').catch(e => {
+          firebaseNotifier.sendToTherapist(userRows.fcm_token, isNewRegistration ? 'Therapist ID Approved' : 'Profile Update Approved', isNewRegistration ? 'Your therapist account registration and ID creation has been approved.' : 'Your profile changes have been reviewed and approved.').catch(e => {
             console.error("FCM SEND ERROR:", e);
           });
         }
