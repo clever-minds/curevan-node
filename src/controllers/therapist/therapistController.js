@@ -1158,7 +1158,7 @@ exports.listUsersWithProfiles = async (req, res) => {
    FIND THERAPIST BY RADIUS
 ========================= */
 
-// exports.listUsersWithProfilesInRadius = async (req, res) => {
+exports.listUsersWithProfilesInRadius = async (req, res) => {
   try {
     const { lat, lng } = req.query;
 
