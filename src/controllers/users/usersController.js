@@ -877,8 +877,12 @@ exports.approveChangeRequest = async (req, res) => {
       }
 
       // convert array to Postgres array if needed
-      if (dbField === "specialty" && Array.isArray(value)) {
-        value = `{${value.join(",")}}`;
+      if (dbField === "specialty") {
+        if (Array.isArray(value)) {
+          value = `{${value.join(",")}}`;
+        } else if (typeof value === "string" && !value.startsWith("{")) {
+          value = `{${value}}`;
+        }
       }
 
       // skip nested objects
