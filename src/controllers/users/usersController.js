@@ -780,7 +780,8 @@ exports.approveChangeRequest = async (req, res) => {
         transaction: t
       }
     );
-    const profileId = profile?.id || null;\n    const isNewRegistration = profile?.profile_status !== 'approved';
+    const profileId = profile?.id || null;
+    const isNewRegistration = profile?.profile_status !== 'approved';
 
     /* ---------- FIELD MAPPINGS ---------- */
     const fieldMap = {
