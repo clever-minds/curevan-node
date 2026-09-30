@@ -232,6 +232,15 @@ exports.registerTherapist = async (req, res) => {
        throw new Error("data and salt arguments required");
     }
 
+    const exists = await sequelize.query(
+      `SELECT id FROM users WHERE email = :email`,
+      { replacements: { email }, type: sequelize.QueryTypes.SELECT, transaction: t }
+    );
+    if (exists.length) {
+      await t.rollback();
+      return res.status(409).json({ status: false, message: 'A user with this email already exists' });
+    }
+
     const hash = await bcrypt.hash(password, 10);
     const uid = uuidv4();
     const verificationToken = uuidv4();
