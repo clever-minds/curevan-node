@@ -785,7 +785,7 @@ exports.updateKnowledgeBase = async (req, res) => {
 exports.updateKnowledgeBaseStatus = async (req, res) => {
   try {
     const { id } = req.params;
-    const { status } = req.body;
+    const { status, publishedAt } = req.body;
 
     if (!id) {
       return res.status(400).json({ message: "Knowledge Base ID required" });
@@ -795,23 +795,35 @@ exports.updateKnowledgeBaseStatus = async (req, res) => {
       return res.status(400).json({ message: "Status is required" });
     }
 
-    await sequelize.query(
-      `
+    let publishedAtVal = null;
+    if (status === 'published' && !publishedAt) {
+      publishedAtVal = new Date();
+    } else if (publishedAt) {
+      publishedAtVal = new Date(publishedAt);
+    }
+
+    let updateQuery = `
       UPDATE knowledge_base
       SET
         status = :status,
-        updated_at = :updatedAt,
-        published_at = CASE WHEN :status = 'published' AND published_at IS NULL THEN CURRENT_TIMESTAMP ELSE published_at END
-      WHERE id = :id
-      `,
-      {
-        replacements: {
-          id,
-          status,
-          updatedAt: new Date(),
-        },
-        type: QueryTypes.UPDATE,
-      }
+        updated_at = :updatedAt
+    `;
+
+    if (publishedAtVal) {
+      updateQuery += `, published_at = :publishedAt `;
+    }
+
+    updateQuery += ` WHERE id = :id`;
+
+    await sequelize.query(updateQuery, {
+      replacements: {
+        id,
+        status,
+        updatedAt: new Date(),
+        publishedAt: publishedAtVal
+      },
+      type: QueryTypes.UPDATE,
+    }
     );
 
     return res.success(null, "Knowledge Base status updated successfully");
