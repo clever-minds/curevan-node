@@ -1395,25 +1395,33 @@ exports.addReview = async (req, res) => {
   }
 };
 
-// ✅ CONFIRM PAYMENT
+// ✅ CONFIRM PAYMENT & THERAPIST PAYOUT
 exports.confirmPayment = async (req, res) => {
   const { id } = req.params;
   const { paymentId, gateway } = req.body;
   try {
     const [appt] = await sequelize.query(
-      `SELECT status FROM appointments WHERE id = :id`,
+      `SELECT status, payment_status FROM appointments WHERE id = :id`,
       { replacements: { id }, type: QueryTypes.SELECT }
     );
-    if (!appt || appt.status !== 'Payment Pending') {
-      return res.status(400).json({ success: false, error: "Invalid appointment state for payment" });
+    if (!appt) {
+      return res.status(404).json({ success: false, error: "Appointment not found" });
     }
     
+    const newStatus = appt.status === 'Payment Pending' ? 'Confirmed' : appt.status;
+
     await sequelize.query(
-      `UPDATE appointments SET status = 'Confirmed', payment_status = 'Paid' WHERE id = :id`,
-      { replacements: { id }, type: QueryTypes.UPDATE }
+      `UPDATE appointments SET status = :newStatus, payment_status = 'Paid' WHERE id = :id`,
+      { replacements: { id, newStatus }, type: QueryTypes.UPDATE }
     );
     
-    return res.json({ success: true, message: "Payment confirmed, appointment booked" });
+    // Also update corresponding payout_items record state to 'paid'
+    await sequelize.query(
+      `UPDATE payout_items SET state = 'paid' WHERE source_id = :id`,
+      { replacements: { id: Number(id) }, type: QueryTypes.UPDATE }
+    ).catch((err) => console.log('payout_items update warning:', err.message));
+
+    return res.json({ success: true, message: "Payment confirmed and recorded successfully" });
   } catch(e) {
     console.error(e);
     return res.status(500).json({ success: false, error: "Payment confirmation failed" });

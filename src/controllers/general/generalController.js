@@ -249,6 +249,32 @@ exports.updatePayoutState = async (req, res) => {
   }
 };
 
+/**
+ * Update payout state by sourceId (bookingId)
+ */
+exports.updatePayoutStateBySourceId = async (req, res) => {
+  try {
+    const { sourceId } = req.params;
+    const { state } = req.body;
+
+    if (!sourceId || !state)
+      return res.status(400).json({ message: "sourceId and state are required" });
+
+    await sequelize.query(
+      `UPDATE payout_items SET state = :state WHERE source_id = :sourceId`,
+      {
+        replacements: { sourceId: Number(sourceId), state },
+        type: QueryTypes.UPDATE,
+      }
+    );
+
+    res.json({ message: "Payout state updated successfully" });
+  } catch (error) {
+    console.error("updatePayoutStateBySourceId error:", error);
+    res.status(500).json({ message: "Server error" });
+  }
+};
+
 // ✅ Add new journal entry
 // Add a new journal (authorId/name from logged-in user)
 // exports.addJournal = async (req, res) => {

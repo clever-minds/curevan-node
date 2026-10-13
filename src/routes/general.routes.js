@@ -9,6 +9,8 @@ router.post( "/audit-logs/add",authMiddleware,responseHandler, general.addAuditL
 router.post("/payout-items/add",authMiddleware,responseHandler,general.addPayoutItem);
 router.get("/payout-items/source/:sourceId",authMiddleware,responseHandler,general.getPayoutItemBySourceId);
 router.get("/payout-items/list",authMiddleware,responseHandler,general.listPayoutItems);
+router.put("/payout-items/:id/state", authMiddleware, responseHandler, general.updatePayoutState);
+router.put("/payout-items/source/:sourceId/state", authMiddleware, responseHandler, general.updatePayoutStateBySourceId);
 
 // Knowledge Base routes
 router.post("/knowledge-base/add",authMiddleware,responseHandler,general.addKnowledgeBase);
