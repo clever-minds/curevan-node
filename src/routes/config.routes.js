@@ -11,6 +11,14 @@ router.get("/public", (req, res) => {
       session: { slotMinutes: rules.session.slotMinutes, timerMinutes: rules.session.timerMinutes, minLeadHours: rules.session.minLeadHours, maxAdvanceDays: rules.session.maxAdvanceDays },
       otp: { length: rules.otp.length, validFromHoursBefore: rules.otp.validFromHoursBefore, maxAttempts: rules.otp.maxAttempts },
       visit: { travelFromMinutesBefore: rules.visit.travelFromMinutesBefore },
+      cancellation: {
+        freeHoursBefore: rules.cancellation.freeHoursBefore,
+        partialHoursBefore: rules.cancellation.partialHoursBefore,
+        partialChargePct: rules.cancellation.partialChargePct,
+        lateChargePct: rules.cancellation.lateChargePct,
+        graceMinutesAfterBooking: rules.cancellation.graceMinutesAfterBooking,
+        therapistLateMinutes: rules.cancellation.therapistLateMinutes,
+      },
     },
   });
 });

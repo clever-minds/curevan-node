@@ -186,3 +186,11 @@ Total routes: 170
 | POST | /api/appointments/:id/verify-start-otp | the assigned therapist only, status must be `arrived` |
 | GET | /api/config/public | anyone (non-secret rule values) |
 | PUT | /api/appointments/status/:id | any party of the booking; the state machine (`src/services/appointmentStateMachine.js`) decides who may do which move |
+
+## Added in P13 / P14
+
+| Method | Path | Who |
+|---|---|---|
+| GET | /api/therapists/:therapistId/slots?date=YYYY-MM-DD | anyone (public) - bookable hourly slots, decided by the server |
+| GET | /api/appointments/:id/cancel-quote | patient (own), assigned therapist, clinical admin - what cancelling costs right now |
+| POST/PATCH | /api/appointments/:id/cancel | patient (own), assigned therapist (reason required), clinical admin (reason required) - applies the policy and refunds through Razorpay |

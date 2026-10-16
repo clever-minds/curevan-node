@@ -443,8 +443,8 @@ async function seed() {
   // cancel
   const day = (n) => { const d = new Date(Date.now() + 5.5 * 3600e3 + n * 86400e3); return `${d.getUTCFullYear()}-${pad(d.getUTCMonth() + 1)}-${pad(d.getUTCDate())}`; };
   let mkN = 0;   // every test booking gets its own time, because the database now refuses two active bookings in one slot
-  const mkA = async (pay, daysAhead, extra = {}) => (await q(`INSERT INTO appointments(patient_id, patient_name, therapist_id, therapist_name, service_type_id, service_amount, total_amount, date, time, status, payment_status, razorpay_payment_id, payment_method)
-    VALUES ($1,'Patient One',$2,'Dr One',1,1500,1500,$3,$4,CASE WHEN $5 = 'Paid' THEN 'confirmed' ELSE 'pending_payment' END,$5,$6,$7) RETURNING id`, [U.p1.id, U.t1.id, day(daysAhead), extra.time || `${pad(1 + (mkN++ % 20))}:30`, pay, extra.rzp || null, extra.method || null]))[0].id;
+  const mkA = async (pay, daysAhead, extra = {}) => (await q(`INSERT INTO appointments(patient_id, patient_name, therapist_id, therapist_name, service_type_id, service_amount, total_amount, date, time, status, payment_status, razorpay_payment_id, payment_method, created_at)
+    VALUES ($1,'Patient One',$2,'Dr One',1,1500,1500,$3,$4,CASE WHEN $5 = 'Paid' THEN 'confirmed' ELSE 'pending_payment' END,$5,$6,$7, now() - interval '1 day') RETURNING id`, [U.p1.id, U.t1.id, day(daysAhead), extra.time || `${pad(1 + (mkN++ % 20))}:30`, pay, extra.rzp || null, extra.method || null]))[0].id;
   const unpaid = await mkA("Pending", 0, { time: "23:00" });
   r = await call("POST", "/api/appointments/" + unpaid + "/cancel", T.p2); check("P10 another patient cannot cancel -> " + r.s, r.s === 403);
   const tNotifBefore = (await q("SELECT COUNT(*)::int AS n FROM notifications WHERE user_uid = $1 AND title = 'Appointment cancelled'", [String(U.t1.id)]))[0].n;
@@ -457,18 +457,18 @@ async function seed() {
   check("P10 patient cancels a PAID booking more than 12h away -> Cancelled + full refund through Razorpay (PATCH, as the website calls it)", r.s === 200 && rzpRefunds.length === rfBefore + 1 && rzpRefunds[rfBefore].pid === "pay_cancel1" && rzpRefunds[rfBefore].amount === 150000 && r.j.refund && r.j.refund.status === "pending" && (await q("SELECT status FROM appointments WHERE id = $1", [paidFar]))[0].status === "cancelled_by_patient" && (await q("SELECT 1 FROM order_refunds WHERE appointment_id = $1 AND status = 'pending'", [paidFar])).length === 1, "got " + r.s + " " + (r.raw || "").slice(0, 200));
   const paidNear = await mkA("Paid", 0, { rzp: "pay_cancel2", method: "razorpay", time: pad(Math.min(23, (new Date(Date.now() + 5.5 * 3600e3)).getUTCHours() + 1)) + ":00" });
   r = await call("POST", "/api/appointments/" + paidNear + "/cancel", T.p1);
-  check("P10 a PAID booking inside the 12h window -> 400 'Please contact support', nothing changes", r.s === 400 && /contact support/i.test(r.j.message) && (await q("SELECT status FROM appointments WHERE id = $1", [paidNear]))[0].status === "confirmed" && rzpRefunds.length === rfBefore + 1, "got " + r.s + " " + JSON.stringify(r.j));
+  check("P10/P14 a PAID booking less than 2h away can be cancelled, but the whole price is kept (no refund)", r.s === 200 && (await q("SELECT status, cancellation_charge, refund_amount FROM appointments WHERE id = $1", [paidNear]))[0].status === "cancelled_by_patient" && Number((await q("SELECT cancellation_charge FROM appointments WHERE id = $1", [paidNear]))[0].cancellation_charge) === 1500 && rzpRefunds.length === rfBefore + 1, "got " + r.s + " " + JSON.stringify(r.j));
   const paidManual = await mkA("Paid", 3, { method: "manual_cash" });
   r = await call("POST", "/api/appointments/" + paidManual + "/cancel", T.p1);
   check("P10 a booking paid in cash (no online payment to refund) -> 400 contact support", r.s === 400 && (await q("SELECT status FROM appointments WHERE id = $1", [paidManual]))[0].status === "confirmed");
   const paidByTherapist = await mkA("Paid", 0, { rzp: "pay_cancel3", method: "razorpay", time: "23:30" });
-  r = await call("POST", "/api/appointments/" + paidByTherapist + "/cancel", T.t1);
+  r = await call("POST", "/api/appointments/" + paidByTherapist + "/cancel", T.t1, { reason: "Family emergency" });
   check("P10 therapist cancels their own paid booking -> full refund; patient notified", r.s === 200 && rzpRefunds.some((x) => x.pid === "pay_cancel3") && (await q("SELECT COUNT(*)::int AS n FROM notifications WHERE user_uid = $1 AND title = 'Appointment cancelled'", [String(U.p1.id)]))[0].n >= 1, "got " + r.s + " " + (r.raw || "").slice(0, 150));
 
   // ---- P12: visit flow, state machine, start OTP
   const istParts = (minFromNow) => { const d = new Date(Date.now() + 5.5 * 3600e3 + minFromNow * 60000); return { date: `${d.getUTCFullYear()}-${pad(d.getUTCMonth() + 1)}-${pad(d.getUTCDate())}`, time: `${pad(d.getUTCHours())}:${pad(d.getUTCMinutes())}` }; };
-  const mkVisit = async (minFromNow, status, extra = {}) => { const w = istParts(minFromNow); return (await q(`INSERT INTO appointments(patient_id, patient_name, therapist_id, therapist_name, service_type_id, service_amount, total_amount, date, time, status, payment_status, payment_method, start_otp_hash)
-    VALUES ($1,'Patient One',$2,'Dr One',1,1500,1500,$3,$4,$5,'Paid','razorpay',$6) RETURNING id`, [U.p1.id, U.t1.id, w.date, w.time, status, extra.hash || null]))[0].id; };
+  const mkVisit = async (minFromNow, status, extra = {}) => { const w = istParts(minFromNow); return (await q(`INSERT INTO appointments(patient_id, patient_name, therapist_id, therapist_name, service_type_id, service_amount, total_amount, date, time, status, payment_status, payment_method, start_otp_hash, razorpay_payment_id, created_at)
+    VALUES ($1,'Patient One',$2,'Dr One',1,1500,1500,$3,$4,$5,'Paid','razorpay',$6,$7, now() - interval '1 day') RETURNING id`, [U.p1.id, U.t1.id, w.date, w.time, status, extra.hash || null, extra.pid || null]))[0].id; };
   const st = async (id) => (await q("SELECT * FROM appointments WHERE id = $1", [id]))[0];
   const otpSvc = require("../../src/services/otpService");
 
@@ -542,7 +542,7 @@ async function seed() {
   r = await call("PUT", "/api/appointments/status/" + cx, T.t1, { status: "no_show" });
   check("P12 the therapist can mark a no-show", r.s === 200 && (await st(cx)).status === "no_show", "got " + r.s);
   r = await call("PUT", "/api/appointments/status/" + cx, T.su, { status: "cancelled_by_admin" });
-  check("P12 a finished booking cannot be cancelled again (409)", r.s === 409, "got " + r.s);
+  check("P12/P14 the status endpoint refuses cancellations (they must use the cancel option so refunds apply) -> 400", r.s === 400, "got " + r.s);
   r = await call("GET", "/api/config/public");
   check("P12 /api/config/public gives the 60-minute timer and the 45-minute travel window", r.s === 200 && r.j.data.session.timerMinutes === 60 && r.j.data.visit.travelFromMinutesBefore === 45 && r.j.data.otp.length === 4, "got " + r.s + " " + (r.raw || "").slice(0, 100));
 
@@ -632,6 +632,72 @@ async function seed() {
   r = await call("POST", "/api/appointments/accept/" + reqRow.id, T.t2, {});
   check("P13 a therapist who already has that slot cannot accept the request (409)", r.s === 409 && (await q("SELECT status FROM appointments WHERE id = $1", [reqRow.id]))[0].status === "searching_therapist", "got " + r.s + " " + (r.raw || "").slice(0, 120));
   await q("DELETE FROM therapist_leaves WHERE therapist_id = $1", [U.tp1]);
+
+  // ---- P14: cancellation policy engine
+  const cancelBody = (b) => b || {};
+  const rf0 = rzpRefunds.length;
+  const far14 = await mkVisit(60 * 20, "confirmed", { pid: "pay_p14_far" });          // 20 hours ahead
+  r = await call("GET", "/api/appointments/" + far14 + "/cancel-quote", T.p1);
+  check("P14 quote 20 h ahead: free, full refund shown to the patient", r.s === 200 && r.j.data.band === "free" && r.j.data.chargeInr === 0 && r.j.data.refundInr === 1500, "got " + r.s + " " + (r.raw || "").slice(0, 150));
+  r = await call("GET", "/api/appointments/" + far14 + "/cancel-quote", T.p2);
+  check("P14 another patient cannot ask for the quote -> 403", r.s === 403);
+  r = await call("GET", "/api/appointments/" + far14 + "/cancel-quote", T.t1);
+  check("P14 the therapist's quote is a full refund (therapist cancels)", r.s === 200 && r.j.data.band === "therapist" && r.j.data.refundInr === 1500);
+
+  const mid14 = await mkVisit(60 * 6, "confirmed", { pid: "pay_p14_mid" });             // 6 hours ahead -> 50 %
+  r = await call("GET", "/api/appointments/" + mid14 + "/cancel-quote", T.p1);
+  check("P14 quote 6 h ahead: 50% charge (750) and 750 back", r.s === 200 && r.j.data.band === "partial" && r.j.data.chargeInr === 750 && r.j.data.refundInr === 750, "got " + (r.raw || "").slice(0, 160));
+  r = await call("POST", "/api/appointments/" + mid14 + "/cancel", T.p1, { acceptedChargeInr: 0 });
+  check("P14 if the charge the patient agreed to is not the real one -> 409 with the real quote, nothing cancelled", r.s === 409 && r.j.quote.chargeInr === 750 && (await st(mid14)).status === "confirmed", "got " + r.s);
+  r = await call("POST", "/api/appointments/" + mid14 + "/cancel", T.p1, { acceptedChargeInr: 750 });
+  const mrow14 = await st(mid14);
+  check("P14 patient cancels 6 h ahead: 750 refunded through Razorpay, charge 750 stored, therapist share stored", r.s === 200 && rzpRefunds.length === rf0 + 1 && rzpRefunds[rf0].pid === "pay_p14_mid" && rzpRefunds[rf0].amount === 75000 && mrow14.status === "cancelled_by_patient" && Number(mrow14.cancellation_charge) === 750 && Number(mrow14.refund_amount) === 750 && Number(mrow14.cancellation_therapist_share) === 750 && mrow14.cancelled_at && mrow14.cancelled_by === U.p1.id, "got " + r.s + " " + (r.raw || "").slice(0, 160) + " " + JSON.stringify(mrow14));
+  check("P14 the cancelled slot is free again", (await call("GET", "/api/therapists/" + U.t1.id + "/slots?date=" + istParts(60 * 6).date, undefined)).s === 200);
+
+  const late14 = await mkVisit(75, "confirmed", { pid: "pay_p14_late" });            // 1 hour ahead -> 100 %
+  r = await call("POST", "/api/appointments/" + late14 + "/cancel", T.p1, { acceptedChargeInr: 1500 });
+  check("P14 patient cancels 1 h ahead: whole price kept, no Razorpay refund, booking cancelled", r.s === 200 && Number((await st(late14)).cancellation_charge) === 1500 && Number((await st(late14)).refund_amount) === 0 && rzpRefunds.length === rf0 + 1 && (await st(late14)).status === "cancelled_by_patient", "got " + r.s + " " + (r.raw || "").slice(0, 160));
+
+  const grace14 = await mkVisit(95, "confirmed", { pid: "pay_p14_grace" });
+  await q("UPDATE appointments SET created_at = now() - interval '4 minutes' WHERE id = $1", [grace14]);
+  r = await call("GET", "/api/appointments/" + grace14 + "/cancel-quote", T.p1);
+  check("P14 within 10 minutes of booking, cancelling is free even 1 h before the slot", r.s === 200 && r.j.data.band === "grace" && r.j.data.refundInr === 1500, (r.raw || "").slice(0, 150));
+
+  // therapist late: more than 30 min after the slot start and not arrived
+  const lateT = await mkVisit(-40, "confirmed", { pid: "pay_p14_tlate" });
+  r = await call("GET", "/api/appointments/" + lateT + "/cancel-quote", T.p1);
+  check("P14 therapist more than 30 min late (not arrived) -> the patient cancels free", r.s === 200 && r.j.data.band === "therapist_late" && r.j.data.refundInr === 1500, (r.raw || "").slice(0, 150));
+  const lateArrived = await mkVisit(-47, "arrived", { pid: "pay_p14_arr" });
+  r = await call("GET", "/api/appointments/" + lateArrived + "/cancel-quote", T.p1);
+  check("P14 ...but not once the therapist has arrived", r.s === 200 && r.j.data.band === "late", (r.raw || "").slice(0, 150));
+
+  // therapist and admin cancellations
+  const thr = await mkVisit(60 * 3, "confirmed", { pid: "pay_p14_thr" });
+  r = await call("POST", "/api/appointments/" + thr + "/cancel", T.t1, {});
+  check("P14 a therapist must give a reason (400)", r.s === 400 && (await st(thr)).status === "confirmed");
+  const adminAlertsBefore = (await q("SELECT COUNT(*)::int AS n FROM notifications WHERE title = 'Therapist cancelled a booking'"))[0].n;
+  r = await call("POST", "/api/appointments/" + thr + "/cancel", T.t1, { reason: "Car broke down" });
+  check("P14 therapist cancels: patient gets 100% back, reliability event, therapy admins told", r.s === 200 && rzpRefunds.some((x) => x.pid === "pay_p14_thr" && x.amount === 150000) && (await q("SELECT 1 FROM therapist_reliability_events WHERE appointment_id = $1 AND type = 'cancelled_by_therapist'", [thr])).length === 1 && (await st(thr)).status === "cancelled_by_therapist" && (await st(thr)).cancel_reason === "Car broke down" && (await q("SELECT COUNT(*)::int AS n FROM notifications WHERE title = 'Therapist cancelled a booking'"))[0].n > adminAlertsBefore, "got " + r.s + " " + (r.raw || "").slice(0, 160));
+  const adm = await mkVisit(60 * 3 + 5, "confirmed", { pid: "pay_p14_adm" });
+  r = await call("POST", "/api/appointments/" + adm + "/cancel", T.therapy, { reason: "Duplicate booking" });
+  check("P14 a therapy admin cancels: full refund, status cancelled_by_admin, reason + admin id stored", r.s === 200 && rzpRefunds.some((x) => x.pid === "pay_p14_adm" && x.amount === 150000) && (await st(adm)).status === "cancelled_by_admin" && (await st(adm)).cancelled_by === U.therapy.id, "got " + r.s + " " + (r.raw || "").slice(0, 160));
+  const ecomTry = await mkVisit(60 * 3 + 10, "confirmed", { pid: "pay_p14_ec" });
+  r = await call("POST", "/api/appointments/" + ecomTry + "/cancel", T.ecom, { reason: "x y z" });
+  check("P14 the e-commerce admin cannot cancel therapy bookings -> 403", r.s === 403 && (await st(ecomTry)).status === "confirmed", "got " + r.s);
+  r = await call("PUT", "/api/appointments/status/" + ecomTry, T.t1, { status: "cancelled_by_therapist" });
+  check("P14 no cancelling through the plain status endpoint (it would skip the refund) -> 400", r.s === 400 && (await st(ecomTry)).status === "confirmed");
+
+  // no-show is charged like a very late cancellation
+  const ns = await mkVisit(-5, "confirmed", { pid: "pay_p14_ns" });
+  r = await call("PUT", "/api/appointments/status/" + ns, T.t1, { status: "no_show" });
+  check("P14 a no-show keeps the whole price (100%) and records the charge", r.s === 200 && r.j.settlement && r.j.settlement.band === "no_show" && Number((await st(ns)).cancellation_charge) === 1500 && !rzpRefunds.some((x) => x.pid === "pay_p14_ns"), "got " + r.s + " " + (r.raw || "").slice(0, 160));
+
+  // unpaid booking: nothing to charge or refund
+  const unpaid14 = await mkA("Pending", 2, {});
+  r = await call("GET", "/api/appointments/" + unpaid14 + "/cancel-quote", T.p1);
+  check("P14 an unpaid booking costs nothing to cancel", r.s === 200 && r.j.data.chargeInr === 0 && r.j.data.refundInr === 0 && r.j.data.paid === false, (r.raw || "").slice(0, 150));
+  r = await call("GET", "/api/config/public");
+  check("P14 the public config carries the policy numbers the website page prints", r.s === 200 && r.j.data.cancellation.freeHoursBefore === 12 && r.j.data.cancellation.partialHoursBefore === 2 && r.j.data.cancellation.partialChargePct === 50 && r.j.data.cancellation.lateChargePct === 100 && r.j.data.cancellation.graceMinutesAfterBooking === 10, (r.raw || "").slice(0, 200));
 
   // invoices
   r = await call("GET", "/api/invoices/list", T.su);

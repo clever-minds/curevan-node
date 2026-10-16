@@ -5,6 +5,7 @@ const rules = require("../../config/businessRules");
 const stateMachine = require("../../services/appointmentStateMachine");
 const otpService = require("../../services/otpService");
 const slotService = require("../../services/slotService");
+const cancellationService = require("../../services/cancellationService");
 const { STATUS } = stateMachine;
 const refundService = require("../../services/refundService");
 const notificationStore = require("../../services/notificationStore");
@@ -1317,78 +1318,129 @@ exports.rejectBookingRequest = async (req, res) => {
   }
 };
 
-// ✅ Cancel Appointment
-/* Basic cancellation (the full policy engine is P14).
-   Patient: an unpaid booking at any time, or a PAID booking more than `cancellation.freeHoursBefore` hours away
-            (full refund through Razorpay). Anything else -> 400 "Please contact support".
-   Therapist: may cancel their own booking; a paid one is refunded in full.
-   The other side is told (bell + push). */
+// ✅ Cancellation (policy engine, P14)
+/* Who is cancelling decides the money (see services/cancellationService.js and businessRules.cancellation):
+     patient    free >= 12 h before, 50% charge 12 h-2 h, 100% under 2 h, free in the first 10 minutes after booking,
+                free when the therapist is more than 30 minutes late
+     therapist  patient gets everything back and a reliability event is recorded (a reason is required)
+     admin      patient gets everything back (a reason is required)
+   The refund goes back through Razorpay first; if Razorpay refuses, nothing is cancelled. */
+const CANCEL_COLUMNS = `id, status, therapist_id, patient_id, patient_name, therapist_name, date, time, start_time, created_at,
+              service_amount, total_amount, payment_status, razorpay_payment_id, payment_method`;
+
+function cancelRole(user, appt) {
+  if (access.isClinicalAdmin(user)) return "admin";
+  if (appt.therapist_id && access.same(appt.therapist_id, user.id)) return "therapist";
+  if (access.same(appt.patient_id, user.id)) return "patient";
+  return null;
+}
+
+// GET /api/appointments/:id/cancel-quote  - what it would cost to cancel right now
+exports.getCancelQuote = async (req, res) => {
+  try {
+    const [appt] = await sequelize.query(`SELECT ${CANCEL_COLUMNS} FROM appointments WHERE id = :id`, { replacements: { id: req.params.id }, type: QueryTypes.SELECT });
+    if (!appt) return res.status(404).json({ success: false, error: "Appointment not found" });
+    const role = cancelRole(req.user, appt);
+    if (!role) return res.status(403).json({ success: false, error: "Forbidden" });
+    if (stateMachine.TERMINAL.includes(appt.status) || appt.status === STATUS.PCR_PENDING) {
+      return res.status(409).json({ success: false, error: "This booking can no longer be cancelled" });
+    }
+    const q = cancellationService.quote(appt, role);
+    return res.json({ success: true, data: { ...q, role, bookingId: appt.id, policy: rules.cancellation } });
+  } catch (error) {
+    console.error("Error quoting cancellation:", error.message);
+    return res.status(500).json({ success: false, error: "Could not work out the cancellation charge" });
+  }
+};
+
 exports.cancelAppointment = async (req, res) => {
   const { id } = req.params;
   const userId = req.user.id;
+  const reason = String((req.body || {}).reason || "").trim().slice(0, 500);
   const contactSupport = () => res.status(400).json({ success: false, error: "Please contact support", message: "Please contact support" });
 
   try {
-    const [appt] = await sequelize.query(
-      `SELECT id, status, therapist_id, patient_id, patient_name, therapist_name, date, time, start_time,
-              payment_status, razorpay_payment_id, payment_method
-       FROM appointments WHERE id = :id`,
-      { replacements: { id }, type: QueryTypes.SELECT }
-    );
-
+    const [appt] = await sequelize.query(`SELECT ${CANCEL_COLUMNS} FROM appointments WHERE id = :id`, { replacements: { id }, type: QueryTypes.SELECT });
     if (!appt) {
       return res.status(404).json({ success: false, error: "Appointment not found", message: "Appointment not found" });
     }
 
-    const isPatient = access.same(appt.patient_id, userId);
-    const isTherapist = access.same(appt.therapist_id, userId);
-    if (!isPatient && !isTherapist) {
+    const role = cancelRole(req.user, appt);
+    if (!role) {
       return res.status(403).json({ success: false, error: "Unauthorized to cancel this appointment", message: "Forbidden" });
     }
-
     if (stateMachine.TERMINAL.includes(appt.status) || appt.status === STATUS.PCR_PENDING) {
       return res.status(400).json({ success: false, error: "Appointment cannot be cancelled at this stage", message: "Appointment cannot be cancelled at this stage" });
     }
-
-    const paid = appt.payment_status === "Paid";
-
-    if (isPatient && !isTherapist && paid) {
-      const start = access.slotStart(appt);
-      const hoursAway = start ? (start.getTime() - Date.now()) / 3600000 : -1;
-      if (hoursAway <= rules.cancellation.freeHoursBefore) return contactSupport();
+    if (role !== "patient" && reason.length < 3) {
+      return res.status(400).json({ success: false, error: "Please give a reason for the cancellation", message: "Please give a reason for the cancellation" });
     }
 
-    // paid -> refund in full first; if Razorpay refuses (or there is no online payment) nothing is cancelled
+    const q = cancellationService.quote(appt, role);
+
+    // the patient confirmed a specific charge: if the clock moved it, show the new number instead of charging a different one
+    const accepted = (req.body || {}).acceptedChargeInr;
+    if (role === "patient" && accepted !== undefined && accepted !== null && Number(accepted) !== q.chargeInr) {
+      return res.status(409).json({ success: false, error: "The cancellation charge has changed. Please check the new amount.", message: "The cancellation charge has changed", quote: q });
+    }
+
+    // refund first; if Razorpay refuses (or there is no online payment to refund) nothing is cancelled
     let refund = null;
-    if (paid) {
+    if (q.refundInr > 0) {
       try {
-        refund = await refundService.refund({ appointmentId: appt.id, reason: isPatient ? "Cancelled by patient" : "Cancelled by therapist", actorId: userId });
+        refund = await refundService.refund({
+          appointmentId: appt.id,
+          amountInr: q.refundInr,
+          reason: role === "patient" ? `Cancelled by patient (${q.band})` : `Cancelled by ${role}${reason ? ": " + reason : ""}`,
+          actorId: userId,
+        });
       } catch (err) {
         if (err instanceof refundService.RefundError) return contactSupport();
         throw err;
       }
     }
 
-    await stateMachine.transition(id, isPatient ? STATUS.CANCELLED_PATIENT : STATUS.CANCELLED_THERAPIST, req.user, {
-      note: isPatient ? "Cancelled by patient" : "Cancelled by therapist",
-      extra: { cancellation_reason: isPatient ? "Cancelled by patient" : "Cancelled by therapist" },
-    });
+    const target = { patient: STATUS.CANCELLED_PATIENT, therapist: STATUS.CANCELLED_THERAPIST, admin: STATUS.CANCELLED_ADMIN }[role];
+    const t = await sequelize.transaction();
+    try {
+      await stateMachine.transition(id, target, req.user, { transaction: t, note: reason || `Cancelled by ${role} (${q.band})` });
+      await cancellationService.recordOutcome(appt, q, { actorId: userId, reason: reason || null, transaction: t });
+      if (role === "therapist") await cancellationService.reliabilityEvent(appt.therapist_id, appt.id, "cancelled_by_therapist", t);
+      await t.commit();
+    } catch (err) {
+      await t.rollback();
+      throw err;
+    }
 
-    // tell the other person
-    const otherId = isPatient ? appt.therapist_id : appt.patient_id;
-    if (otherId) {
-      await notificationStore.notify(otherId, {
+    // tell the other side (and the therapy team when a therapist drops out)
+    const who = { patient: appt.patient_name || "The patient", therapist: appt.therapist_name || "The therapist", admin: "Curevan support" }[role];
+    const dateText = appt.date instanceof Date ? appt.date.toISOString().slice(0, 10) : appt.date;
+    const recipients = [];
+    if (role !== "patient" && appt.patient_id) recipients.push(appt.patient_id);
+    if (role !== "therapist" && appt.therapist_id) recipients.push(appt.therapist_id);
+    for (const rid of recipients) {
+      await notificationStore.notify(rid, {
         type: "booking",
         title: "Appointment cancelled",
-        message: `${isPatient ? (appt.patient_name || "The patient") : (appt.therapist_name || "The therapist")} cancelled the appointment on ${appt.date instanceof Date ? appt.date.toISOString().slice(0, 10) : appt.date}.`,
+        message: `${who} cancelled the appointment on ${dateText}.${rid === appt.patient_id && q.refundInr > 0 ? ` A refund of INR ${q.refundInr} is on its way.` : ""}`,
         link: "/dashboard/bookings",
         data: { appointmentId: appt.id },
       });
+    }
+    if (role === "therapist") {
+      await notificationStore.notifyRoles(["admin.therapy"], {
+        type: "therapist_cancelled",
+        title: "Therapist cancelled a booking",
+        message: `${appt.therapist_name || "A therapist"} cancelled booking #${appt.id}: ${reason}`,
+        link: "/dashboard/admin/appointments",
+        data: { appointmentId: appt.id },
+      }).catch((e) => console.error("admin alert failed:", e.message));
     }
 
     return res.json({
       success: true,
       message: "Appointment Cancelled",
+      quote: q,
       refund: refund ? { refundId: refund.refundId, status: refund.status, amount: refund.amount } : undefined,
     });
   } catch (error) {
@@ -1399,6 +1451,25 @@ exports.cancelAppointment = async (req, res) => {
 };
 
 // ✅ 4. UPDATE APPOINTMENT STATUS (Tracking Flow)
+/* A no-show is charged like a very late cancellation (businessRules.cancellation.lateChargePct);
+   whatever is not charged goes back to the patient. A paid booking with a failed refund is left for support. */
+async function settleNoShow(id, user) {
+  const [appt] = await sequelize.query(`SELECT ${CANCEL_COLUMNS} FROM appointments WHERE id = :id`, { replacements: { id }, type: QueryTypes.SELECT });
+  if (!appt) return undefined;
+  const q = cancellationService.quote(appt, "patient", Date.now(), { noShow: true });
+  let refund = null;
+  if (q.refundInr > 0) {
+    try {
+      refund = await refundService.refund({ appointmentId: appt.id, amountInr: q.refundInr, reason: "No-show settlement", actorId: user.id });
+    } catch (err) {
+      if (!(err instanceof refundService.RefundError)) throw err;
+      console.error("no-show refund failed:", err.message);
+    }
+  }
+  await cancellationService.recordOutcome(appt, q, { actorId: user.id, reason: "No-show" });
+  return { band: q.band, chargeInr: q.chargeInr, refundInr: q.refundInr, refundStarted: !!refund };
+}
+
 exports.updateAppointmentStatus = async (req, res) => {
   const { id } = req.params;
   const { status } = req.body || {};
@@ -1413,9 +1484,14 @@ exports.updateAppointmentStatus = async (req, res) => {
     if (!access.canAccessAppointment(req.user, appt)) {
       return res.status(403).json({ success: false, error: "Forbidden" });
     }
+    if (String(stateMachine.normalize(status)).startsWith("cancelled")) {
+      return res.status(400).json({ success: false, error: "Use the cancel option so the refund rules are applied" });
+    }
     // the state machine decides who may do what; arrived -> in_progress is only possible through the OTP check
     const result = await stateMachine.transition(id, status, req.user);
-    return res.json({ success: true, message: `Status updated to ${result.to}`, status: result.to });
+    let settlement;
+    if (result.to === STATUS.NO_SHOW) settlement = await settleNoShow(id, req.user);
+    return res.json({ success: true, message: `Status updated to ${result.to}`, status: result.to, settlement });
   } catch (error) {
     if (error instanceof stateMachine.TransitionError) {
       return res.status(error.httpStatus).json({ success: false, error: error.message });

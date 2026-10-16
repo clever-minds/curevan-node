@@ -41,6 +41,9 @@ router.post("/:id/verify-start-otp", authMiddleware, requireRole("therapist"), r
 // admin only: records an OFFLINE payment (online payments use /api/payments/verify-booking)
 router.post("/:id/pay", authMiddleware, requireRole("admin.therapy", "admin.ecom"), responseHandler, appointmentsController.confirmPayment);
 
+// ✅ what would cancelling cost right now?
+router.get("/:id/cancel-quote", authMiddleware, responseHandler, appointmentsController.getCancelQuote);
+
 // ✅ PATCH cancel appointment
 router.patch("/:id/cancel", authMiddleware, responseHandler, appointmentsController.cancelAppointment);
 router.post("/:id/cancel", authMiddleware, responseHandler, appointmentsController.cancelAppointment);

@@ -26,6 +26,7 @@ module.exports = Object.freeze({
     partialChargePct: 50,
     lateChargePct: 100,
     graceMinutesAfterBooking: 10,
+    therapistLateMinutes: 30,                                   // therapist not 'arrived' this long after the slot start -> patient cancels free
   }),
   payout: Object.freeze({                                       // D4 D5 D7
     standardFeePct: 0,
