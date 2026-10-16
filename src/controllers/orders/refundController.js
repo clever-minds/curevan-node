@@ -7,7 +7,10 @@ const refundService = require('../../services/refundService');
 ========================= */
 exports.initiateRefund = async (req, res) => {
   try {
-    const { orderId, returnId, amount, reason } = req.body || {};
+    const body = req.body || {};
+    const orderId = body.orderId ?? body.order_id;
+    const returnId = body.returnId ?? body.return_id;
+    const { amount, reason } = body; // amount is in rupees
     if (!orderId) {
       return res.status(400).json({ success: false, message: 'orderId is required' });
     }
