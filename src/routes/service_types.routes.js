@@ -3,6 +3,7 @@ const router = express.Router();
 
 const serviceTypesController = require("../controllers/serviceTypes/serviceTypesController");
 const authMiddleware = require("../middlewares/authMiddleware");
+const { requireRole } = require("../middlewares/requireRole");
 const responseHandler = require("../middlewares/responseHandler");
 const upload = require("../middlewares/upload.middleware");
 
@@ -10,8 +11,8 @@ const upload = require("../middlewares/upload.middleware");
 router.get("/list", responseHandler, serviceTypesController.listServiceTypes);
 
 // Admin protected routes
-router.post("/add", authMiddleware, upload.single("icon"), responseHandler, serviceTypesController.addServiceType);
-router.put("/update/:id", authMiddleware, upload.single("icon"), responseHandler, serviceTypesController.updateServiceType);
-router.delete("/delete/:id", authMiddleware, responseHandler, serviceTypesController.deleteServiceType);
+router.post("/add", authMiddleware, requireRole("admin.therapy"), upload.single("icon"), responseHandler, serviceTypesController.addServiceType);
+router.put("/update/:id", authMiddleware, requireRole("admin.therapy"), upload.single("icon"), responseHandler, serviceTypesController.updateServiceType);
+router.delete("/delete/:id", authMiddleware, requireRole("admin.therapy"), responseHandler, serviceTypesController.deleteServiceType);
 
 module.exports = router;

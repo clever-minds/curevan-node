@@ -3,10 +3,11 @@ const router = express.Router();
 
 const appointmentsController = require("../controllers/appointments/appointmentsController");
 const authMiddleware = require("../middlewares/authMiddleware");
+const { requireRole } = require("../middlewares/requireRole");
 const responseHandler = require("../middlewares/responseHandler");
 
 // ✅ GET all appointments
-router.get("/", authMiddleware, responseHandler,appointmentsController.listAppointments);
+router.get("/", authMiddleware, requireRole("admin.ecom", "admin.therapy"), responseHandler,appointmentsController.listAppointments);
 
 // ✅ GET appointments for user
 router.get("/user/:userId/:role", authMiddleware,responseHandler, appointmentsController.listAppointmentsForUser);
@@ -18,13 +19,13 @@ router.get("/:id", authMiddleware,responseHandler, appointmentsController.getApp
 router.post("/request", authMiddleware, responseHandler, appointmentsController.createBookingRequest);
 
 // ✅ GET available requests for therapists
-router.get("/requests/available", authMiddleware, responseHandler, appointmentsController.getAvailableRequests);
+router.get("/requests/available", authMiddleware, requireRole("therapist"), responseHandler, appointmentsController.getAvailableRequests);
 
 // ✅ POST accept booking request
-router.post("/accept/:id", authMiddleware, responseHandler, appointmentsController.acceptBookingRequest);
+router.post("/accept/:id", authMiddleware, requireRole("therapist"), responseHandler, appointmentsController.acceptBookingRequest);
 
 // ✅ POST reject booking request
-router.post("/reject/:id", authMiddleware, responseHandler, appointmentsController.rejectBookingRequest);
+router.post("/reject/:id", authMiddleware, requireRole("therapist"), responseHandler, appointmentsController.rejectBookingRequest);
 
 // ✅ PUT update appointment status
 router.put("/status/:id", authMiddleware, responseHandler, appointmentsController.updateAppointmentStatus);
