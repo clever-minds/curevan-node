@@ -1,6 +1,7 @@
 const { QueryTypes } = require("sequelize");
 const access = require("../../utils/access");
 const razorpay = require("../../services/razorpayService");
+const rules = require("../../config/businessRules");
 const { sequelize } = require("../../config/db");
 const transporter = require("../../config/mailer");
 const firebaseNotifier = require("../../utils/firebaseNotifier");
@@ -257,7 +258,7 @@ exports.createBookingAndInvoice = async (req, res) => {
         ) VALUES (
           :patientId, :patientName, :dateofbirth, :therapistId, :therapistName, :serviceTypeId, :therapyType,
           :amount, :amount, :date, :time, :mode, :notes, :serviceAddress,
-          'Pending', 'Pending', 'Pending', 'not_started', :reports, 'therapist_rate', NOW()
+          :initialStatus, 'Pending', 'Pending', 'not_started', :reports, 'therapist_rate', NOW()
         ) RETURNING id`,
         {
           replacements: {
@@ -269,6 +270,7 @@ exports.createBookingAndInvoice = async (req, res) => {
             serviceTypeId: bookingData.serviceTypeId || null,
             therapyType: bookingData.therapyType || null,
             amount,
+            initialStatus: rules.booking.directBookingNeedsApproval ? 'Pending Approval' : 'Pending',
             date: bookingData.date || null,
             time: bookingData.time || null,
             mode: bookingData.mode || null,
@@ -282,6 +284,12 @@ exports.createBookingAndInvoice = async (req, res) => {
       );
       appointmentId = rows[0]?.id;
       if (!appointmentId) throw new Error("Failed to get appointmentId");
+    }
+
+    // Therapist approval comes first: nothing to pay yet. The patient pays after the therapist accepts.
+    if (!payForId && rules.booking.directBookingNeedsApproval) {
+      await t.commit();
+      return res.json({ success: true, appointmentId, requiresApproval: true });
     }
 
     const amountPaise = Math.round(amount * 100);
@@ -1134,6 +1142,12 @@ exports.acceptBookingRequest = async (req, res) => {
       return res.status(404).json({ success: false, error: "Appointment not found" });
     }
 
+    // a booking addressed to a specific therapist can only be accepted by that therapist
+    if (appt.therapist_id && !access.same(appt.therapist_id, therapistId)) {
+      await t.rollback();
+      return res.status(403).json({ success: false, error: "This booking is assigned to another therapist" });
+    }
+
     const isAvailable =
       appt.status === 'Searching' ||
       appt.status === 'Searching Therapist' ||
@@ -1176,7 +1190,7 @@ exports.acceptBookingRequest = async (req, res) => {
            service_amount = :amount,
            total_amount = :amount,
            price_source = :priceSource,
-           status = 'Accepted'
+           status = 'Payment Pending'
        WHERE id = :id`,
       {
         replacements: { id, therapistId, therapistName: therapist.name, therapistPhone: therapist.phone || null, amount, priceSource },

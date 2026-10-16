@@ -15,6 +15,7 @@ module.exports = Object.freeze({
     phone: '',
     email: 'accounts@curevan.com',
   }),
+  booking: Object.freeze({ directBookingNeedsApproval: process.env.DIRECT_BOOKING_NEEDS_APPROVAL !== 'false' }),   // true = therapist approves a direct booking first, patient pays after (current product flow); false = pay immediately
   warehouseState: 'Gujarat',                                    // GST: CGST+SGST inside this state, IGST outside
   session: Object.freeze({ slotMinutes: 60, timerMinutes: 60, minLeadHours: 4, maxAdvanceDays: 30 }),   // D10
   otp: Object.freeze({ length: 4, validFromHoursBefore: 2, maxAttempts: 5 }),                            // D8
