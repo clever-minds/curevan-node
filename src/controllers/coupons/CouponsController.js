@@ -649,3 +649,94 @@ console.log("Apply coupon request body:", req.body, "User ID:", user_id);
     });
   }
 };
+
+
+/* =====================================================
+   calculateCouponDiscount  (server-side, reusable)
+   Same rules as applyCoupon, but computed from the real cart lines.
+   lines: [{ productId, categoryId, amount, hasOffer }]  amount = offer-discounted value BEFORE tax
+   Returns { ok:true, coupon, discount, allocations:[amount per line] }
+        or { ok:false, status, message }
+===================================================== */
+const round2 = (n) => Math.round((Number(n) + Number.EPSILON) * 100) / 100;
+
+exports.calculateCouponDiscount = async ({ code, userId, lines, transaction }) => {
+  const fail = (message, status = 400) => ({ ok: false, status, message });
+  const q = (sql, replacements) =>
+    sequelize.query(sql, { replacements, type: QueryTypes.SELECT, transaction });
+
+  const normalizedCode = String(code || "").trim().toUpperCase();
+  if (!normalizedCode) return fail("Coupon code required");
+
+  const [coupon] = await q(
+    `SELECT * FROM coupons
+     WHERE UPPER(code) = :code AND status = 'Active'
+       AND (valid_from IS NULL OR valid_from <= NOW())
+       AND (valid_to IS NULL OR valid_to >= NOW())
+     LIMIT 1`,
+    { code: normalizedCode }
+  );
+  if (!coupon) return fail("Invalid or expired coupon");
+
+  const cartAmount = lines.reduce((s, l) => s + l.amount, 0);
+  if (coupon.min_order_value && cartAmount < Number(coupon.min_order_value)) {
+    return fail(`Minimum order value is ${coupon.min_order_value}`);
+  }
+
+  if (coupon.usage_limit) {
+    const [used] = await q(`SELECT COUNT(*)::int AS total FROM coupon_usages WHERE coupon_id = :cid`, { cid: coupon.id });
+    // unpaid orders of OTHER users hold a slot until they pay or expire
+    const [held] = await q(
+      `SELECT COUNT(*)::int AS total FROM orders
+       WHERE coupon_id = :cid AND status = 'pending_payment' AND user_id <> :uid`,
+      { cid: coupon.id, uid: userId }
+    );
+    if (Number(used.total) + Number(held.total) >= Number(coupon.usage_limit)) {
+      return fail("Coupon usage limit reached");
+    }
+  }
+
+  if (coupon.usage_per_user) {
+    const [mine] = await q(
+      `SELECT COUNT(*)::int AS total FROM coupon_usages WHERE coupon_id = :cid AND user_id = :uid`,
+      { cid: coupon.id, uid: userId }
+    );
+    if (Number(mine.total) >= Number(coupon.usage_per_user)) {
+      return fail("You have already used this coupon maximum times");
+    }
+  }
+
+  const toNums = (arr) => (Array.isArray(arr) ? arr.map(Number) : []);
+  const cats = toNums(coupon.applicable_categories);
+  const prods = toNums(coupon.applicable_products);
+  const stackable = coupon.is_stackable === true;
+
+  const eligible = lines.map((l) => {
+    if (l.hasOffer && !stackable) return false; // an offer wins over a coupon unless stackable
+    if (coupon.scope === "Category") return cats.includes(Number(l.categoryId));
+    if (coupon.scope === "Product") return prods.includes(Number(l.productId));
+    return true;
+  });
+  const base = lines.reduce((s, l, i) => (eligible[i] ? s + l.amount : s), 0);
+  if (base <= 0) return fail("Coupon not applicable to the items in your cart");
+
+  let discount = coupon.type === "flat" ? Number(coupon.value) : (base * Number(coupon.value)) / 100;
+  if (coupon.type === "percent" && coupon.max_discount && discount > Number(coupon.max_discount)) {
+    discount = Number(coupon.max_discount);
+  }
+  discount = round2(Math.min(discount, base));
+
+  // spread over the eligible lines in proportion to their value; the last one takes the rounding remainder
+  const allocations = lines.map(() => 0);
+  let allocated = 0;
+  const idx = eligible.map((e, i) => (e ? i : -1)).filter((i) => i >= 0);
+  idx.forEach((i, n) => {
+    if (n === idx.length - 1) allocations[i] = round2(discount - allocated);
+    else {
+      allocations[i] = round2((discount * lines[i].amount) / base);
+      allocated += allocations[i];
+    }
+  });
+
+  return { ok: true, coupon, discount, allocations };
+};

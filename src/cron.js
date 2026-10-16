@@ -20,4 +20,16 @@ cron.schedule('* * * * *', async () => {
   }
 });
 
+// Unpaid shop orders older than 30 minutes give their reserved stock back (every 10 minutes).
+const { releaseExpiredPendingOrders } = require('./controllers/orders/orderController');
+const releaseTimer = setInterval(async () => {
+  try {
+    const n = await releaseExpiredPendingOrders();
+    if (n > 0) console.log(`Released ${n} expired unpaid order(s).`);
+  } catch (err) {
+    console.error('Cron Error releasing unpaid orders:', err.message);
+  }
+}, 10 * 60 * 1000);
+releaseTimer.unref();
+
 console.log('Cron jobs initialized.');

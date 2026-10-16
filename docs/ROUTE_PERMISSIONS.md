@@ -93,6 +93,7 @@ Ownership checks (a user may only see their own records) are added in P04; route
 | POST | `/api/orders/validate-cart-stock` | yes | any logged-in user | order.routes |
 | POST | `/api/orders/create-order` | yes | any logged-in user | order.routes |
 | POST | `/api/orders/:id/cancel` | yes | any logged-in user | order.routes |
+| POST | `/api/payments/verify` | yes | any logged-in user | payments.routes |
 | GET | `/api/therapists/list` | no | public (no login) | therapist.routes |
 | POST | `/api/therapists/register` | no | public (no login) | therapist.routes |
 | GET | `/api/therapists/profile/:userId` | yes | any logged-in user | therapist.routes |
@@ -168,4 +169,4 @@ Ownership checks (a user may only see their own records) are added in P04; route
 | PUT | `/api/offers/update/:id` | yes | admin.super, admin.ecom | offers.routes |
 | DELETE | `/api/offers/delete/:id` | yes | admin.super, admin.ecom | offers.routes |
 
-Total routes: 162
+Total routes: 163

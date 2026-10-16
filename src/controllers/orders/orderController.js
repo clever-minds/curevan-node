@@ -3,6 +3,9 @@ const { sequelize } = require("../../config/db");
 const transporter = require("../../config/mailer");
 const firebaseNotifier = require("../../utils/firebaseNotifier");
 const access = require("../../utils/access");
+const rules = require("../../config/businessRules");
+const razorpay = require("../../services/razorpayService");
+const { calculateCouponDiscount } = require("../coupons/CouponsController");
 const { checkServiceability, getPickupLocations } = require("../../services/shiprocketService");
 
 // exports.createOrderFromCart = async (req, res) => {
@@ -867,6 +870,67 @@ const { checkServiceability, getPickupLocations } = require("../../services/ship
 //-----------
 
 
+/* =====================================================
+   STOCK RESERVATION HELPERS (unpaid orders)
+===================================================== */
+async function releasePendingOrders({ userId = null, olderThanMinutes = 0, transaction = null } = {}) {
+  const t = transaction || (await sequelize.transaction());
+  try {
+    const where = ["status = 'pending_payment'", "payment_status <> 'Paid'"];
+    const replacements = {};
+    if (userId) { where.push("user_id = :userId"); replacements.userId = userId; }
+    if (olderThanMinutes) { where.push("created_at < NOW() - make_interval(mins => :mins)"); replacements.mins = olderThanMinutes; }
+
+    const pending = await sequelize.query(
+      `SELECT id FROM orders WHERE ${where.join(" AND ")} FOR UPDATE SKIP LOCKED`,
+      { replacements, type: QueryTypes.SELECT, transaction: t }
+    );
+
+    for (const { id } of pending) {
+      const reservations = await sequelize.query(
+        `SELECT inventory_id, qty FROM order_stock_reservations WHERE order_id = :id AND released_at IS NULL`,
+        { replacements: { id }, type: QueryTypes.SELECT, transaction: t }
+      );
+      for (const r of reservations) {
+        await sequelize.query(
+          `UPDATE inventory SET on_hand = on_hand + :qty, reserved = reserved - :qty, updated_at = CURRENT_TIMESTAMP WHERE id = :inventoryId`,
+          { replacements: { qty: r.qty, inventoryId: r.inventory_id }, type: QueryTypes.UPDATE, transaction: t }
+        );
+      }
+      await sequelize.query(
+        `UPDATE order_stock_reservations SET released_at = NOW() WHERE order_id = :id AND released_at IS NULL`,
+        { replacements: { id }, type: QueryTypes.UPDATE, transaction: t }
+      );
+      await sequelize.query(
+        `UPDATE orders SET status = 'payment_failed', payment_status = 'Failed' WHERE id = :id`,
+        { replacements: { id }, type: QueryTypes.UPDATE, transaction: t }
+      );
+      await sequelize.query(
+        `UPDATE payment_transactions SET status = 'failed' WHERE order_id = :id AND status = 'pending'`,
+        { replacements: { id }, type: QueryTypes.UPDATE, transaction: t }
+      );
+    }
+
+    if (!transaction) await t.commit();
+    return pending.length;
+  } catch (err) {
+    if (!transaction) await t.rollback();
+    throw err;
+  }
+}
+
+// Called from the scheduler: unpaid orders older than 30 minutes give their stock back.
+exports.releaseExpiredPendingOrders = () => releasePendingOrders({ olderThanMinutes: 30 });
+exports.releasePendingOrders = releasePendingOrders;
+
+const r2 = (n) => Math.round((Number(n) + Number.EPSILON) * 100) / 100;
+
+/* =====================================================
+   STEP A - create the order (unpaid) + Razorpay order
+   POST /api/orders/create-order
+   Amount, coupon and GST are all calculated here. Anything
+   price-related in the request body is ignored.
+===================================================== */
 exports.createOrderFromCart = async (req, res) => {
   const transaction = await sequelize.transaction();
 
@@ -877,15 +941,11 @@ exports.createOrderFromCart = async (req, res) => {
       billing_address_id,
       shipping_address_id,
       coupon_code,
-      coupon_id,
       referred_therapist_id,
-      payment_status,
-      payment_ref,
-      payment_gateway,
-      currency,
-      coupon_discount,
-      shipping_charges
     } = req.body;
+
+    // A new checkout replaces this user's earlier unpaid orders (their stock goes back).
+    await releasePendingOrders({ userId, transaction });
 
     const cartItems = await sequelize.query(
       `SELECT q.*, 
@@ -1055,9 +1115,38 @@ exports.createOrderFromCart = async (req, res) => {
       }
     }
 
-    // 2️⃣ Shipping & Tax
-    const WAREHOUSE_STATE = "Gujarat";
-    const isIntraState = shippingAddress.state === WAREHOUSE_STATE;
+    // 2️⃣ Prices after offers, coupon (server-validated), then GST on the discounted value
+    const isIntraState = shippingAddress.state === rules.warehouseState;
+
+    const lines = cartItems.map((item) => {
+      const sell = parseFloat(item.selling_price) || 0;
+      const unit = item.discountedPrice !== null && item.discountedPrice !== undefined && !isNaN(parseFloat(item.discountedPrice))
+        ? parseFloat(item.discountedPrice) : sell;
+      return {
+        item,
+        sell,
+        unit,
+        qty: item.quantity,
+        amount: r2(unit * item.quantity),       // after offer, before coupon and tax
+        hasOffer: unit < sell,
+        productId: item.product_id,
+        categoryId: item.category_id,
+      };
+    });
+
+    let couponResult = null;
+    if (coupon_code) {
+      couponResult = await calculateCouponDiscount({
+        code: coupon_code,
+        userId,
+        lines: lines.map((l) => ({ productId: l.productId, categoryId: l.categoryId, amount: l.amount, hasOffer: l.hasOffer })),
+        transaction,
+      });
+      if (!couponResult.ok) {
+        await transaction.rollback();
+        return res.status(couponResult.status || 400).json({ success: false, error: couponResult.message, message: couponResult.message });
+      }
+    }
 
     let subtotal = 0;
     let totalTax = 0;
@@ -1066,47 +1155,46 @@ exports.createOrderFromCart = async (req, res) => {
     let igst = 0;
     let taxableValue = 0;
     let totalOfferDiscount = 0;
-    let appliedOffers = [];
+    const appliedOffers = [];
 
-    cartItems.forEach(item => {
-      // Calculate offer discount for this item
-      let itemSellingPrice = parseFloat(item.selling_price) || 0;
-      let itemDiscountedPrice = parseFloat(item.discountedPrice) || itemSellingPrice;
-      if (itemDiscountedPrice < itemSellingPrice) {
-        totalOfferDiscount += ((itemSellingPrice - itemDiscountedPrice) * item.quantity);
-        if (item.offer && item.offer.name && !appliedOffers.includes(item.offer.name)) {
-          appliedOffers.push(item.offer.name);
-        }
-      }
+    lines.forEach((l, i) => {
+      const gstRate = (l.item.gst_slab || 0) / 100;
+      const couponShare = couponResult ? couponResult.allocations[i] : 0;
+      const lineAfter = r2(l.amount - couponShare);
 
-      const gstRate = (item.gst_slab || 0) / 100;
-      let itemTaxable = 0;
-      let itemTax = 0;
-      let itemTotalWithTax = 0;
-
-      if (item.is_tax_inclusive) {
-        // Price already includes GST
-        itemTotalWithTax = itemSellingPrice * item.quantity;
-        itemTaxable = itemTotalWithTax / (1 + gstRate);
-        itemTax = itemTotalWithTax - itemTaxable;
+      let itemTaxable;
+      let itemTax;
+      if (l.item.is_tax_inclusive) {
+        itemTaxable = r2(lineAfter / (1 + gstRate));
+        itemTax = r2(lineAfter - itemTaxable);
+        subtotal += l.sell * l.qty;
       } else {
-        // Price is base price, add GST on top
-        itemTaxable = itemSellingPrice * item.quantity;
-        itemTax = itemTaxable * gstRate;
-        itemTotalWithTax = itemTaxable + itemTax;
+        itemTaxable = lineAfter;
+        itemTax = r2(itemTaxable * gstRate);
+        subtotal += l.sell * l.qty * (1 + gstRate);
       }
 
-      subtotal += itemTotalWithTax;
+      if (l.hasOffer) {
+        totalOfferDiscount += (l.sell - l.unit) * l.qty;
+        if (l.item.offer && l.item.offer.name && !appliedOffers.includes(l.item.offer.name)) appliedOffers.push(l.item.offer.name);
+      }
+
       taxableValue += itemTaxable;
       totalTax += itemTax;
-
       if (isIntraState) {
-        cgst += itemTax / 2;
-        sgst += itemTax / 2;
+        const half = r2(itemTax / 2);
+        cgst += half;
+        sgst += itemTax - half;
       } else {
         igst += itemTax;
       }
     });
+    subtotal = r2(subtotal);
+    taxableValue = r2(taxableValue);
+    totalTax = r2(totalTax);
+    cgst = r2(cgst);
+    sgst = r2(sgst);
+    igst = r2(igst);
 
     // Calculate total weight from cart items (fallback to 0.5 kg if total is 0)
     let totalWeight = cartItems.reduce((acc, item) => {
@@ -1145,72 +1233,38 @@ exports.createOrderFromCart = async (req, res) => {
       console.error("❌ Failed to fetch dynamic Shiprocket rate. Using fallback 0.", err.message);
     }
 
-    let appliedCouponDiscount = 0;
-    let finalCouponCode = coupon_code || null;
-
-    if (coupon_code) {
-      appliedCouponDiscount = parseFloat(coupon_discount) || 0;
-    }
-
+    const couponOnlyDiscount = couponResult ? couponResult.discount : 0;
+    const appliedCouponDiscount = r2(couponOnlyDiscount + totalOfferDiscount);
+    let finalCouponCode = couponResult ? couponResult.coupon.code : null;
     if (totalOfferDiscount > 0) {
-      appliedCouponDiscount += totalOfferDiscount;
       const offerNames = appliedOffers.join(", ");
       finalCouponCode = finalCouponCode ? `${finalCouponCode} | Offers: ${offerNames}` : `Offers: ${offerNames}`;
     }
-    
-    const finalTaxableValue = taxableValue - appliedCouponDiscount;
-    const total = finalTaxableValue + totalTax + shippingChargeAmt;
+
+    const total = r2(taxableValue + totalTax + shippingChargeAmt);
     const totalInPaise = Math.round(total * 100);
+    if (totalInPaise < 100) {
+      await transaction.rollback();
+      return res.status(400).json({ success: false, error: "Order total is too low to pay online" });
+    }
 
     // 4️⃣ Generate Order Number
     const orderNumber = "ORD-" + Date.now();
 
-    // 5️⃣ Insert Order
+    // 5️⃣ Insert Order (unpaid)
     const [order] = await sequelize.query(
       `INSERT INTO orders (
-         order_number,
-         user_id,
-         customer_name,
-         customer_phone,
-         billing_address_id,
-         shipping_address_id,
-         subtotal,
-         coupon_id,
-         coupon_code,
-         coupon_discount,
-         shipping_charges,
-         taxable_value,
-         cgst,
-         sgst,
-         igst,
-         total_tax,
-         total,
-         status,
-         payment_status,
-         referred_therapist_id,
-         created_at
+         order_number, user_id, customer_name, customer_phone,
+         billing_address_id, shipping_address_id, subtotal,
+         coupon_id, coupon_code, coupon_discount, coupon_only_discount, shipping_charges,
+         taxable_value, cgst, sgst, igst, total_tax, total,
+         status, payment_status, referred_therapist_id, created_at
        ) VALUES (
-         :orderNumber,
-         :userId,
-         :customerName,
-         :customerPhone,
-         :billingAddressId,
-         :shippingAddressId,
-         :subtotal,
-         :couponId,
-         :couponCode,
-         :couponDiscount,
-         :shippingCharges,
-         :taxableValue,
-         :cgst,
-         :sgst,
-         :igst,
-         :totalTax,
-         :total,
-         'Pending',
-         :paymentStatus,
-         :referredTherapistId,
-         CURRENT_TIMESTAMP
+         :orderNumber, :userId, :customerName, :customerPhone,
+         :billingAddressId, :shippingAddressId, :subtotal,
+         :couponId, :couponCode, :couponDiscount, :couponOnlyDiscount, :shippingCharges,
+         :taxableValue, :cgst, :sgst, :igst, :totalTax, :total,
+         'pending_payment', 'Pending', :referredTherapistId, CURRENT_TIMESTAMP
        )
        RETURNING id`,
       {
@@ -1222,17 +1276,17 @@ exports.createOrderFromCart = async (req, res) => {
           billingAddressId: billing_address_id,
           shippingAddressId: shipping_address_id,
           subtotal,
-          couponId: coupon_id || null,
+          couponId: couponResult ? couponResult.coupon.id : null,
           couponCode: finalCouponCode,
           couponDiscount: appliedCouponDiscount,
+          couponOnlyDiscount,
           shippingCharges: shippingChargeAmt,
-          taxableValue: finalTaxableValue,
+          taxableValue,
           cgst,
           sgst,
           igst,
           totalTax,
           total,
-          paymentStatus: payment_status || "Unpaid",
           referredTherapistId: referred_therapist_id || null
         },
         type: QueryTypes.INSERT,
@@ -1242,40 +1296,30 @@ exports.createOrderFromCart = async (req, res) => {
 
     const orderId = order[0].id;
 
-    // 6️⃣ Insert Order Items & Update Inventory
-    for (let item of cartItems) {
-      // Calculate item discount
-      const itemSellingPrice = parseFloat(item.selling_price) || 0;
-      const itemDiscountedPrice = parseFloat(item.discountedPrice) || itemSellingPrice;
-      const itemDiscountAmount = itemSellingPrice - itemDiscountedPrice;
+    const reserve = async (inventoryId, qty) => {
+      await sequelize.query(
+        `UPDATE inventory
+         SET on_hand = on_hand - :qty, reserved = reserved + :qty, updated_at = CURRENT_TIMESTAMP
+         WHERE id = :inventoryId`,
+        { replacements: { qty, inventoryId }, type: QueryTypes.UPDATE, transaction }
+      );
+      await sequelize.query(
+        `INSERT INTO order_stock_reservations (order_id, inventory_id, qty) VALUES (:orderId, :inventoryId, :qty)`,
+        { replacements: { orderId, inventoryId, qty }, type: QueryTypes.INSERT, transaction }
+      );
+    };
+
+    // 6️⃣ Insert Order Items & reserve stock
+    for (const l of lines) {
+      const item = l.item;
+      const itemDiscountAmount = l.sell - l.unit;
       const itemOfferName = (itemDiscountAmount > 0 && item.offer) ? item.offer.name : null;
 
-      // Insert order item
       await sequelize.query(
         `INSERT INTO order_items (
-           order_id,
-           sku,
-           name,
-           qty,
-           price,
-           mrp,
-           hsn_code,
-           tax_rate_pct,
-           offer_name,
-           discount_amount,
-           variant_id
+           order_id, sku, name, qty, price, mrp, hsn_code, tax_rate_pct, offer_name, discount_amount, variant_id
          ) VALUES (
-           :orderId,
-           :sku,
-           :name,
-           :qty,
-           :price,
-           :mrp,
-           :hsnCode,
-           :taxRate,
-           :offerName,
-           :discountAmount,
-           :variantId
+           :orderId, :sku, :name, :qty, :price, :mrp, :hsnCode, :taxRate, :offerName, :discountAmount, :variantId
          )`,
         {
           replacements: {
@@ -1296,175 +1340,59 @@ exports.createOrderFromCart = async (req, res) => {
         }
       );
 
-      // Update inventory
       if (item.product_type === 'Bundle') {
-        const components = bundleComponentMap[item.product_id] || [];
-        for (const comp of components) {
-          const qtyToDeduct = comp.quantity * item.quantity;
-          await sequelize.query(
-            `UPDATE inventory
-             SET on_hand = on_hand - :qty,
-                 reserved = reserved + :qty,
-                 updated_at = CURRENT_TIMESTAMP
-             WHERE id = :inventoryId`,
-            {
-              replacements: { qty: qtyToDeduct, inventoryId: comp.inventory_id },
-              type: QueryTypes.UPDATE,
-              transaction
-            }
-          );
+        for (const comp of (bundleComponentMap[item.product_id] || [])) {
+          await reserve(comp.inventory_id, comp.quantity * item.quantity);
         }
       } else {
-        const inv = inventoryMap[item.product_id];
-        await sequelize.query(
-          `UPDATE inventory
-           SET on_hand = on_hand - :qty,
-               reserved = reserved + :qty,
-               updated_at = CURRENT_TIMESTAMP
-           WHERE id = :inventoryId`,
-          {
-            replacements: {
-              qty: item.quantity,
-              inventoryId: inv.id
-            },
-            type: QueryTypes.UPDATE,
-            transaction
-          }
-        );
+        await reserve(inventoryMap[item.product_id].id, item.quantity);
       }
     }
 
-    // 7️⃣ Insert Payment Transaction
-    const txnId = "txn-" + Date.now();
+    // 7️⃣ Razorpay order for the server-calculated amount
+    const rzpOrder = await razorpay.createOrder(totalInPaise, orderNumber, { orderId: String(orderId), orderNumber });
+
+    await sequelize.query(
+      `UPDATE orders SET razorpay_order_id = :rzpId WHERE id = :orderId`,
+      { replacements: { rzpId: rzpOrder.id, orderId }, type: QueryTypes.UPDATE, transaction }
+    );
+
+    // 8️⃣ Pending payment transaction
     await sequelize.query(
       `INSERT INTO payment_transactions (
-         txn_id,
-         ref,
-         user_id,
-         order_id,
-         amount,
-         currency,
-         status,
-         gateway,
-         created_at
+         txn_id, ref, user_id, order_id, amount, currency, status, gateway, razorpay_order_id, created_at
        ) VALUES (
-         :txnId,
-         :ref,
-         :userId,
-         :orderId,
-         :amount,
-         :currency,
-         :status,
-         :gateway,
-         CURRENT_TIMESTAMP
+         :txnId, :ref, :userId, :orderId, :amount, 'INR', 'pending', 'razorpay', :rzpId, CURRENT_TIMESTAMP
        )`,
       {
-        replacements: {
-          txnId,
-          ref: orderNumber,
-          userId,
-          orderId,
-          amount: totalInPaise,
-          currency: currency || "INR",
-          status: payment_status === "Paid" ? "paid" : "pending",
-          gateway: payment_gateway || "razorpay"
-        },
+        replacements: { txnId: "txn-" + Date.now(), ref: orderNumber, userId, orderId, amount: totalInPaise, rzpId: rzpOrder.id },
         type: QueryTypes.INSERT,
-        transaction
-      }
-    );
-
-    // 8️⃣ Create Invoice
-    const invoiceNumber = `INV-${orderId}`;
-    const [invoice] = await sequelize.query(
-      `INSERT INTO invoices (
-         invoice_number,
-         invoice_type,
-         status,
-         user_id,
-         order_id,
-         total_amount_paise,
-         cgst_amount,
-         sgst_amount,
-         igst_amount,
-         issued_at
-       ) VALUES (
-         :invoiceNumber,
-         'order',
-         'issued',
-         :userId,
-         :orderId,
-         :totalAmountPaise,
-         :cgst,
-         :sgst,
-         :igst,
-         CURRENT_TIMESTAMP
-       )
-       RETURNING id`,
-      {
-        replacements: {
-          invoiceNumber,
-          userId,
-          orderId,
-          totalAmountPaise: totalInPaise,
-          cgst,
-          sgst,
-          igst
-        },
-        type: QueryTypes.INSERT,
-        transaction
-      }
-    );
-    const invoiceId = invoice[0].id;
-
-    // 🔟 Clear Cart
-    await sequelize.query(
-      `DELETE FROM cart WHERE user_id = :userId`,
-      {
-        replacements: { userId },
-        type: QueryTypes.DELETE,
         transaction
       }
     );
 
     await transaction.commit();
 
-    try {
-      if (req.user?.email) {
-        await transporter.sendMail({
-          from: `"Curevan Orders" <${process.env.MAIL_USER}>`,
-          to: req.user.email,
-          subject: `Order Confirmation - ${orderNumber}`,
-          html: `
-            <h3>Order Received!</h3>
-            <p>Hi ${req.user.name || 'Customer'},</p>
-            <p>Your order <strong>${orderNumber}</strong> has been placed successfully.</p>
-            <p><strong>Total Amount:</strong> ₹${total}</p>
-            <p>We will notify you once your order is shipped.</p>
-          `
-        });
-      }
-    } catch (mailErr) {
-      console.error("Failed to send order creation email:", mailErr);
-    }
-
     return res.json({
       success: true,
-      message: "Order & Invoice created successfully with GST and Inventory updated",
+      message: "Order created. Complete the payment to confirm it.",
       data: {
         orderId,
         orderNumber,
-        invoiceId,
-        invoiceNumber,
+        razorpayOrderId: rzpOrder.id,
+        amountPaise: totalInPaise,
+        keyId: razorpay.getKeyId(),
         subtotal,
-        taxableValue: finalTaxableValue,
+        taxableValue,
         cgst,
         sgst,
         igst,
         totalTax,
         shippingCharges: shippingChargeAmt,
+        couponDiscount: couponOnlyDiscount,
+        offerDiscount: r2(totalOfferDiscount),
         total,
-        paymentStatus: payment_status || "Unpaid"
+        paymentStatus: "Pending"
       }
     });
 
