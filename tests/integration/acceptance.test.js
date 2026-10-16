@@ -15,7 +15,7 @@ const fs = require("fs");
 
 const root = path.resolve(__dirname, "../..");
 process.chdir(root);
-const PAYFIRST = process.argv.includes("--payfirst");
+const PAYFIRST = !process.argv.includes("--approval");   // default = the handoff pack flow (pay first)
 Object.assign(process.env, {
   GOOGLE_CLIENT_ID: "x", GOOGLE_CLIENT_SECRET: "y", JWT_SECRET: "integration-secret", JWT_EXPIRE: "1d",
   RAZORPAY_KEY_ID: "rzp_test_KEY", RAZORPAY_KEY_SECRET: "rzp_secret_123", RAZORPAY_WEBHOOK_SECRET: "whsec_123",
@@ -23,7 +23,7 @@ Object.assign(process.env, {
   DB_HOST: process.env.DB_HOST || "127.0.0.1", DB_PORT: process.env.DB_PORT || "54329",
   DB_NAME: process.env.DB_NAME || "curevan_test", DB_USER: process.env.DB_USER || "curevan", DB_PASSWORD: process.env.DB_PASSWORD || "testpw",
 });
-if (PAYFIRST) process.env.DIRECT_BOOKING_NEEDS_APPROVAL = "false";
+process.env.DIRECT_BOOKING_NEEDS_APPROVAL = PAYFIRST ? "false" : "true";
 
 const realLog = console.log, realError = console.error, realWarn = console.warn;
 const mute = () => { console.log = () => {}; if (!process.env.DEBUG_TEST) { console.error = () => {}; console.warn = () => {}; } }; // DEBUG_TEST=1 shows server errors
@@ -307,7 +307,7 @@ async function seed() {
     r = await call("POST", "/api/appointments/accept/" + b1.id, T.t2, {});
     check("#5 a different therapist cannot accept someone else's booking -> " + r.s, r.s === 403);
     r = await call("POST", "/api/appointments/accept/" + b1.id, T.t1, {});
-    check("#5 assigned therapist approves -> 'Payment Pending' -> " + r.s, r.s === 200 && (await q("SELECT status FROM appointments WHERE id = $1", [b1.id]))[0].status === "Payment Pending", "got " + r.s + " " + (r.raw || "").slice(0, 150));
+    check("#5 assigned therapist approves -> 'Accepted' -> " + r.s, r.s === 200 && (await q("SELECT status FROM appointments WHERE id = $1", [b1.id]))[0].status === "Accepted", "got " + r.s + " " + (r.raw || "").slice(0, 150));
     r = await call("POST", "/api/appointments/create-appointment", T.p1, { appointmentId: b1.id });
     rzB = r.j && r.j.razorpayOrderId;
     check("#5 patient 'Pay now' gets a Razorpay order for 150000 paise -> " + r.s, r.s === 200 && r.j.amountPaise === 150000);
@@ -335,7 +335,7 @@ async function seed() {
   check("#5 a patient cannot accept a request -> " + r.s, r.s === 403);
   r = await call("POST", "/api/appointments/accept/" + rq.id, T.t2, { therapistId: U.t1.id, therapistName: "Evil" });
   const rqa = (await q("SELECT * FROM appointments WHERE id = $1", [rq.id]))[0];
-  check("#5 accepting therapist = the caller (id " + rqa.therapist_id + "), priced from their rate (" + rqa.service_amount + "), status " + rqa.status, r.s === 200 && rqa.therapist_id === U.t2.id && Number(rqa.service_amount) === 900 && rqa.status === "Payment Pending" && rqa.price_source === "therapist_rate", "got " + r.s + " " + (r.raw || "").slice(0, 150));
+  check("#5 accepting therapist = the caller (id " + rqa.therapist_id + "), priced from their rate (" + rqa.service_amount + "), status " + rqa.status, r.s === 200 && rqa.therapist_id === U.t2.id && Number(rqa.service_amount) === 900 && rqa.status === "Accepted" && rqa.price_source === "therapist_rate", "got " + r.s + " " + (r.raw || "").slice(0, 150));
   check("#5 still unpaid: no invoice/PCR/payout after acceptance; patient notified", (await q("SELECT 1 FROM invoices WHERE booking_id = $1", [rq.id])).length === 0 && (await q("SELECT 1 FROM pcr WHERE appointment_id = $1", [rq.id])).length === 0 && (await q("SELECT 1 FROM notifications WHERE user_uid = $1", [String(U.p2.id)])).length === 1);
   r = await call("POST", "/api/appointments/create-appointment", T.p2, { appointmentId: rq.id });
   const rzR = r.j && r.j.razorpayOrderId;
@@ -363,7 +363,7 @@ async function seed() {
   }
   const soon2 = new Date(Date.now() + 5.5 * 3600e3 + 90 * 60000);
   const [acc] = await q(`INSERT INTO appointments(patient_id, therapist_id, service_type_id, service_amount, total_amount, date, time, status, payment_status, price_source)
-    VALUES ($1,$2,1,900,900,$3,$4,'Payment Pending','Pending','therapist_rate') RETURNING id`, [U.p1.id, U.t2.id, `${soon2.getUTCFullYear()}-${pad(soon2.getUTCMonth() + 1)}-${pad(soon2.getUTCDate())}`, `${pad(soon2.getUTCHours())}:${pad(soon2.getUTCMinutes())}`]);
+    VALUES ($1,$2,1,900,900,$3,$4,'Accepted','Pending','therapist_rate') RETURNING id`, [U.p1.id, U.t2.id, `${soon2.getUTCFullYear()}-${pad(soon2.getUTCMonth() + 1)}-${pad(soon2.getUTCDate())}`, `${pad(soon2.getUTCHours())}:${pad(soon2.getUTCMinutes())}`]);
   await apptCtl.cancelUnpaidAppointments();
   check("#5 accepted request still unpaid <2h before the slot is cancelled (real SQL)", (await q("SELECT status FROM appointments WHERE id = $1", [acc.id]))[0].status === "cancelled_unpaid");
   const bad = await q("SELECT id FROM appointments WHERE payment_status = 'Paid' AND razorpay_payment_id IS NULL AND COALESCE(payment_method,'') NOT LIKE 'manual\\_%'");

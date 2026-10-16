@@ -34,7 +34,7 @@ const { Client } = require("pg");
     VALUES ($1,'Priya Patient',$2,'Dr Tara Therapist',1,'Physiotherapy',1500,1500,$3,'10:00','home',$4,$5,$6,$7,$8,$9,$10) RETURNING id`, [p1.id, t1.id, day(n), status, pay, pcr, a1.id, method, method === 'razorpay' ? 'pay_demo' + n : null, pay === 'Paid' ? new Date() : null]))[0];
   const ap1 = await mkAppt(2, "Confirmed", "Paid", "not_started", "razorpay");
   const ap2 = await mkAppt(-3, "Completed", "Paid", "submitted", "manual_cash");
-  const ap3 = await mkAppt(4, "Payment Pending", "Pending", "not_started", null);
+  const ap3 = await mkAppt(4, "Accepted", "Pending", "not_started", null);
   const ap4 = await mkAppt(5, "Pending Approval", "Pending", "not_started", null);
   for (const a of [ap1, ap2]) await q("INSERT INTO pcr(appointment_id, patient_id, therapist_id, service_type_id, status, version, chief_complaint) VALUES ($1,$2,$3,1,$4,1,'Knee pain')", [a.id, p1.id, t1.id, a.id === ap2.id ? "submitted" : "not_started"]);
   await q("INSERT INTO invoices(invoice_number, invoice_type, status, user_id, booking_id, total_amount_paise, issued_at) VALUES ('INV-BK-1','service','issued',$1,$2,150000,now()), ('INV-BK-2','service','issued',$1,$3,150000,now())", [p1.id, ap1.id, ap2.id]);

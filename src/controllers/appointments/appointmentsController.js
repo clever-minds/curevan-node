@@ -1235,7 +1235,7 @@ exports.acceptBookingRequest = async (req, res) => {
            service_amount = :amount,
            total_amount = :amount,
            price_source = :priceSource,
-           status = 'Payment Pending'
+           status = 'Accepted'
        WHERE id = :id`,
       {
         replacements: { id, therapistId, therapistName: therapist.name, therapistPhone: therapist.phone || null, amount, priceSource },
