@@ -32,4 +32,16 @@ const releaseTimer = setInterval(async () => {
 }, 10 * 60 * 1000);
 releaseTimer.unref();
 
+// Unpaid bookings: direct bookings after 30 minutes, accepted requests 2 hours before the slot.
+const { cancelUnpaidAppointments } = require('./controllers/appointments/appointmentsController');
+const unpaidTimer = setInterval(async () => {
+  try {
+    const n = await cancelUnpaidAppointments();
+    if (n > 0) console.log(`Cancelled ${n} unpaid appointment(s).`);
+  } catch (err) {
+    console.error('Cron Error cancelling unpaid appointments:', err.message);
+  }
+}, 10 * 60 * 1000);
+unpaidTimer.unref();
+
 console.log('Cron jobs initialized.');

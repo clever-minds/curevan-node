@@ -1,5 +1,6 @@
 const { QueryTypes } = require("sequelize");
 const access = require("../../utils/access");
+const razorpay = require("../../services/razorpayService");
 const { sequelize } = require("../../config/db");
 const transporter = require("../../config/mailer");
 const firebaseNotifier = require("../../utils/firebaseNotifier");
@@ -178,333 +179,232 @@ async function getNextInvoiceNumber(type = "service") {
   const randomNum = Math.floor(1000 + Math.random() * 9000);
   return `INV-${series}-${randomNum}`;
 }
+/* =====================================================
+   STEP A - direct booking (or "Pay now" for an accepted request)
+   POST /api/appointments/create-appointment
+   The price is read from the server (therapist rate). Any amount,
+   status or payment field in the body is ignored. No invoice / PCR /
+   notification is created here - that happens when the payment is verified.
+===================================================== */
 exports.createBookingAndInvoice = async (req, res) => {
-  const { bookingData, paymentDetails } = req.body;
-
-  const t = await sequelize.transaction(); // start transaction
+  const { bookingData = {}, appointmentId: payForId } = req.body || {};
+  const t = await sequelize.transaction();
 
   try {
-    if (!bookingData || !paymentDetails) {
-      return res.status(400).json({ success: false, error: "Booking data and payment details required" });
-    }
-    // --------------------------
-    
-        // Check if therapist is on leave
-    if (bookingData.therapistId) {
-      // Add availability check
+    let appointmentId;
+    let amount;
+
+    if (payForId) {
+      // ---- pay for an existing, accepted and still unpaid request
+      const [appt] = await sequelize.query(
+        `SELECT id, patient_id, status, payment_status, service_amount FROM appointments WHERE id = :id FOR UPDATE`,
+        { replacements: { id: payForId }, type: QueryTypes.SELECT, transaction: t }
+      );
+      if (!appt) { await t.rollback(); return res.status(404).json({ success: false, error: "Appointment not found" }); }
+      if (!access.same(appt.patient_id, req.user.id)) { await t.rollback(); return res.status(403).json({ success: false, error: "Forbidden" }); }
+      if (appt.payment_status === "Paid") { await t.rollback(); return res.status(400).json({ success: false, error: "Already paid" }); }
+      if (!["Accepted", "Payment Pending"].includes(appt.status)) {
+        await t.rollback();
+        return res.status(400).json({ success: false, error: "This request is not waiting for payment" });
+      }
+      appointmentId = appt.id;
+      amount = Number(appt.service_amount);
+    } else {
+      // ---- new direct booking
+      if (!bookingData.therapistId) {
+        await t.rollback();
+        return res.status(400).json({ success: false, error: "therapistId is required (use /request to let Curevan find a therapist)" });
+      }
+
+      const [therapist] = await sequelize.query(
+        `SELECT hourly_rate FROM therapist_profiles WHERE user_id = :therapistId AND profile_status = 'approved'`,
+        { replacements: { therapistId: bookingData.therapistId }, type: QueryTypes.SELECT, transaction: t }
+      );
+      if (!therapist) { await t.rollback(); return res.status(404).json({ success: false, error: "Therapist not found" }); }
+      amount = Number(therapist.hourly_rate);
+      if (!(amount > 0)) { await t.rollback(); return res.status(400).json({ success: false, error: "This therapist has no price set yet" }); }
+
+      // availability / leave checks (unchanged)
       const availabilityRows = await sequelize.query(
         "SELECT day_of_week, is_enabled FROM therapist_availability ta JOIN therapist_profiles tp ON ta.therapist_id = tp.id WHERE tp.user_id = :therapistId",
         { replacements: { therapistId: bookingData.therapistId }, type: sequelize.QueryTypes.SELECT, transaction: t }
       );
-      
       const bookingDateObj = new Date(bookingData.date);
       const days = ["sun", "mon", "tue", "wed", "thu", "fri", "sat"];
       const dayName = days[bookingDateObj.getDay()];
-      
       const dayAvail = availabilityRows.find(row => row.day_of_week === dayName);
-      
       if (!dayAvail || dayAvail.is_enabled === false || dayAvail.is_enabled === "false" || dayAvail.is_enabled === 0 || dayAvail.is_enabled === "0") {
         await t.rollback();
         return res.status(400).json({ success: false, error: "Therapist is not available on this day." });
       }
-
       const [leaves] = await sequelize.query(
         `SELECT 1 FROM therapist_leaves tl
          JOIN therapist_profiles tp ON tl.therapist_id = tp.id
          WHERE tp.user_id = :therapistId
            AND :bookingDate >= tl.start_date AND :bookingDate <= tl.end_date`,
+        { replacements: { therapistId: bookingData.therapistId, bookingDate: bookingData.date }, type: sequelize.QueryTypes.SELECT, transaction: t }
+      );
+      if (leaves) { await t.rollback(); return res.status(400).json({ success: false, error: "Therapist is on leave on this date" }); }
+
+      // patients book for themselves; only an admin may book on behalf of someone
+      const patientId = access.isAdmin(req.user) && bookingData.patientId ? bookingData.patientId : req.user.id;
+
+      const [rows] = await sequelize.query(
+        `INSERT INTO appointments (
+          patient_id, patient_name, date_of_birth, therapist_id, therapist_name, service_type_id, therapy_type,
+          service_amount, total_amount, date, time, mode, notes, service_address_id,
+          status, verification_status, payment_status, pcr_status, reports, price_source, created_at
+        ) VALUES (
+          :patientId, :patientName, :dateofbirth, :therapistId, :therapistName, :serviceTypeId, :therapyType,
+          :amount, :amount, :date, :time, :mode, :notes, :serviceAddress,
+          'Pending', 'Pending', 'Pending', 'not_started', :reports, 'therapist_rate', NOW()
+        ) RETURNING id`,
         {
-          replacements: { therapistId: bookingData.therapistId, bookingDate: bookingData.date },
-          type: sequelize.QueryTypes.SELECT,
-          transaction: t
+          replacements: {
+            patientId,
+            patientName: bookingData.patientName || null,
+            dateofbirth: bookingData.dateofBirth || null,
+            therapistId: bookingData.therapistId,
+            therapistName: bookingData.therapist || null,
+            serviceTypeId: bookingData.serviceTypeId || null,
+            therapyType: bookingData.therapyType || null,
+            amount,
+            date: bookingData.date || null,
+            time: bookingData.time || null,
+            mode: bookingData.mode || null,
+            notes: bookingData.notes || null,
+            serviceAddress: bookingData.addressId || null,
+            reports: bookingData.reports ? JSON.stringify(bookingData.reports) : null,
+          },
+          type: sequelize.QueryTypes.INSERT,
+          transaction: t,
         }
       );
-      if (leaves) {
-        await t.rollback();
-        return res.status(400).json({ success: false, error: "Therapist is on leave on this date" });
-      }
+      appointmentId = rows[0]?.id;
+      if (!appointmentId) throw new Error("Failed to get appointmentId");
     }
 
-    // 1️⃣ Insert appointment
-    // --------------------------
-      const [rows] = await sequelize.query(
-      `INSERT INTO appointments (
-        patient_id, patient_name, date_of_birth, therapist_id, therapist_name, service_type_id, therapy_type,
-        service_amount, total_amount, date, time, mode, notes, service_address_id,
-        status, verification_status, payment_status, pcr_status, reports, created_at
-      ) VALUES (
-        :patientId, :patientName, :dateofbirth, :therapistId, :therapistName, :serviceTypeId, :therapyType,
-        :serviceAmount, :totalAmount, :date, :time, :mode, :notes, :serviceAddress,
-        :status, :verificationStatus, :paymentStatus, :pcrStatus, :reports, NOW()
-      ) RETURNING id`,
-      {
-        replacements: {
-          patientId: bookingData.patientId || null,
-          patientName: bookingData.patientName || null,
-          dateofbirth: bookingData.dateofBirth || null,
-          therapistId: bookingData.therapistId || null,
-          therapistName: bookingData.therapist || null,
-          serviceTypeId: bookingData.serviceTypeId || null,
-          therapyType: bookingData.therapyType || null,
-          serviceAmount: bookingData.serviceAmount || 0,
-          totalAmount: bookingData.totalAmount || 0,
-          date: bookingData.date || null,
-          time: bookingData.time || null,
-          mode: bookingData.mode || null,
-          notes: bookingData.notes || null,
-          serviceAddress: bookingData.addressId || null, 
-          status: bookingData.status || "Pending",
-          verificationStatus: "Pending",
-          paymentStatus: bookingData.paymentStatus || "Pending",
-          pcrStatus: "not_started",
-          reports: bookingData.reports ? JSON.stringify(bookingData.reports) : null,
-        },
-        type: sequelize.QueryTypes.INSERT,
-        transaction: t,
-      }
+    const amountPaise = Math.round(amount * 100);
+    const rzpOrder = await razorpay.createOrder(amountPaise, `appt-${appointmentId}`, { appointmentId: String(appointmentId) });
+
+    await sequelize.query(
+      `UPDATE appointments SET razorpay_order_id = :rzpId WHERE id = :id`,
+      { replacements: { rzpId: rzpOrder.id, id: appointmentId }, type: QueryTypes.UPDATE, transaction: t }
     );
-    const appointmentId = rows[0]?.id;
-    if (!appointmentId) throw new Error("Failed to get appointmentId");
 
-    // --------------------------
-    // 2️⃣ Insert invoice
-    // --------------------------
-    const invoiceNumber = await getNextInvoiceNumber("service");
+    await t.commit();
+    return res.json({
+      success: true,
+      appointmentId,
+      razorpayOrderId: rzpOrder.id,
+      amountPaise,
+      keyId: razorpay.getKeyId(),
+    });
+  } catch (error) {
+    await t.rollback();
+    console.error("Error creating booking:", error);
+    return res.status(500).json({ success: false, error: "Failed to create booking" });
+  }
+};
 
+/* =====================================================
+   Called once a booking payment is VERIFIED (paymentsController).
+   Creates the invoice and the empty PCR, and sends the notifications.
+===================================================== */
+exports.finalizePaidBooking = async (appt, transaction) => {
+  const invoiceNumber = `INV-BK-${appt.id}`;
+  const [existing] = await sequelize.query(
+    `SELECT id FROM invoices WHERE booking_id = :id LIMIT 1`,
+    { replacements: { id: appt.id }, type: QueryTypes.SELECT, transaction }
+  );
+  let invoiceId = existing ? existing.id : null;
+  if (!existing) {
     const [invoiceRows] = await sequelize.query(
-      `INSERT INTO invoices (
-        invoice_number, status, user_id, booking_id, issued_at, total_amount_paise
-      ) VALUES (
-        :invoiceNumber, :status, :userId, :appointmentId, NOW(), :totalAmountPaise
-      ) RETURNING id`,
+      `INSERT INTO invoices (invoice_number, status, user_id, booking_id, issued_at, total_amount_paise)
+       VALUES (:invoiceNumber, 'issued', :userId, :id, NOW(), :paise) RETURNING id`,
       {
-        replacements: {
-          invoiceNumber,
-          status: "issued",
-          userId: bookingData.patientId,
-          appointmentId,
-          totalAmountPaise: (bookingData.totalAmount || 0) * 100,
-        },
-        type: sequelize.QueryTypes.INSERT,
-        transaction: t,
+        replacements: { invoiceNumber, userId: appt.patient_id, id: appt.id, paise: Math.round(Number(appt.total_amount) * 100) },
+        type: QueryTypes.INSERT,
+        transaction,
       }
     );
+    invoiceId = invoiceRows[0]?.id;
+  }
 
-    const invoiceId = invoiceRows[0]?.id;
-
-    // --------------------------
-    // 3️⃣ Automatically Insert into PCR table
-    // --------------------------
+  const [pcrExists] = await sequelize.query(
+    `SELECT 1 FROM pcr WHERE appointment_id = :id LIMIT 1`,
+    { replacements: { id: appt.id }, type: QueryTypes.SELECT, transaction }
+  );
+  if (!pcrExists) {
     await sequelize.query(
       `INSERT INTO pcr (
         appointment_id, patient_id, therapist_id, service_type_id,
-        chief_complaint, assessment, diagnosis,
-        treatment_provided, plan_of_care,
-        bp, hr, rr, temp,
-        status, version, created_at, locked_at, history
+        chief_complaint, assessment, diagnosis, treatment_provided, plan_of_care,
+        bp, hr, rr, temp, status, version, created_at, locked_at, history
       ) VALUES (
-        :bookingId, :patientId, :therapistId, :serviceTypeId,
-        '', '', '', '', '',
-        '', '', '', '',
+        :id, :patientId, :therapistId, :serviceTypeId,
+        '', '', '', '', '', '', '', '', '',
         'not_started', 1, NOW(), NOW(), '[]'
       )`,
       {
-        replacements: {
-          bookingId: appointmentId,
-          patientId: bookingData.patientId,
-          therapistId: bookingData.therapistId,
-          serviceTypeId: bookingData.serviceTypeId,
-        },
-        type: sequelize.QueryTypes.INSERT,
-        transaction: t,
+        replacements: { id: appt.id, patientId: appt.patient_id, therapistId: appt.therapist_id, serviceTypeId: appt.service_type_id },
+        type: QueryTypes.INSERT,
+        transaction,
       }
     );
+  }
+  return { invoiceId, invoiceNumber };
+};
 
-    // --------------------------
-    // ✅ Commit transaction
-    // --------------------------
-    
-    // --- Send Pay Now Email to Patient ---
-    const [patientInfo] = await sequelize.query(
-      `SELECT email, name FROM users WHERE id = :patientId`,
-      { replacements: { patientId: bookingData.patientId }, type: QueryTypes.SELECT, transaction: t }
-    );
-    if (patientInfo && patientInfo.email) {
-      try {
-        await transporter.sendMail({
-          from: `"Curevan Appointments" <${process.env.MAIL_USER}>`,
-          to: patientInfo.email,
-          subject: "Therapist Assigned - Action Required: Pay Now",
-          html: `
-            <h3>Therapist Assigned</h3>
-            <p>Hi ${patientInfo.name},</p>
-            <p>Great news! A therapist (${bookingData.therapist || 'your therapist'}) has accepted your appointment request for ${bookingData.date}.</p>
-            <p>Please log in to your dashboard and complete the payment to confirm your booking.</p>
-            <p><a href="https://curevan.com/dashboard">Click here to Pay Now</a></p>
-            <p>Thank you.</p>
-          `
-        });
-      } catch (e) {
-        console.error("Failed to send pay now email", e);
-      }
-    }
-    // -------------------------------------
-
-    await t.commit();
-
-
-    try {
-      // Send Targeted Push Notification to the Therapist for Direct Booking
-      if (bookingData.therapistId) {
-        const [therapistInfo] = await sequelize.query(
-          `SELECT fcm_token FROM users WHERE id = :therapistId`,
-          { replacements: { therapistId: bookingData.therapistId }, type: QueryTypes.SELECT }
-        );
-        if (therapistInfo && therapistInfo.fcm_token) {
-          await firebaseNotifier.sendToTherapist(
-            therapistInfo.fcm_token,
-            "New Direct Booking Assigned",
-            `You have a new appointment with ${bookingData.patientName} on ${bookingData.date} at ${bookingData.time}.`,
-            { appointmentId: String(appointmentId), type: "direct_booking" }
-          );
-        }
-      } else {
-        // Handle unassigned booking (Request a Therapist) - broadcast to nearby available therapists within 5km
-        let lat, lng;
-        if (bookingData.latitude && bookingData.longitude) {
-          lat = parseFloat(bookingData.latitude);
-          lng = parseFloat(bookingData.longitude);
-        } else {
-          const [patientInfo] = await sequelize.query(
-            `SELECT latitude, longitude FROM users WHERE id = :patientId`,
-            { replacements: { patientId: bookingData.patientId }, type: QueryTypes.SELECT }
-          );
-          if (patientInfo && patientInfo.latitude && patientInfo.longitude) {
-            lat = parseFloat(patientInfo.latitude);
-            lng = parseFloat(patientInfo.longitude);
-          }
-        }
-
-        if (lat && lng) {
-          // Find therapists within 5km who don't have an overlapping appointment
-          const nearbyTherapists = await sequelize.query(
-            `SELECT u.fcm_token, u.name
-             FROM users u
-             JOIN therapist_profiles tp ON tp.user_id = u.id
-             WHERE u.role = 'therapist'
-             AND u.fcm_token IS NOT NULL
-             AND tp.lat IS NOT NULL
-             AND tp.lng IS NOT NULL
-             AND (
-                 6371 * acos(
-                     cos(radians(:lat)) * cos(radians(tp.lat)) *
-                     cos(radians(tp.lng) - radians(:lng)) +
-                     sin(radians(:lat)) * sin(radians(tp.lat))
-                 )
-             ) <= 5
-             AND u.id NOT IN (
-                 SELECT therapist_id FROM appointments 
-                 WHERE date = :date 
-                 AND time = :time
-                 AND status != 'Cancelled'
-                 AND therapist_id IS NOT NULL
-             )`,
-            {
-              replacements: { 
-                lat, 
-                lng, 
-                date: bookingData.date, 
-                time: bookingData.time 
-              },
-              type: QueryTypes.SELECT
-            }
-          );
-
-          console.log(`Found ${nearbyTherapists.length} available nearby therapists within 5km.`);
-
-          for (const tp of nearbyTherapists) {
-            await firebaseNotifier.sendToTherapist(
-              tp.fcm_token,
-              "New Appointment Request Nearby!",
-              `A new appointment request is available nearby on ${bookingData.date} at ${bookingData.time}. Open the app to accept it.`,
-              { 
-                appointmentId: String(appointmentId), 
-                type: "broadcast_booking",
-                date: String(bookingData.date || ""),
-                time: String(bookingData.time || ""),
-                therapyType: String(bookingData.therapyType || "Therapy")
-              }
-            );
-          }
-        } else {
-          console.log("Unassigned booking - patient has no lat/lng, cannot find nearby therapists.");
-        }
-      }
-    } catch (fcmErr) {
-      console.error("Failed to send FCM notifications:", fcmErr);
-    }
-
-    try {
-      // Send Booking Confirmation Email
-      const [patient] = await sequelize.query(
-        `SELECT email FROM users WHERE id = :patientId`,
-        { replacements: { patientId: bookingData.patientId }, type: QueryTypes.SELECT }
+// Push + e-mail after the payment commit (best effort, never fails the payment).
+exports.notifyPaidBooking = async (appt) => {
+  try {
+    if (appt.therapist_id) {
+      const [therapistInfo] = await sequelize.query(
+        `SELECT fcm_token FROM users WHERE id = :id`,
+        { replacements: { id: appt.therapist_id }, type: QueryTypes.SELECT }
       );
-
-      let addressString = "";
-      if (bookingData.mode === "home" && bookingData.addressId) {
-        const [addr] = await sequelize.query(
-          `SELECT full_address, city, state, pincode FROM order_addresses WHERE id = :addressId`,
-          { replacements: { addressId: bookingData.addressId }, type: QueryTypes.SELECT }
+      if (therapistInfo && therapistInfo.fcm_token) {
+        await firebaseNotifier.sendToTherapist(
+          therapistInfo.fcm_token,
+          appt.price_source === "therapist_rate" && appt.status === "Pending" ? "New Direct Booking Assigned" : "Booking Paid - Session Confirmed",
+          `You have a confirmed appointment with ${appt.patient_name} on ${appt.date} at ${appt.time}.`,
+          { appointmentId: String(appt.id), type: "direct_booking" }
         );
-        if (addr) {
-          addressString = `${addr.full_address || ''}, ${addr.city || ''}, ${addr.state || ''} - ${addr.pincode || ''}`;
-        }
-      } else if (bookingData.mode === "clinic" && bookingData.therapistId) {
-        const [therapistProfile] = await sequelize.query(
-          `SELECT full_address FROM therapist_profiles WHERE user_id = :therapistId`,
-          { replacements: { therapistId: bookingData.therapistId }, type: QueryTypes.SELECT }
-        );
-        if (therapistProfile && therapistProfile.full_address) {
-          addressString = therapistProfile.full_address;
-        }
       }
-
-      if (patient?.email) {
-        await transporter.sendMail({
-          from: `"Curevan Appointments" <${process.env.MAIL_USER}>`,
-          to: patient.email,
-          subject: "Your Appointment is Booked",
-          html: `
-            <h3>Booking Confirmation</h3>
-            <p>Hi ${bookingData.patientName},</p>
-            <p>Your appointment has been successfully booked.</p>
-            <ul>
-              <li><strong>Date:</strong> ${bookingData.date}</li>
-              <li><strong>Time:</strong> ${bookingData.time}</li>
-              <li><strong>Therapist:</strong> ${bookingData.therapist}</li>
-              <li><strong>Service:</strong> ${bookingData.therapyType}</li>
-              <li><strong>Mode:</strong> ${bookingData.mode ? bookingData.mode.toUpperCase() : 'Not Specified'}</li>
-              ${addressString ? `<li><strong>Address:</strong> ${addressString}</li>` : ''}
-              <li><strong>Total Amount:</strong> ₹${bookingData.totalAmount}</li>
-            </ul>
-            <p>Thank you for choosing Curevan.</p>
-          `
-        });
-      }
-    } catch (mailErr) {
-      console.error("Failed to send booking email:", mailErr);
     }
+  } catch (fcmErr) {
+    console.error("Failed to send booking push:", fcmErr.message);
+  }
 
-    return res.json({ success: true, appointmentId, invoiceId });
-
-  } catch (error) {
-    // --------------------------
-    // ❌ Rollback transaction if any error
-    // --------------------------
-    await t.rollback();
-    console.error("Error creating booking, invoice, and PCR:", error);
-    return res.status(500).json({ success: false, error: "Failed to create booking" });
+  try {
+    const [patient] = await sequelize.query(
+      `SELECT email FROM users WHERE id = :id`,
+      { replacements: { id: appt.patient_id }, type: QueryTypes.SELECT }
+    );
+    if (patient && patient.email) {
+      await transporter.sendMail({
+        from: `"Curevan Appointments" <${process.env.MAIL_FROM || process.env.MAIL_USER}>`,
+        to: patient.email,
+        subject: "Your Appointment is Booked",
+        html: `
+          <h3>Booking Confirmation</h3>
+          <p>Hi ${appt.patient_name || "there"},</p>
+          <p>Your payment was received and your appointment is booked.</p>
+          <ul>
+            <li><strong>Date:</strong> ${appt.date}</li>
+            <li><strong>Time:</strong> ${appt.time}</li>
+            <li><strong>Therapist:</strong> ${appt.therapist_name || ""}</li>
+            <li><strong>Service:</strong> ${appt.therapy_type || ""}</li>
+            <li><strong>Mode:</strong> ${appt.mode ? String(appt.mode).toUpperCase() : "Not Specified"}</li>
+            <li><strong>Total Amount:</strong> ₹${appt.total_amount}</li>
+          </ul>
+          <p>Thank you for choosing Curevan.</p>
+        `,
+      });
+    }
+  } catch (mailErr) {
+    console.error("Failed to send booking email:", mailErr.message);
   }
 };
 
@@ -1047,15 +947,24 @@ exports.createBookingRequest = async (req, res) => {
       return res.status(400).json({ success: false, error: "Booking data required" });
     }
 
+    // patients request for themselves; the price comes from the service type (set by the server),
+    // otherwise it is fixed from the accepting therapist's rate when someone accepts.
+    bookingData.patientId = access.isAdmin(req.user) && bookingData.patientId ? bookingData.patientId : req.user.id;
+    const [serviceType] = await sequelize.query(
+      `SELECT base_price FROM service_types WHERE id = :id`,
+      { replacements: { id: bookingData.serviceTypeId || 0 }, type: QueryTypes.SELECT }
+    );
+    const basePrice = serviceType && Number(serviceType.base_price) > 0 ? Number(serviceType.base_price) : 0;
+
     const [rows] = await sequelize.query(
       `INSERT INTO appointments (
         patient_id, patient_name, date_of_birth, service_type_id, therapy_type,
         service_amount, total_amount, date, time, mode, notes, service_address_id,
-        status, verification_status, payment_status, pcr_status, reports, created_at
+        status, verification_status, payment_status, pcr_status, reports, price_source, created_at
       ) VALUES (
         :patientId, :patientName, :dateofbirth, :serviceTypeId, :therapyType,
         :serviceAmount, :totalAmount, :date, :time, :mode, :notes, :serviceAddress,
-        'Searching Therapist', 'Not Verified', 'Pending', 'not_started', :reports, NOW()
+        'Searching Therapist', 'Not Verified', 'Pending', 'not_started', :reports, :priceSource, NOW()
       ) RETURNING id`,
       {
         replacements: {
@@ -1064,8 +973,9 @@ exports.createBookingRequest = async (req, res) => {
           dateofbirth: bookingData.dateofBirth || null,
           serviceTypeId: bookingData.serviceTypeId,
           therapyType: bookingData.therapyType,
-          serviceAmount: bookingData.serviceAmount || 0,
-          totalAmount: bookingData.totalAmount || 0,
+          serviceAmount: basePrice,
+          totalAmount: basePrice,
+          priceSource: basePrice > 0 ? "service_type" : "pending_match",
           date: bookingData.date,
           time: bookingData.time,
           mode: bookingData.mode,
@@ -1207,13 +1117,15 @@ exports.getAvailableRequests = async (req, res) => {
 // ✅ 3. ACCEPT BOOKING REQUEST
 exports.acceptBookingRequest = async (req, res) => {
   const { id } = req.params;
-  const { therapistId, therapistName, therapistPhone } = req.body || {};
+  // The accepting therapist is always the logged-in user (name/phone are read from the server).
+  const therapistId = req.user.id;
 
   const t = await sequelize.transaction();
 
   try {
     const [appt] = await sequelize.query(
-      `SELECT status, patient_id, service_type_id, therapist_id, date FROM appointments WHERE id = :id FOR UPDATE`,
+      `SELECT status, patient_id, patient_name, service_type_id, therapist_id, date, time, price_source, service_amount
+       FROM appointments WHERE id = :id FOR UPDATE`,
       { replacements: { id }, type: QueryTypes.SELECT, transaction: t }
     );
 
@@ -1222,9 +1134,9 @@ exports.acceptBookingRequest = async (req, res) => {
       return res.status(404).json({ success: false, error: "Appointment not found" });
     }
 
-    const isAvailable = 
-      appt.status === 'Searching' || 
-      appt.status === 'Searching Therapist' || 
+    const isAvailable =
+      appt.status === 'Searching' ||
+      appt.status === 'Searching Therapist' ||
       appt.status === 'Pending' ||
       appt.status === 'Pending Approval';
 
@@ -1233,60 +1145,81 @@ exports.acceptBookingRequest = async (req, res) => {
       return res.status(400).json({ success: false, error: "Appointment already accepted or cancelled" });
     }
 
+    const [therapist] = await sequelize.query(
+      `SELECT u.name, u.phone, tp.hourly_rate
+       FROM users u LEFT JOIN therapist_profiles tp ON tp.user_id = u.id
+       WHERE u.id = :therapistId`,
+      { replacements: { therapistId }, type: QueryTypes.SELECT, transaction: t }
+    );
+    if (!therapist) {
+      await t.rollback();
+      return res.status(403).json({ success: false, error: "Therapist profile not found" });
+    }
+
+    // Price: service-type price if configured, otherwise the accepting therapist's rate.
+    let amount = Number(appt.service_amount) || 0;
+    let priceSource = appt.price_source;
+    if (priceSource !== "service_type" || !(amount > 0)) {
+      amount = Number(therapist.hourly_rate) || 0;
+      priceSource = "therapist_rate";
+    }
+    if (!(amount > 0)) {
+      await t.rollback();
+      return res.status(400).json({ success: false, error: "Set your session rate in your profile before accepting requests" });
+    }
+
     await sequelize.query(
-      `UPDATE appointments 
-       SET therapist_id = :therapistId, 
-           therapist_name = :therapistName, 
+      `UPDATE appointments
+       SET therapist_id = :therapistId,
+           therapist_name = :therapistName,
            therapist_phone = :therapistPhone,
-           status = CASE WHEN status = 'Pending Approval' THEN 'Payment Pending' ELSE 'Payment Pending' END
+           service_amount = :amount,
+           total_amount = :amount,
+           price_source = :priceSource,
+           status = 'Accepted'
        WHERE id = :id`,
       {
-        replacements: { id, therapistId, therapistName, therapistPhone: therapistPhone || null },
+        replacements: { id, therapistId, therapistName: therapist.name, therapistPhone: therapist.phone || null, amount, priceSource },
         type: QueryTypes.UPDATE,
         transaction: t
       }
     );
 
-    const [pcrExists] = await sequelize.query(
-      `SELECT 1 FROM pcr WHERE appointment_id = :id LIMIT 1`,
-      { replacements: { id }, type: QueryTypes.SELECT, transaction: t }
-    );
+    await t.commit();
 
-    if (pcrExists) {
-      await sequelize.query(
-        `UPDATE pcr SET therapist_id = :therapistId WHERE appointment_id = :id`,
-        { replacements: { id, therapistId }, type: QueryTypes.UPDATE, transaction: t }
+    // Tell the patient to pay. (Invoice and PCR are created only after the payment is verified.)
+    try {
+      const [patient] = await sequelize.query(
+        `SELECT email, name, fcm_token, id FROM users WHERE id = :id`,
+        { replacements: { id: appt.patient_id }, type: QueryTypes.SELECT }
       );
-    } else {
-      await sequelize.query(
-        `INSERT INTO pcr (
-          appointment_id, patient_id, therapist_id, service_type_id,
-          chief_complaint, assessment, diagnosis, treatment_provided, plan_of_care,
-          bp, hr, rr, temp, status, version, created_at, locked_at, history
-        ) VALUES (
-          :id, :patientId, :therapistId, :serviceTypeId,
-          '', '', '', '', '', '', '', '', '',
-          'not_started', 1, NOW(), NOW(), '[]'
-        )`,
-        {
-          replacements: {
-            id,
-            patientId: appt.patient_id,
-            therapistId,
-            serviceTypeId: appt.service_type_id
-          },
-          type: QueryTypes.INSERT,
-          transaction: t
+      const link = `${process.env.FRONTEND_URL || ""}/dashboard/bookings`;
+      if (patient) {
+        await sequelize.query(
+          `INSERT INTO notifications (user_uid, type, title, message, link) VALUES (:uid, 'booking', :title, :message, :link)`,
+          { replacements: { uid: String(patient.id), title: "Therapist found", message: "Therapist found - please pay to confirm your session.", link: "/dashboard/bookings" }, type: QueryTypes.INSERT }
+        ).catch((e) => console.error("notification insert failed:", e.message));
+        if (patient.fcm_token) {
+          await firebaseNotifier.sendToTherapist(patient.fcm_token, "Therapist found", "Therapist found - please pay to confirm your session.", { appointmentId: String(id), type: "payment_required", link: "/dashboard/bookings" });
         }
-      );
+        if (patient.email) {
+          await transporter.sendMail({
+            from: `"Curevan Appointments" <${process.env.MAIL_FROM || process.env.MAIL_USER}>`,
+            to: patient.email,
+            subject: "Therapist found - please pay to confirm",
+            html: `<p>Hi ${patient.name || ""},</p><p>${therapist.name} accepted your request for ${appt.date} at ${appt.time}.</p><p>Please pay to confirm your session: <a href="${link}">Pay now</a></p>`,
+          });
+        }
+      }
+    } catch (notifyErr) {
+      console.error("Failed to notify patient of acceptance:", notifyErr.message);
     }
 
-    await t.commit();
     return res.json({ success: true, message: "Booking accepted successfully" });
   } catch (error) {
     await t.rollback();
     console.error("Error accepting booking:", error);
-    return res.status(500).json({ success: false, error: "Failed to accept booking: " + error.message });
+    return res.status(500).json({ success: false, error: "Failed to accept booking" });
   }
 };
 
@@ -1458,10 +1391,18 @@ exports.addReview = async (req, res) => {
 };
 
 // ✅ CONFIRM PAYMENT & THERAPIST PAYOUT
+/* Admin-only: record an OFFLINE payment (cash / UPI / bank transfer) collected by staff.
+   Online payments never come through here - they are confirmed by /api/payments/verify-booking. */
 exports.confirmPayment = async (req, res) => {
   const { id } = req.params;
-  const { paymentId, gateway } = req.body;
+  const { paymentId, gateway } = req.body || {};
   try {
+    if (!access.isAdmin(req.user)) {
+      return res.status(403).json({ success: false, error: "Forbidden" });
+    }
+    if (!/^manual_/.test(String(gateway || ""))) {
+      return res.status(400).json({ success: false, error: "Only manual (offline) payments can be recorded here" });
+    }
     const [appt] = await sequelize.query(
       `SELECT status, payment_status FROM appointments WHERE id = :id`,
       { replacements: { id }, type: QueryTypes.SELECT }
@@ -1469,15 +1410,16 @@ exports.confirmPayment = async (req, res) => {
     if (!appt) {
       return res.status(404).json({ success: false, error: "Appointment not found" });
     }
-    
-    const newStatus = appt.status === 'Payment Pending' ? 'Confirmed' : appt.status;
+
+    const newStatus = ['Payment Pending', 'Accepted'].includes(appt.status) ? 'Confirmed' : appt.status;
 
     await sequelize.query(
-      `UPDATE appointments SET status = :newStatus, payment_status = 'Paid' WHERE id = :id`,
-      { replacements: { id, newStatus }, type: QueryTypes.UPDATE }
+      `UPDATE appointments
+       SET status = :newStatus, payment_status = 'Paid', paid_at = NOW(), payment_method = :method
+       WHERE id = :id`,
+      { replacements: { id, newStatus, method: gateway }, type: QueryTypes.UPDATE }
     );
-    
-    // Also update corresponding payout_items record state to 'paid'
+
     await sequelize.query(
       `UPDATE payout_items SET state = 'paid' WHERE source_id = :id`,
       { replacements: { id: Number(id) }, type: QueryTypes.UPDATE }
@@ -1488,6 +1430,39 @@ exports.confirmPayment = async (req, res) => {
     console.error(e);
     return res.status(500).json({ success: false, error: "Payment confirmation failed" });
   }
+};
+
+/* Periodic clean-up of bookings nobody paid for (called from cron.js every 10 minutes):
+   - direct bookings unpaid for 30 minutes
+   - accepted requests still unpaid 2 hours before the slot                          */
+exports.cancelUnpaidAppointments = async () => {
+  let cancelled = 0;
+  const direct = await sequelize.query(
+    `UPDATE appointments SET status = 'cancelled_unpaid'
+     WHERE status = 'Pending' AND payment_status = 'Pending'
+       AND razorpay_order_id IS NOT NULL AND price_source = 'therapist_rate'
+       AND created_at < NOW() - interval '30 minutes'
+     RETURNING id`,
+    { type: QueryTypes.SELECT }
+  );
+  cancelled += direct.length;
+
+  const accepted = await sequelize.query(
+    `SELECT id, date, time, start_time FROM appointments
+     WHERE status IN ('Accepted', 'Payment Pending') AND payment_status = 'Pending'`,
+    { type: QueryTypes.SELECT }
+  );
+  for (const a of accepted) {
+    const start = access.slotStart(a);
+    if (start && start.getTime() - 2 * 3600 * 1000 <= Date.now()) {
+      await sequelize.query(
+        `UPDATE appointments SET status = 'cancelled_unpaid' WHERE id = :id AND payment_status = 'Pending'`,
+        { replacements: { id: a.id }, type: QueryTypes.UPDATE }
+      );
+      cancelled += 1;
+    }
+  }
+  return cancelled;
 };
 
 

@@ -31,7 +31,8 @@ router.post("/reject/:id", authMiddleware, requireRole("therapist"), responseHan
 router.put("/status/:id", authMiddleware, responseHandler, appointmentsController.updateAppointmentStatus);
 
 // ✅ POST confirm payment
-router.post("/:id/pay", authMiddleware, responseHandler, appointmentsController.confirmPayment);
+// admin only: records an OFFLINE payment (online payments use /api/payments/verify-booking)
+router.post("/:id/pay", authMiddleware, requireRole("admin.therapy", "admin.ecom"), responseHandler, appointmentsController.confirmPayment);
 
 // ✅ PATCH cancel appointment
 router.patch("/:id/cancel", authMiddleware, responseHandler, appointmentsController.cancelAppointment);

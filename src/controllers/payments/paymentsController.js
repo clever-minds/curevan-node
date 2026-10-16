@@ -2,6 +2,7 @@ const { QueryTypes } = require("sequelize");
 const { sequelize } = require("../../config/db");
 const transporter = require("../../config/mailer");
 const razorpay = require("../../services/razorpayService");
+const appointmentsController = require("../appointments/appointmentsController");
 
 /**
  * Mark a shop order as paid. Shared by the browser verify call (P06) and the webhook (P08).
@@ -209,3 +210,87 @@ exports.verifyPayment = async (req, res) => {
 };
 
 exports.confirmOrderPayment = confirmOrderPayment;
+
+/**
+ * Mark an appointment as paid after Razorpay is confirmed. Shared by the browser call and the webhook (P08).
+ * Idempotent. Creates the invoice + PCR only now.
+ */
+async function confirmBookingPayment({ razorpayOrderId, paymentId, signature = null, userId = null }) {
+  const transaction = await sequelize.transaction();
+  let appt;
+  let already = false;
+  let finalized;
+  try {
+    [appt] = await sequelize.query(
+      `SELECT * FROM appointments WHERE razorpay_order_id = :rzpId FOR UPDATE`,
+      { replacements: { rzpId: razorpayOrderId }, type: QueryTypes.SELECT, transaction }
+    );
+    if (!appt || (userId !== null && Number(appt.patient_id) !== Number(userId))) {
+      await transaction.rollback();
+      return { ok: false, status: 404, message: "Booking not found" };
+    }
+    if (["cancelled_unpaid", "Cancelled"].includes(appt.status) && appt.payment_status !== "Paid") {
+      await transaction.rollback();
+      return { ok: false, status: 409, message: "This booking was cancelled because it was not paid in time" };
+    }
+
+    if (appt.payment_status === "Paid") {
+      already = true;
+      finalized = await appointmentsController.finalizePaidBooking(appt, transaction); // no-op if they exist
+    } else {
+      const newStatus = ["Accepted", "Payment Pending"].includes(appt.status) ? "Confirmed" : appt.status;
+      await sequelize.query(
+        `UPDATE appointments
+         SET payment_status = 'Paid', status = :newStatus, paid_at = NOW(),
+             razorpay_payment_id = :paymentId, payment_method = 'razorpay'
+         WHERE id = :id`,
+        { replacements: { newStatus, paymentId, id: appt.id }, type: QueryTypes.UPDATE, transaction }
+      );
+      appt.status = newStatus;
+      finalized = await appointmentsController.finalizePaidBooking(appt, transaction);
+    }
+    await transaction.commit();
+  } catch (err) {
+    await transaction.rollback();
+    throw err;
+  }
+
+  if (!already) await appointmentsController.notifyPaidBooking(appt);
+
+  return {
+    ok: true,
+    data: {
+      appointmentId: appt.id,
+      invoiceId: finalized.invoiceId,
+      invoiceNumber: finalized.invoiceNumber,
+      paymentStatus: "Paid",
+      alreadyProcessed: already,
+    },
+  };
+}
+
+/* POST /api/payments/verify-booking */
+exports.verifyBookingPayment = async (req, res) => {
+  try {
+    const { razorpay_order_id, razorpay_payment_id, razorpay_signature } = req.body || {};
+    if (!razorpay_order_id || !razorpay_payment_id || !razorpay_signature) {
+      return res.status(400).json({ success: false, message: "razorpay_order_id, razorpay_payment_id and razorpay_signature are required" });
+    }
+    if (!razorpay.verifyPaymentSignature(razorpay_order_id, razorpay_payment_id, razorpay_signature)) {
+      return res.status(400).json({ success: false, message: "Payment verification failed" });
+    }
+    const result = await confirmBookingPayment({
+      razorpayOrderId: razorpay_order_id,
+      paymentId: razorpay_payment_id,
+      signature: razorpay_signature,
+      userId: req.user.id,
+    });
+    if (!result.ok) return res.status(result.status || 400).json({ success: false, message: result.message });
+    return res.json({ success: true, message: "Payment verified", data: result.data });
+  } catch (error) {
+    console.error("verifyBookingPayment error:", error);
+    return res.status(500).json({ success: false, message: "Failed to verify payment" });
+  }
+};
+
+exports.confirmBookingPayment = confirmBookingPayment;
