@@ -305,36 +305,6 @@ exports.inviteAdminUser = async (req, res) => {
   }
 };
 
-// usersController.js
-exports.forgotPassword = async (req, res, next) => {
-  try {
-    const { email } = req.body;
-
-    if (!email) {
-      return res.error("Email is required");
-    }
-
-    const user = await User.findOne({ email });
-    if (!user) {
-      return res.error("User not found");
-    }
-
-    // Generate reset token (implement in User model)
-    const resetToken = user.generatePasswordResetToken();
-    await user.save();
-
-    // Send reset email
-    const resetLink = `${process.env.FRONTEND_URL}/reset-password/${resetToken}`;
-    await sendEmail(user.email, "Password Reset Request", `Click here to reset: ${resetLink}`);
-
-    return res.success(null, "Password reset link sent to your email");
-  } catch (err) {
-    return res.error("Failed to send password reset link");
-  }
-};
-
-
-
 exports.updateUserRoles = async (req, res) => {
   try {
     const { id, roles } = req.body;
