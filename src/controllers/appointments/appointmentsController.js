@@ -108,8 +108,16 @@ exports.getAppointmentById = async (req, res) => {
          a.service_address_id AS "serviceAddress",
          a.payment_status AS "paymentStatus",
          a.pcr_status AS "pcrStatus",
-         a.verification_status AS "verificationStatus"
+         a.verification_status AS "verificationStatus",
+         a.session_started_at AS "sessionStartedAt",
+         a.travel_started_at AS "travelStartedAt",
+         a.arrived_at AS "arrivedAt",
+         a.completed_at AS "completedAt",
+         CASE WHEN oa.id IS NULL THEN NULL ELSE jsonb_build_object(
+           'fullAddress', oa.full_address, 'city', oa.city, 'state', oa.state, 'pincode', oa.pincode,
+           'lat', to_jsonb(oa)->'lat', 'lng', to_jsonb(oa)->'lng') END AS "serviceAddressDetail"
        FROM appointments a
+       LEFT JOIN order_addresses oa ON oa.id = a.service_address_id
        WHERE a.id = :id`,
       { replacements: { id }, type: QueryTypes.SELECT }
     );
@@ -203,10 +211,18 @@ exports.listAppointmentsForUser = async (req, res) => {
          a.payment_status AS "paymentStatus",
          a.pcr_status AS "pcrStatus",
          a.verification_status AS "verificationStatus",
+         a.session_started_at AS "sessionStartedAt",
+         a.travel_started_at AS "travelStartedAt",
+         a.arrived_at AS "arrivedAt",
+         a.completed_at AS "completedAt",
+         CASE WHEN oa.id IS NULL THEN NULL ELSE jsonb_build_object(
+           'fullAddress', oa.full_address, 'city', oa.city, 'state', oa.state, 'pincode', oa.pincode,
+           'lat', to_jsonb(oa)->'lat', 'lng', to_jsonb(oa)->'lng') END AS "serviceAddressDetail",
          tr.rating,
          tr.review
        FROM appointments a
        LEFT JOIN therapist_reviews tr ON tr.appointment_id = a.id
+       LEFT JOIN order_addresses oa ON oa.id = a.service_address_id
        WHERE ${field} = :userId
        ORDER BY a.date DESC`,
       { replacements: { userId }, type: QueryTypes.SELECT }

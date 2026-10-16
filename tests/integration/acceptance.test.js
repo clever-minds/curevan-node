@@ -545,6 +545,17 @@ async function seed() {
   r = await call("GET", "/api/config/public");
   check("P12 /api/config/public gives the 60-minute timer and the 45-minute travel window", r.s === 200 && r.j.data.session.timerMinutes === 60 && r.j.data.visit.travelFromMinutesBefore === 45 && r.j.data.otp.length === 4, "got " + r.s + " " + (r.raw || "").slice(0, 100));
 
+  // address only inside the visit window (P04 + P12)
+  const [addr] = await q("INSERT INTO order_addresses(user_id, address_type, full_name, full_address, city, state, pincode) VALUES ($1,'shipping','Patient One','12 Test Lane','Vadodara','Gujarat','390001') RETURNING id", [U.p1.id]);
+  const nearA = await mkVisit(20, "confirmed"); const farA = await mkVisit(60 * 24 * 30, "confirmed");
+  await q("UPDATE appointments SET service_address_id = $1 WHERE id = ANY($2)", [addr.id, [nearA, farA]]);
+  r = await call("GET", "/api/appointments/" + nearA, T.t1);
+  check("P12 the therapist gets the full address + session timestamps inside the 2-hour window", r.s === 200 && r.j.data.serviceAddressDetail && r.j.data.serviceAddressDetail.fullAddress === "12 Test Lane" && "sessionStartedAt" in r.j.data, "got " + r.s + " " + (r.raw || "").slice(0, 160));
+  r = await call("GET", "/api/appointments/" + farA, T.t1);
+  check("P12 ...but no address days before the slot", r.s === 200 && r.j.data.serviceAddressDetail === null, "got " + r.s + " " + JSON.stringify(r.j && r.j.data && r.j.data.serviceAddressDetail));
+  r = await call("GET", "/api/appointments/" + farA, T.p1);
+  check("P12 the patient always sees their own address", r.s === 200 && r.j.data.serviceAddressDetail && r.j.data.serviceAddressDetail.city === "Vadodara", "got " + r.s);
+
   // invoices
   r = await call("GET", "/api/invoices/list", T.su);
   const allInv = (await q("SELECT COUNT(*)::int AS n FROM invoices"))[0].n;

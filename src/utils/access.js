@@ -87,6 +87,7 @@ function sanitizeAppointmentForViewer(user, appt) {
   const isPatient = same(apptPatientId(appt), user.id);
   if (!isPatient && same(apptTherapistId(appt), user.id) && !withinAddressWindow(appt)) {
     if ("serviceAddress" in out) out.serviceAddress = null;
+    if ("serviceAddressDetail" in out) out.serviceAddressDetail = null;
     if ("service_address_id" in out) out.service_address_id = null;
   }
   return out;
