@@ -10,3 +10,6 @@ firebase-service-account.json
 *service-account*.json
 firebase-service-account.json
 uploads/
+
+# build output
+.next/
