@@ -49,4 +49,19 @@ function verifyPaymentSignature(orderId, paymentId, signature) {
   return safeEqualHex(expected, signature);
 }
 
-module.exports = { createOrder, verifyPaymentSignature, getKeyId, safeEqualHex };
+// Razorpay signs the RAW webhook body with the webhook secret (set in the Razorpay dashboard).
+function verifyWebhookSignature(rawBody, signature) {
+  const secret = process.env.RAZORPAY_WEBHOOK_SECRET;
+  if (!secret || !signature || !rawBody) return false;
+  const expected = crypto.createHmac("sha256", secret).update(rawBody).digest("hex");
+  return safeEqualHex(expected, signature);
+}
+
+// Refund (all or part) of a captured payment. Amount in paise.
+async function refund(paymentId, amountPaise, notes = {}) {
+  if (!paymentId) throw new Error("paymentId is required");
+  if (!Number.isInteger(amountPaise) || amountPaise < 100) throw new Error("Invalid refund amount");
+  return getClient().payments.refund(paymentId, { amount: amountPaise, speed: "normal", notes });
+}
+
+module.exports = { createOrder, verifyPaymentSignature, verifyWebhookSignature, refund, getKeyId, safeEqualHex };

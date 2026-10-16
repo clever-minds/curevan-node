@@ -5,6 +5,7 @@ const firebaseNotifier = require("../../utils/firebaseNotifier");
 const access = require("../../utils/access");
 const rules = require("../../config/businessRules");
 const razorpay = require("../../services/razorpayService");
+const refundService = require("../../services/refundService");
 const { calculateCouponDiscount } = require("../coupons/CouponsController");
 const { checkServiceability, getPickupLocations } = require("../../services/shiprocketService");
 
@@ -873,12 +874,13 @@ const { checkServiceability, getPickupLocations } = require("../../services/ship
 /* =====================================================
    STOCK RESERVATION HELPERS (unpaid orders)
 ===================================================== */
-async function releasePendingOrders({ userId = null, olderThanMinutes = 0, transaction = null } = {}) {
+async function releasePendingOrders({ userId = null, orderId = null, olderThanMinutes = 0, transaction = null } = {}) {
   const t = transaction || (await sequelize.transaction());
   try {
     const where = ["status = 'pending_payment'", "payment_status <> 'Paid'"];
     const replacements = {};
     if (userId) { where.push("user_id = :userId"); replacements.userId = userId; }
+    if (orderId) { where.push("id = :orderId"); replacements.orderId = orderId; }
     if (olderThanMinutes) { where.push("created_at < NOW() - make_interval(mins => :mins)"); replacements.mins = olderThanMinutes; }
 
     const pending = await sequelize.query(
@@ -922,6 +924,7 @@ async function releasePendingOrders({ userId = null, olderThanMinutes = 0, trans
 // Called from the scheduler: unpaid orders older than 30 minutes give their stock back.
 exports.releaseExpiredPendingOrders = () => releasePendingOrders({ olderThanMinutes: 30 });
 exports.releasePendingOrders = releasePendingOrders;
+exports.releasePendingOrdersForOrder = (orderId, transaction) => releasePendingOrders({ orderId, transaction });
 
 const r2 = (n) => Math.round((Number(n) + Number.EPSILON) * 100) / 100;
 
@@ -1450,102 +1453,104 @@ exports.validateCartStock = async (req, res) => {
 
 exports.cancelOrder = async (req, res) => {
   const transaction = await sequelize.transaction();
+  let refundResult = null;
 
   try {
     const orderId = req.params.id;
     const userId = req.user.id;
 
-    // 1️⃣ Get Order
+    // 1️⃣ Get Order (own order only)
     const orders = await sequelize.query(
-      `SELECT id, status 
-       FROM orders 
-       WHERE id = :orderId AND user_id = :userId`,
-      {
-        replacements: { orderId, userId },
-        type: QueryTypes.SELECT,
-        transaction
-      }
+      `SELECT id, status, payment_status FROM orders WHERE id = :orderId AND user_id = :userId FOR UPDATE`,
+      { replacements: { orderId, userId }, type: QueryTypes.SELECT, transaction }
     );
 
     if (!orders.length) {
       await transaction.rollback();
-      return res.status(404).json({
-        success: false,
-        message: "Order not found"
-      });
+      return res.status(404).json({ success: false, message: "Order not found" });
     }
 
     const order = orders[0];
+    const unpaid = ["pending_payment", "Pending"].includes(order.status) && order.payment_status !== "Paid";
+    const paidNotShipped = order.payment_status === "Paid" && ["Placed", "Pending"].includes(order.status);
 
-    // ❌ Only Pending allowed
-    if (order.status !== "Pending") {
+    // Only an unpaid order, or a paid order that has not been shipped, can be cancelled
+    if (!unpaid && !paidNotShipped) {
       await transaction.rollback();
-      return res.status(400).json({
-        success: false,
-        message: "Only Pending orders can be Cancelled"
-      });
+      return res.status(400).json({ success: false, message: "This order can no longer be cancelled" });
     }
 
-    // 2️⃣ Get Order Items
-    const orderItems = await sequelize.query(
-      `SELECT oi.qty, i.id AS inventory_id
-       FROM order_items oi
-       JOIN inventory i ON oi.sku = i.sku
-       WHERE oi.order_id = :orderId`,
-      {
-        replacements: { orderId },
-        type: QueryTypes.SELECT,
-        transaction
-      }
+    // 2️⃣ Give the stock back
+    const reservations = await sequelize.query(
+      `SELECT inventory_id, qty FROM order_stock_reservations WHERE order_id = :orderId AND released_at IS NULL`,
+      { replacements: { orderId }, type: QueryTypes.SELECT, transaction }
     );
-
-    if (!orderItems.length) {
-      await transaction.rollback();
-      return res.status(400).json({
-        success: false,
-        message: "No order items found"
-      });
+    if (reservations.length) {
+      for (const r of reservations) {
+        await sequelize.query(
+          `UPDATE inventory SET on_hand = on_hand + :qty, reserved = reserved - :qty, updated_at = CURRENT_TIMESTAMP WHERE id = :inventoryId`,
+          { replacements: { qty: r.qty, inventoryId: r.inventory_id }, type: QueryTypes.UPDATE, transaction }
+        );
+      }
+      await sequelize.query(
+        `UPDATE order_stock_reservations SET released_at = NOW() WHERE order_id = :orderId AND released_at IS NULL`,
+        { replacements: { orderId }, type: QueryTypes.UPDATE, transaction }
+      );
+    } else {
+      // orders created before stock reservations existed
+      const orderItems = await sequelize.query(
+        `SELECT oi.qty, i.id AS inventory_id
+         FROM order_items oi JOIN inventory i ON oi.sku = i.sku
+         WHERE oi.order_id = :orderId`,
+        { replacements: { orderId }, type: QueryTypes.SELECT, transaction }
+      );
+      for (const item of orderItems) {
+        await sequelize.query(
+          `UPDATE inventory SET on_hand = on_hand + :qty WHERE id = :inventoryId`,
+          { replacements: { qty: item.qty, inventoryId: item.inventory_id }, transaction }
+        );
+      }
     }
 
-    // 3️⃣ Restore Inventory (NO reserved)
-    for (const item of orderItems) {
+    // 3️⃣ Update Order Status
+    await sequelize.query(
+      `UPDATE orders SET status = 'Cancelled' WHERE id = :orderId`,
+      { replacements: { orderId }, transaction }
+    );
+    if (unpaid) {
       await sequelize.query(
-        `UPDATE inventory
-         SET on_hand = on_hand + :qty
-         WHERE id = :inventoryId`,
-        {
-          replacements: {
-            qty: item.qty,
-            inventoryId: item.inventory_id
-          },
-          transaction
-        }
+        `UPDATE payment_transactions SET status = 'failed' WHERE order_id = :orderId AND status = 'pending'`,
+        { replacements: { orderId }, type: QueryTypes.UPDATE, transaction }
       );
     }
 
-    // 4️⃣ Update Order Status
-    await sequelize.query(
-      `UPDATE orders
-       SET status = 'Cancelled'
-       WHERE id = :orderId`,
-      {
-        replacements: { orderId },
-        transaction
-      }
-    );
-
     await transaction.commit();
+
+    // 4️⃣ A paid order is refunded in full through Razorpay (final status arrives by webhook)
+    if (paidNotShipped) {
+      try {
+        refundResult = await refundService.refund({
+          orderId: Number(orderId),
+          reason: "Order cancelled by customer",
+          actorId: userId,
+        });
+      } catch (refundErr) {
+        console.error("Refund after cancel failed:", refundErr.message);
+        refundResult = { error: refundErr.message };
+      }
+    }
 
     try {
       if (req.user?.email) {
         await transporter.sendMail({
-          from: `"Curevan Orders" <${process.env.MAIL_USER}>`,
+          from: `"Curevan Orders" <${process.env.MAIL_FROM || process.env.MAIL_USER}>`,
           to: req.user.email,
           subject: `Order Cancelled - #${orderId}`,
           html: `
             <h3>Order Cancelled</h3>
             <p>Hi ${req.user.name || 'Customer'},</p>
             <p>Your order #${orderId} has been cancelled successfully.</p>
+            ${paidNotShipped ? "<p>Your payment will be refunded to the original payment method.</p>" : ""}
             <p>If you have any questions, please contact our support team.</p>
           `
         });
@@ -1556,7 +1561,9 @@ exports.cancelOrder = async (req, res) => {
 
     return res.json({
       success: true,
-      message: `Order #${orderId} Cancelled successfully`
+      message: `Order #${orderId} Cancelled successfully`,
+      refund: refundResult && !refundResult.error ? { refundId: refundResult.refundId, status: refundResult.status, amount: refundResult.amount } : undefined,
+      refundWarning: refundResult && refundResult.error ? "Order cancelled, but the automatic refund could not be started. Support will refund it manually." : undefined,
     });
 
   } catch (error) {
@@ -1566,8 +1573,7 @@ exports.cancelOrder = async (req, res) => {
 
     return res.status(500).json({
       success: false,
-      message: "Failed to cancel order",
-      error: error.message
+      message: "Failed to cancel order"
     });
   }
 };
