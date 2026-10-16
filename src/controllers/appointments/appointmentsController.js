@@ -1075,7 +1075,7 @@ exports.createBookingRequest = async (req, res) => {
            AND u.status = 'active'
            AND tp.profile_status = 'approved'
            AND u.fcm_token IS NOT NULL 
-           AND :serviceTypeId::text = ANY(tp.specialty)
+           AND :serviceTypeId::int = ANY(tp.specialty)
            AND NOT EXISTS (
           SELECT 1 FROM therapist_leaves tl
           JOIN therapist_profiles tp_tl ON tl.therapist_id = tp_tl.id
@@ -1122,7 +1122,8 @@ exports.createBookingRequest = async (req, res) => {
 // ✅ 2. GET AVAILABLE REQUESTS (Matchmaking Logic)
 exports.getAvailableRequests = async (req, res) => {
   try {
-    const { therapistId } = req.query;
+    // a therapist always sees the matches for themself; only an admin may ask for someone else
+    const therapistId = access.isAdmin(req.user) ? req.query.therapistId : req.user.id;
 
     let query = `
        SELECT 
