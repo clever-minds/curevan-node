@@ -1,4 +1,5 @@
 const { QueryTypes } = require("sequelize");
+const access = require("../../utils/access");
 const { sequelize } = require("../../config/db");
 const transporter = require("../../config/mailer");
 const firebaseNotifier = require("../../utils/firebaseNotifier");
@@ -106,9 +107,10 @@ exports.getAppointmentById = async (req, res) => {
       { replacements: { id }, type: QueryTypes.SELECT }
     );
 
-    if (!appt) return res.error("Appointment not found");
+    if (!appt) return res.error("Appointment not found", 404);
+    if (!access.canAccessAppointment(req.user, appt)) return res.error("Forbidden", 403);
 
-    return res.success(appt, "Appointment fetched successfully");
+    return res.success(access.sanitizeAppointmentForViewer(req.user, appt), "Appointment fetched successfully");
   } catch (error) {
     console.error(error);
     return res.error("Failed to fetch appointment");
@@ -118,8 +120,9 @@ exports.getAppointmentById = async (req, res) => {
 // ✅ LIST APPOINTMENTS FOR USER
 exports.listAppointmentsForUser = async (req, res) => {
   try {
-    const { userId } = req.params;
     const { role } = req.query; // 'patient' or 'therapist'
+    // Non-admins can only list their own appointments, whatever id is in the URL.
+    const userId = access.isAdmin(req.user) ? req.params.userId : req.user.id;
 
     if (!userId || !role) return res.error("User ID and role required");
 
@@ -160,7 +163,10 @@ exports.listAppointmentsForUser = async (req, res) => {
       { replacements: { userId }, type: QueryTypes.SELECT }
     );
 
-    return res.success(appointments, "User appointments fetched successfully");
+    return res.success(
+      appointments.map((a) => access.sanitizeAppointmentForViewer(req.user, a)),
+      "User appointments fetched successfully"
+    );
   } catch (error) {
     console.error(error);
     return res.error("Failed to fetch user appointments");
@@ -629,6 +635,17 @@ exports.getPCRByBookingId = async (req, res) => {
   }
 
   try {
+    const [owner] = await sequelize.query(
+      `SELECT patient_id, therapist_id FROM appointments WHERE id = :appointmentId`,
+      { replacements: { appointmentId }, type: QueryTypes.SELECT }
+    );
+    if (!owner) return res.error("PCR not found", 404);
+    const allowed =
+      access.isClinicalAdmin(req.user) ||
+      access.same(owner.patient_id, req.user.id) ||
+      access.same(owner.therapist_id, req.user.id);
+    if (!allowed) return res.error("Forbidden", 403);
+
     const rows = await sequelize.query(
       `SELECT 
         pcr.*, 
@@ -821,6 +838,18 @@ exports.updatePcr = async (req, res) => {
     return res.status(400).json({ success: false, error: "PCR Id is required" });
   }
 
+  // Ownership: assigned therapist (while not locked) or clinical admin (lock / unlock / return).
+  const [owner] = await sequelize.query(
+    `SELECT patient_id, therapist_id FROM appointments WHERE id = :appointmentId`,
+    { replacements: { appointmentId }, type: QueryTypes.SELECT }
+  );
+  if (!owner) return res.status(404).json({ success: false, error: "PCR not found" });
+  const clinicalAdmin = access.isClinicalAdmin(req.user);
+  const assignedTherapist = access.same(owner.therapist_id, req.user.id);
+  if (!clinicalAdmin && !assignedTherapist) {
+    return res.status(403).json({ success: false, error: "Forbidden" });
+  }
+
   const t = await sequelize.transaction();
 
   try {
@@ -840,6 +869,21 @@ exports.updatePcr = async (req, res) => {
     }
 
     const existing = current[0];
+
+    if (!clinicalAdmin) {
+      const requested = String(data.status || "").toLowerCase();
+      if (String(existing.status || "").toLowerCase() === "locked") {
+        await t.rollback();
+        return res.status(403).json({ success: false, error: "PCR is locked" });
+      }
+      if (requested === "locked" || requested === "returned") {
+        await t.rollback();
+        return res.status(403).json({ success: false, error: "Only an admin can lock or return a PCR" });
+      }
+      // a therapist cannot set lock metadata
+      delete data.lockedBy;
+      delete data.lockedAt;
+    }
 
     // 2️⃣ Normalize status ONLY for appointments table
     let normalizedStatus = existing.status; // default
@@ -1319,6 +1363,20 @@ exports.updateAppointmentStatus = async (req, res) => {
   const { status } = req.body || {}; 
 
   try {
+    const [appt] = await sequelize.query(
+      `SELECT patient_id, therapist_id FROM appointments WHERE id = :id`,
+      { replacements: { id }, type: QueryTypes.SELECT }
+    );
+    if (!appt) return res.status(404).json({ success: false, error: "Appointment not found" });
+    if (!access.canAccessAppointment(req.user, appt)) {
+      return res.status(403).json({ success: false, error: "Forbidden" });
+    }
+    // Until the status state machine (P12) and cancellation policy (P14) exist,
+    // a patient may only cancel their own booking.
+    if (!access.isAdmin(req.user) && !access.same(appt.therapist_id, req.user.id) && status !== "Cancelled") {
+      return res.status(403).json({ success: false, error: "Forbidden" });
+    }
+
     await sequelize.query(
       `UPDATE appointments SET status = :status WHERE id = :id`,
       {
@@ -1349,6 +1407,10 @@ exports.addReview = async (req, res) => {
       return res.status(404).json({ success: false, error: "Appointment not found" });
     }
     
+    if (!access.same(appt.patient_id, req.user.id)) {
+      return res.status(403).json({ success: false, error: "Only the patient of this booking can review it" });
+    }
+
     if (appt.status !== 'Completed') {
       return res.status(400).json({ success: false, error: "You can only review completed sessions" });
     }

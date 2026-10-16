@@ -1,6 +1,20 @@
 const { QueryTypes } = require("sequelize");
 const { sequelize } = require("../config/db");
 const transporter = require("../config/mailer");
+const access = require("../utils/access");
+const { hasRole } = require("../middlewares/requireRole");
+
+// Ticket owner or Super Admin only.
+async function ticketAccess(req, ticketId) {
+  const [t] = await sequelize.query(
+    `SELECT id, user_id FROM tickets WHERE id = :ticketId`,
+    { replacements: { ticketId }, type: QueryTypes.SELECT }
+  );
+  if (!t) return { status: 404 };
+  if (hasRole(req.user, "admin.super") || access.same(t.user_id, req.user.id)) return { ok: true };
+  return { status: 403 };
+}
+
 
 
 exports.createTicket = async (req, res) => {
@@ -112,6 +126,9 @@ exports.getTicket = async (req, res) => {
   try {
     const { id } = req.params;
 
+    const check = await ticketAccess(req, id);
+    if (!check.ok) return res.error(check.status === 404 ? "Ticket not found" : "Forbidden", check.status);
+
     const [ticket] = await sequelize.query(
       `SELECT * FROM tickets WHERE id = :id`,
       {
@@ -148,8 +165,11 @@ exports.replyTicket = async (req, res) => {
     const { ticket_id, message } = req.body;
 
     if (!ticket_id || !message) {
-      return res.error("Ticket id and message required");
+      return res.error("Ticket id and message required", 400);
     }
+
+    const check = await ticketAccess(req, ticket_id);
+    if (!check.ok) return res.error(check.status === 404 ? "Ticket not found" : "Forbidden", check.status);
 
     await sequelize.query(
       `INSERT INTO ticket_messages
@@ -174,7 +194,7 @@ exports.replyTicket = async (req, res) => {
       );
 
       if (ticketInfo) {
-        const isUserReplying = (ticketInfo.user_id === userId);
+        const isUserReplying = access.same(ticketInfo.user_id, userId);
         
         if (isUserReplying) {
           await transporter.sendMail({
@@ -216,6 +236,9 @@ exports.replyTicket = async (req, res) => {
 exports.closeTicket = async (req, res) => {
   try {
     const { id } = req.params;
+
+    const check = await ticketAccess(req, id);
+    if (!check.ok) return res.error(check.status === 404 ? "Ticket not found" : "Forbidden", check.status);
 
     await sequelize.query(
       `UPDATE tickets

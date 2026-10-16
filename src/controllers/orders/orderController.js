@@ -2,6 +2,7 @@ const { QueryTypes } = require("sequelize");
 const { sequelize } = require("../../config/db");
 const transporter = require("../../config/mailer");
 const firebaseNotifier = require("../../utils/firebaseNotifier");
+const access = require("../../utils/access");
 const { checkServiceability, getPickupLocations } = require("../../services/shiprocketService");
 
 // exports.createOrderFromCart = async (req, res) => {
@@ -1827,7 +1828,7 @@ exports.getOrderById = async (req, res) => {
     const orderData = order[0];
 
     // 🔐 Access Control
-    if (userRole !== "admin" && orderData.user_id !== userId) {
+    if (!access.canAccessOrder(req.user, orderData)) {
       return res.error("Forbidden", 403);
     }
 
@@ -1952,18 +1953,17 @@ exports.getInvoiceById = async (req, res) => {
     );
 
     if (!invoice.length) {
-      return res.error("Invoice not found");
+      return res.error("Invoice not found", 404);
     }
 
     const invoiceData = invoice[0];
 
     // 2️⃣ Role based access control
-    const allowedRoles = ["admin", "superadmin", "super_admin", "therapyAdmin"];
     let isAuthorized = false;
 
-    if (allowedRoles.includes(userRole)) {
+    if (access.isAdmin(req.user)) {
       isAuthorized = true;
-    } else if (invoiceData.user_id === userId) {
+    } else if (access.same(invoiceData.user_id, userId)) {
       isAuthorized = true;
     } else if (invoiceData.booking_id) {
       // Check if user is the therapist for this appointment
@@ -1971,13 +1971,13 @@ exports.getInvoiceById = async (req, res) => {
         `SELECT therapist_id FROM appointments WHERE id = :bookingId`,
         { replacements: { bookingId: invoiceData.booking_id }, type: QueryTypes.SELECT }
       );
-      if (appt && appt.therapist_id === userId) {
+      if (appt && access.same(appt.therapist_id, userId)) {
         isAuthorized = true;
       }
     }
 
     if (!isAuthorized) {
-      return res.error("Forbidden");
+      return res.error("Forbidden", 403);
     }
 
     // 3️⃣ Determine intra-state or inter-state

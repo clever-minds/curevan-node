@@ -1,5 +1,6 @@
 const { QueryTypes } = require("sequelize");
 const { sequelize } = require("../../config/db");
+const access = require("../../utils/access");
 
 /* =====================================================
    LIST ORDER ADDRESSES (LOGIN USER)
@@ -67,19 +68,36 @@ exports.getOrderAddressById = async (req, res) => {
         created_at AS "createdAt",
         updated_at AS "updatedAt"
       FROM order_addresses
-      WHERE id = :id
-      AND user_id = :userId`,
+      WHERE id = :id`,
       {
-        replacements: { id, userId },
+        replacements: { id },
         type: QueryTypes.SELECT
       }
     );
 
     if (!result.length) {
-      return res.error("Order address not found");
+      return res.error("Order address not found", 404);
     }
 
-    return res.success(result[0], "Order address fetched successfully");
+    const address = result[0];
+    let allowed = access.same(address.userId, userId) || access.isAdmin(req.user);
+
+    // The assigned therapist may see the visit address only inside the visit window.
+    if (!allowed) {
+      const [appt] = await sequelize.query(
+        `SELECT date, time, start_time, therapist_id, patient_id
+         FROM appointments
+         WHERE service_address_id = :id AND therapist_id = :userId`,
+        { replacements: { id, userId }, type: QueryTypes.SELECT }
+      );
+      allowed = !!appt && access.same(appt.therapist_id, userId) && access.withinAddressWindow(appt);
+    }
+
+    if (!allowed) {
+      return res.error("Forbidden", 403);
+    }
+
+    return res.success(address, "Order address fetched successfully");
 
   } catch (error) {
     console.error(error);

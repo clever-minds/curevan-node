@@ -1,4 +1,5 @@
 const { QueryTypes } = require("sequelize");
+const access = require("../../utils/access");
 const { sequelize } = require("../../config/db");
 
 exports.addAuditLog = async (req, res) => {
@@ -175,10 +176,12 @@ exports.getPayoutItemBySourceId = async (req, res) => {
     const { sourceId } = req.params;
     if (!sourceId) return res.status(400).json({ message: "sourceId required" });
 
+    // Therapists only see their own payout lines; admins see all.
+    const ownerOnly = !access.isAdmin(req.user);
     const [item] = await sequelize.query(
-      `SELECT * FROM payout_items WHERE source_id = :sourceId`,
+      `SELECT * FROM payout_items WHERE source_id = :sourceId${ownerOnly ? " AND therapist_id = :uid" : ""}`,
       {
-        replacements: { sourceId: Number(sourceId) },
+        replacements: { sourceId: Number(sourceId), uid: req.user.id },
         type: QueryTypes.SELECT,
       }
     );
@@ -196,7 +199,8 @@ exports.getPayoutItemBySourceId = async (req, res) => {
  */
 exports.listPayoutItems = async (req, res) => {
   try {
-    const { therapistId } = req.query;
+    // Non-admins (therapists) are always limited to their own rows, whatever is in the query string.
+    const therapistId = access.isAdmin(req.user) ? req.query.therapistId : req.user.id;
 
 let query = `SELECT payout_items.gross_amount AS "grossAmount",payout_items.therapist_id AS "therapistId",payout_items.platform_fee_amount AS "platformFeeAmount",
     u.name AS "therapistName",tp.pan_number AS "therapistPan",payout_items.source_id AS "sourceId",payout_items.gst_on_platform_fee AS "gstOnPlatformFee",
@@ -737,6 +741,18 @@ exports.updateKnowledgeBase = async (req, res) => {
 
     if (!id) {
       return res.status(400).json({ message: "Journal ID required" });
+    }
+
+    // Therapists may only edit their own posts; admins can edit any.
+    if (!access.isAdmin(req.user)) {
+      const [post] = await sequelize.query(
+        `SELECT author_id FROM knowledge_base WHERE id = :id`,
+        { replacements: { id }, type: QueryTypes.SELECT }
+      );
+      if (!post) return res.status(404).json({ message: "Journal not found" });
+      if (!access.same(post.author_id, req.user.id)) {
+        return res.status(403).json({ message: "Forbidden" });
+      }
     }
 
     const formattedTags = tags.length ? `{${tags.join(",")}}` : null;

@@ -1,4 +1,5 @@
 const { QueryTypes } = require("sequelize");
+const access = require("../../utils/access");
 const { sequelize } = require("../../config/db");
 const { v4: uuidv4 } = require("uuid");
 const bcrypt = require("bcrypt");
@@ -575,6 +576,9 @@ exports.registerTherapist = async (req, res) => {
 // };
 
 exports.updateProfile = async (req, res) => {
+  if (!access.isAdmin(req.user) && !access.isSelfParam(req.user, req.params.userId)) {
+    return res.status(403).json({ status: false, message: "Forbidden" });
+  }
   const t = await sequelize.transaction();
 
   try {
@@ -860,7 +864,11 @@ exports.getProfile = async (req, res) => {
       });
     }
 
-    const profile = result[0];
+    let profile = result[0];
+    // Only the therapist themself or an admin gets contact / bank / KYC details.
+    if (!access.isAdmin(req.user) && !access.same(profile.user_id, req.user.id)) {
+      profile = access.stripTherapistPrivate(profile);
+    }
 
     // 2️⃣ Convert specialty to array and map to names
     const serviceTypesRows = await sequelize.query('SELECT id, name FROM service_types', { type: QueryTypes.SELECT });
@@ -1089,6 +1097,7 @@ exports.listUsersWithProfiles = async (req, res) => {
       const idToName = {};
       serviceTypesRows.forEach(st => { idToName[st.id] = st.name; });
 
+      const viewerIsAdmin = access.isAdmin(access.optionalUser(req));
       const usersWithAvailability = users.map(user => {
 
         const userAvail = availabilities
@@ -1114,10 +1123,8 @@ exports.listUsersWithProfiles = async (req, res) => {
         user.specialtyIds = specArray.map(id => Number(id) || id);
         user.specialty = specArray.map(id => idToName[id] || id);
 
-        return {
-          ...user,
-          availability: userAvail
-        };
+        const merged = { ...user, availability: userAvail };
+        return viewerIsAdmin ? merged : access.stripTherapistPrivate(merged);
 
       });
 
@@ -1131,13 +1138,15 @@ exports.listUsersWithProfiles = async (req, res) => {
     const idToName = {};
     serviceTypesRows.forEach(st => { idToName[st.id] = st.name; });
 
+    const viewerIsAdmin = access.isAdmin(access.optionalUser(req));
     res.json({
       status: true,
       data: users.map(u => {
         let specArray = Array.isArray(u.specialty) ? u.specialty : (u.specialty ? u.specialty.replace(/[{}]/g, "").split(",") : []);
         u.specialtyIds = specArray.map(id => Number(id) || id);
         u.specialty = specArray.map(id => idToName[id] || id);
-        return { ...u, availability: [] };
+        const merged = { ...u, availability: [] };
+        return viewerIsAdmin ? merged : access.stripTherapistPrivate(merged);
       })
     });
 
@@ -1338,6 +1347,7 @@ exports.listUsersWithProfilesInRadius = async (req, res) => {
       const idToName = {};
       serviceTypesRows.forEach(st => { idToName[st.id] = st.name; });
 
+      const viewerIsAdmin = access.isAdmin(access.optionalUser(req));
       const usersWithAvailability = users.map(user => {
         const userAvail = availabilities
           .filter(a => a.therapist_id === user.therapist_id)
@@ -1358,10 +1368,8 @@ exports.listUsersWithProfilesInRadius = async (req, res) => {
         user.specialtyIds = specArray.map(id => Number(id) || id);
         user.specialty = specArray.map(id => idToName[id] || id);
 
-        return {
-          ...user,
-          availability: userAvail
-        };
+        const merged = { ...user, availability: userAvail };
+        return viewerIsAdmin ? merged : access.stripTherapistPrivate(merged);
       });
 
       return res.json({
@@ -1374,13 +1382,15 @@ exports.listUsersWithProfilesInRadius = async (req, res) => {
     const idToName = {};
     serviceTypesRows.forEach(st => { idToName[st.id] = st.name; });
 
+    const viewerIsAdmin = access.isAdmin(access.optionalUser(req));
     res.json({
       status: true,
       data: users.map(u => {
         let specArray = Array.isArray(u.specialty) ? u.specialty : (u.specialty ? u.specialty.replace(/[{}]/g, "").split(",") : []);
         u.specialtyIds = specArray.map(id => Number(id) || id);
         u.specialty = specArray.map(id => idToName[id] || id);
-        return { ...u, availability: [] };
+        const merged = { ...u, availability: [] };
+        return viewerIsAdmin ? merged : access.stripTherapistPrivate(merged);
       })
     });
 
@@ -1482,6 +1492,9 @@ exports.getAvailability = async (req, res) => {
 exports.getDashboardStats = async (req, res) => {
   try {
     const { therapistId } = req.params;
+    if (!access.isAdmin(req.user) && !access.same(therapistId, req.user.id)) {
+      return res.status(403).json({ status: false, message: "Forbidden" });
+    }
 
     // 1. KPIs
     // Sessions Completed (status = Completed)
@@ -1589,6 +1602,9 @@ exports.getDashboardStats = async (req, res) => {
 exports.getEarnings = async (req, res) => {
   try {
     const { therapistId } = req.params;
+    if (!access.isAdmin(req.user) && !access.same(therapistId, req.user.id)) {
+      return res.status(403).json({ status: false, message: "Forbidden" });
+    }
 
     // Fetch payout history (summarized by week)
     const payoutHistoryQuery = await sequelize.query(

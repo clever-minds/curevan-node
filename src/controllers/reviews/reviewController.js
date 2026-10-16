@@ -1,4 +1,5 @@
 const { QueryTypes } = require('sequelize');
+const access = require("../../utils/access");
 const { sequelize } = require('../../config/db');
 
 /* =========================
@@ -150,13 +151,12 @@ exports.deleteReview = async (req, res) => {
   try {
     const { id } = req.params;
     const userId = req.user.id;
-    const role = req.user.role;
 
     // Check if review exists and owner or admin
     let query = `SELECT id FROM reviews WHERE id = :id`;
     let replacements = { id };
 
-    if (role !== 'admin') {
+    if (!access.isAdmin(req.user)) {
       query += ` AND user_id = :userId`;
       replacements.userId = userId;
     }
