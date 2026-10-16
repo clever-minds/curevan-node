@@ -177,3 +177,12 @@ Ownership checks (a user may only see their own records) are added in P04; route
 | DELETE | `/api/offers/delete/:id` | yes | admin.super, admin.ecom | offers.routes |
 
 Total routes: 170
+
+## Added in P12 (visit flow)
+
+| Method | Path | Who |
+|---|---|---|
+| GET | /api/appointments/:id/otp | the booking's patient only, from 2 h before the slot until the slot ends |
+| POST | /api/appointments/:id/verify-start-otp | the assigned therapist only, status must be `arrived` |
+| GET | /api/config/public | anyone (non-secret rule values) |
+| PUT | /api/appointments/status/:id | any party of the booking; the state machine (`src/services/appointmentStateMachine.js`) decides who may do which move |

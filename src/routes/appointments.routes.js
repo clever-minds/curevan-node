@@ -33,6 +33,10 @@ router.post("/reject/:id", authMiddleware, requireRole("therapist"), responseHan
 // ✅ PUT update appointment status
 router.put("/status/:id", authMiddleware, responseHandler, appointmentsController.updateAppointmentStatus);
 
+// ✅ start-of-session OTP (P12)
+router.get("/:id/otp", authMiddleware, responseHandler, appointmentsController.getStartOtp);
+router.post("/:id/verify-start-otp", authMiddleware, requireRole("therapist"), responseHandler, appointmentsController.verifyStartOtp);
+
 // ✅ POST confirm payment
 // admin only: records an OFFLINE payment (online payments use /api/payments/verify-booking)
 router.post("/:id/pay", authMiddleware, requireRole("admin.therapy", "admin.ecom"), responseHandler, appointmentsController.confirmPayment);

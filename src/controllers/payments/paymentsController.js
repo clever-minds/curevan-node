@@ -2,6 +2,7 @@ const { QueryTypes } = require("sequelize");
 const { sequelize } = require("../../config/db");
 const transporter = require("../../config/mailer");
 const razorpay = require("../../services/razorpayService");
+const stateMachine = require("../../services/appointmentStateMachine");
 const appointmentsController = require("../appointments/appointmentsController");
 
 /**
@@ -229,7 +230,7 @@ async function confirmBookingPayment({ razorpayOrderId, paymentId, signature = n
       await transaction.rollback();
       return { ok: false, status: 404, message: "Booking not found" };
     }
-    if (["cancelled_unpaid", "Cancelled"].includes(appt.status) && appt.payment_status !== "Paid") {
+    if (["cancelled_unpaid", "cancelled_by_patient", "cancelled_by_therapist", "cancelled_by_admin"].includes(appt.status) && appt.payment_status !== "Paid") {
       await transaction.rollback();
       return { ok: false, status: 409, message: "This booking was cancelled because it was not paid in time" };
     }
@@ -238,15 +239,16 @@ async function confirmBookingPayment({ razorpayOrderId, paymentId, signature = n
       already = true;
       finalized = await appointmentsController.finalizePaidBooking(appt, transaction); // no-op if they exist
     } else {
-      const newStatus = ["Accepted", "Payment Pending"].includes(appt.status) ? "Confirmed" : appt.status;
       await sequelize.query(
         `UPDATE appointments
-         SET payment_status = 'Paid', status = :newStatus, paid_at = NOW(),
-             razorpay_payment_id = :paymentId, payment_method = 'razorpay'
+         SET payment_status = 'Paid', paid_at = NOW(), razorpay_payment_id = :paymentId, payment_method = 'razorpay'
          WHERE id = :id`,
-        { replacements: { newStatus, paymentId, id: appt.id }, type: QueryTypes.UPDATE, transaction }
+        { replacements: { paymentId, id: appt.id }, type: QueryTypes.UPDATE, transaction }
       );
-      appt.status = newStatus;
+      if (["pending_payment", "accepted_unpaid"].includes(appt.status)) {
+        await stateMachine.transition(appt.id, "confirmed", { system: true }, { transaction, note: "payment verified" });
+        appt.status = "confirmed";
+      }
       finalized = await appointmentsController.finalizePaidBooking(appt, transaction);
     }
     await transaction.commit();

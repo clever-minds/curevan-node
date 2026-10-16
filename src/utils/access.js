@@ -76,8 +76,10 @@ function withinAddressWindow(appt, now = new Date()) {
  * a therapist gets the service-address reference only inside the visit window.
  */
 function sanitizeAppointmentForViewer(user, appt) {
-  if (!appt || isAdmin(user)) return appt;
+  if (!appt) return appt;
   const out = { ...appt };
+  for (const k of ["start_otp_hash", "startOtpHash", "otp_attempts", "otpAttempts"]) delete out[k];   // the start-code hash never leaves the server
+  if (isAdmin(user)) return out;
   delete out.patientPhone;
   delete out.therapistPhone;
   delete out.patient_phone;

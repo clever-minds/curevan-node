@@ -51,6 +51,7 @@ app.use('/api/orders', require('./routes/order.routes'));
 app.use('/api/payments', require('./routes/payments.routes'));
 app.use('/api/sos', require('./routes/sos.routes'));
 app.use('/api/consent', require('./routes/consent.routes'));
+app.use('/api/config', require('./routes/config.routes'));
 app.use('/api/invoices', require('./routes/invoices.routes'));
 app.use('/api/therapists', require('./routes/therapist.routes'));
 app.use('/api/notifications', require('./routes/notifications.routes'));

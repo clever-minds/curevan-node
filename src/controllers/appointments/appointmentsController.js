@@ -2,6 +2,9 @@ const { QueryTypes } = require("sequelize");
 const access = require("../../utils/access");
 const razorpay = require("../../services/razorpayService");
 const rules = require("../../config/businessRules");
+const stateMachine = require("../../services/appointmentStateMachine");
+const otpService = require("../../services/otpService");
+const { STATUS } = stateMachine;
 const refundService = require("../../services/refundService");
 const notificationStore = require("../../services/notificationStore");
 const { sequelize } = require("../../config/db");
@@ -20,7 +23,7 @@ exports.listAppointments = async (req, res) => {
 
     if (filters.status) {
       whereClauses.push(`a.status = :status`);
-      replacements.status = filters.status;
+      replacements.status = stateMachine.normalize(filters.status);
     }
     if (filters.mode) {
       whereClauses.push(`a.mode = :mode`);
@@ -248,7 +251,7 @@ exports.createBookingAndInvoice = async (req, res) => {
       if (!appt) { await t.rollback(); return res.status(404).json({ success: false, error: "Appointment not found" }); }
       if (!access.same(appt.patient_id, req.user.id)) { await t.rollback(); return res.status(403).json({ success: false, error: "Forbidden" }); }
       if (appt.payment_status === "Paid") { await t.rollback(); return res.status(400).json({ success: false, error: "Already paid" }); }
-      if (!["Accepted", "Payment Pending"].includes(appt.status)) {
+      if (appt.status !== STATUS.ACCEPTED_UNPAID) {
         await t.rollback();
         return res.status(400).json({ success: false, error: "This request is not waiting for payment" });
       }
@@ -314,7 +317,7 @@ exports.createBookingAndInvoice = async (req, res) => {
             serviceTypeId: bookingData.serviceTypeId || null,
             therapyType: bookingData.therapyType || null,
             amount,
-            initialStatus: rules.booking.directBookingNeedsApproval ? 'Pending Approval' : 'Pending',
+            initialStatus: rules.booking.directBookingNeedsApproval ? STATUS.SEARCHING : STATUS.PENDING_PAYMENT,
             date: bookingData.date || null,
             time: bookingData.time || null,
             mode: bookingData.mode || null,
@@ -419,7 +422,7 @@ exports.notifyPaidBooking = async (appt) => {
       if (therapistInfo && therapistInfo.fcm_token) {
         await firebaseNotifier.sendToTherapist(
           therapistInfo.fcm_token,
-          appt.price_source === "therapist_rate" && appt.status === "Pending" ? "New Direct Booking Assigned" : "Booking Paid - Session Confirmed",
+          appt.price_source === "therapist_rate" && appt.status === STATUS.PENDING_PAYMENT ? "New Direct Booking Assigned" : "Booking Paid - Session Confirmed",
           `You have a confirmed appointment with ${appt.patient_name} on ${appt.date} at ${appt.time}.`,
           { appointmentId: String(appt.id), type: "direct_booking" }
         );
@@ -837,13 +840,19 @@ exports.updatePcr = async (req, res) => {
       delete data.lockedAt;
     }
 
-    // 2️⃣ Normalize status ONLY for appointments table
-    let normalizedStatus = existing.status; // default
-    if (data.status) {
-      const statusLower = data.status.toLowerCase();
-      if (statusLower === "submitted") normalizedStatus = "Confirmed";
-      else if (statusLower === "locked") normalizedStatus = "Completed";
+    // 2️⃣ Submitting (or locking) the PCR is what completes the visit: pcr_pending -> completed
+    const statusLower = String(data.status || "").toLowerCase();
+    const finishesVisit = statusLower === "submitted" || statusLower === "locked";
+    const [apptNow] = await sequelize.query(
+      `SELECT status FROM appointments WHERE id = :appointmentId`,
+      { replacements: { appointmentId }, type: QueryTypes.SELECT, transaction: t }
+    );
+    if (finishesVisit && apptNow && apptNow.status !== STATUS.PCR_PENDING && apptNow.status !== STATUS.COMPLETED && !clinicalAdmin) {
+      await t.rollback();
+      return res.status(409).json({ success: false, error: "Complete the session first, then submit the PCR" });
     }
+    const completeNow = finishesVisit && apptNow && apptNow.status === STATUS.PCR_PENDING;
+    const normalizedStatus = completeNow ? STATUS.COMPLETED : null;
 
     // 3️⃣ PCR table raw status
     const pcrStatusToSave = data.status ?? existing.status;
@@ -930,27 +939,19 @@ exports.updatePcr = async (req, res) => {
 
     // 6️⃣ Update appointments table
     await sequelize.query(
-      `UPDATE appointments
-       SET status = :status,
-           pcr_status = :pcr_status
-       WHERE id = :appointmentId`,
-      {
-        replacements: { 
-          status: normalizedStatus,   // Confirmed / Completed
-          pcr_status: pcrStatusToSave, // submitted / locked
-          appointmentId 
-        },
-        type: QueryTypes.UPDATE,
-        transaction: t
-      }
+      `UPDATE appointments SET pcr_status = :pcr_status WHERE id = :appointmentId`,
+      { replacements: { pcr_status: pcrStatusToSave, appointmentId }, type: QueryTypes.UPDATE, transaction: t }
     );
+    if (completeNow) {
+      await stateMachine.transition(appointmentId, STATUS.COMPLETED, { system: true }, { transaction: t, note: "PCR submitted" });
+    }
 
     // 7️⃣ Commit transaction
     await t.commit();
 
     // 8️⃣ Send Status Update Email (if status changed)
     try {
-      if (normalizedStatus && normalizedStatus !== existing.status) {
+      if (normalizedStatus) {
         const [apptInfo] = await sequelize.query(
           `SELECT u.email, u.name as user_name 
            FROM appointments a 
@@ -963,11 +964,11 @@ exports.updatePcr = async (req, res) => {
           await transporter.sendMail({
             from: `"Curevan Support" <${process.env.MAIL_USER}>`,
             to: apptInfo.email,
-            subject: `Your Appointment Status is now: ${normalizedStatus}`,
+            subject: `Your session is complete`,
             html: `
               <h3>Appointment Update</h3>
               <p>Hi ${apptInfo.user_name},</p>
-              <p>The status of your appointment has been updated to <strong>${normalizedStatus}</strong>.</p>
+              <p>Your session is now <strong>completed</strong>.</p>
               <p>Sign in to your dashboard to view more details.</p>
             `
           });
@@ -981,6 +982,7 @@ exports.updatePcr = async (req, res) => {
 
   } catch (error) {
     await t.rollback();
+    if (error instanceof stateMachine.TransitionError) return res.status(error.httpStatus).json({ success: false, error: error.message });
     console.error("Error updating PCR:", error);
     return res.status(500).json({ success: false, error: "Failed to update PCR" });
   }
@@ -1016,7 +1018,7 @@ exports.createBookingRequest = async (req, res) => {
       ) VALUES (
         :patientId, :patientName, :dateofbirth, :serviceTypeId, :therapyType,
         :serviceAmount, :totalAmount, :date, :time, :mode, :notes, :serviceAddress,
-        'Searching Therapist', 'Not Verified', 'Pending', 'not_started', :reports, :priceSource, NOW()
+        'searching_therapist', 'Not Verified', 'Pending', 'not_started', :reports, :priceSource, NOW()
       ) RETURNING id`,
       {
         replacements: {
@@ -1089,7 +1091,7 @@ exports.createBookingRequest = async (req, res) => {
              WHERE a2.therapist_id = u.id
                AND a2.date = :bookingDate
                AND a2.time = :bookingTime
-               AND a2.status NOT IN ('Cancelled', 'Completed')
+               AND a2.status NOT IN ('completed', 'cancelled_by_patient', 'cancelled_by_therapist', 'cancelled_by_admin', 'cancelled_unpaid', 'no_show')
            )`,
         {
           replacements: { 
@@ -1133,7 +1135,7 @@ exports.getAvailableRequests = async (req, res) => {
          a.date, a.time, a.mode, a.status, a.service_amount AS "serviceAmount",
          a.notes, a.created_at AS "createdAt", a.service_address_id AS "serviceAddress"
        FROM appointments a
-       WHERE (a.status IN ('Searching', 'Searching Therapist') OR (a.status = 'Pending Approval' AND a.therapist_id = :therapistId))
+       WHERE (a.status = 'searching_therapist' AND (a.therapist_id IS NULL OR a.therapist_id = :therapistId))
     `;
 
     if (therapistId) {
@@ -1148,7 +1150,7 @@ exports.getAvailableRequests = async (req, res) => {
           WHERE a2.therapist_id = :therapistId
             AND a2.date = a.date 
             AND a2.time = a.time
-            AND a2.status NOT IN ('Cancelled', 'Completed')
+            AND a2.status NOT IN ('completed', 'cancelled_by_patient', 'cancelled_by_therapist', 'cancelled_by_admin', 'cancelled_unpaid', 'no_show')
         )
       `;
     }
@@ -1193,11 +1195,7 @@ exports.acceptBookingRequest = async (req, res) => {
       return res.status(403).json({ success: false, error: "This booking is assigned to another therapist" });
     }
 
-    const isAvailable =
-      appt.status === 'Searching' ||
-      appt.status === 'Searching Therapist' ||
-      appt.status === 'Pending' ||
-      appt.status === 'Pending Approval';
+    const isAvailable = appt.status === STATUS.SEARCHING;
 
     if (!isAvailable) {
       await t.rollback();
@@ -1234,8 +1232,7 @@ exports.acceptBookingRequest = async (req, res) => {
            therapist_phone = :therapistPhone,
            service_amount = :amount,
            total_amount = :amount,
-           price_source = :priceSource,
-           status = 'Accepted'
+           price_source = :priceSource
        WHERE id = :id`,
       {
         replacements: { id, therapistId, therapistName: therapist.name, therapistPhone: therapist.phone || null, amount, priceSource },
@@ -1243,6 +1240,8 @@ exports.acceptBookingRequest = async (req, res) => {
         transaction: t
       }
     );
+
+    await stateMachine.transition(id, STATUS.ACCEPTED_UNPAID, { id: therapistId, role: 'therapist', roles: ['therapist'] }, { transaction: t, note: 'accepted by therapist' });
 
     await t.commit();
 
@@ -1297,14 +1296,11 @@ exports.rejectBookingRequest = async (req, res) => {
       return res.status(404).json({ success: false, error: "Appointment not found" });
     }
 
-    if ((appt.status !== 'Pending Approval' && appt.status !== 'Pending') || appt.therapist_id != userId) {
+    if (appt.status !== STATUS.SEARCHING || appt.therapist_id != userId) {
       return res.status(400).json({ success: false, error: "Invalid appointment or unauthorized" });
     }
 
-    await sequelize.query(
-      `UPDATE appointments SET status = 'Rejected' WHERE id = :id`,
-      { replacements: { id }, type: QueryTypes.UPDATE }
-    );
+    await stateMachine.transition(id, STATUS.CANCELLED_THERAPIST, req.user, { note: 'request declined by therapist' });
 
     return res.json({ success: true, message: "Booking request declined" });
   } catch (error) {
@@ -1342,7 +1338,7 @@ exports.cancelAppointment = async (req, res) => {
       return res.status(403).json({ success: false, error: "Unauthorized to cancel this appointment", message: "Forbidden" });
     }
 
-    if (["Completed", "Cancelled", "cancelled_unpaid", "Rejected"].includes(appt.status)) {
+    if (stateMachine.TERMINAL.includes(appt.status) || appt.status === STATUS.PCR_PENDING) {
       return res.status(400).json({ success: false, error: "Appointment cannot be cancelled at this stage", message: "Appointment cannot be cancelled at this stage" });
     }
 
@@ -1365,10 +1361,10 @@ exports.cancelAppointment = async (req, res) => {
       }
     }
 
-    await sequelize.query(
-      `UPDATE appointments SET status = 'Cancelled', cancellation_reason = :reason WHERE id = :id`,
-      { replacements: { id, reason: isPatient ? "Cancelled by patient" : "Cancelled by therapist" }, type: QueryTypes.UPDATE }
-    );
+    await stateMachine.transition(id, isPatient ? STATUS.CANCELLED_PATIENT : STATUS.CANCELLED_THERAPIST, req.user, {
+      note: isPatient ? "Cancelled by patient" : "Cancelled by therapist",
+      extra: { cancellation_reason: isPatient ? "Cancelled by patient" : "Cancelled by therapist" },
+    });
 
     // tell the other person
     const otherId = isPatient ? appt.therapist_id : appt.patient_id;
@@ -1388,6 +1384,7 @@ exports.cancelAppointment = async (req, res) => {
       refund: refund ? { refundId: refund.refundId, status: refund.status, amount: refund.amount } : undefined,
     });
   } catch (error) {
+    if (error instanceof stateMachine.TransitionError) return res.status(error.httpStatus).json({ success: false, error: error.message, message: error.message });
     console.error("Error cancelling appointment:", error);
     return res.status(500).json({ success: false, error: "Failed to cancel appointment", message: "Failed to cancel appointment" });
   }
@@ -1396,7 +1393,8 @@ exports.cancelAppointment = async (req, res) => {
 // ✅ 4. UPDATE APPOINTMENT STATUS (Tracking Flow)
 exports.updateAppointmentStatus = async (req, res) => {
   const { id } = req.params;
-  const { status } = req.body || {}; 
+  const { status } = req.body || {};
+  if (!status) return res.status(400).json({ success: false, error: "status is required" });
 
   try {
     const [appt] = await sequelize.query(
@@ -1407,24 +1405,97 @@ exports.updateAppointmentStatus = async (req, res) => {
     if (!access.canAccessAppointment(req.user, appt)) {
       return res.status(403).json({ success: false, error: "Forbidden" });
     }
-    // Until the status state machine (P12) and cancellation policy (P14) exist,
-    // a patient may only cancel their own booking.
-    if (!access.isAdmin(req.user) && !access.same(appt.therapist_id, req.user.id) && status !== "Cancelled") {
-      return res.status(403).json({ success: false, error: "Forbidden" });
-    }
-
-    await sequelize.query(
-      `UPDATE appointments SET status = :status WHERE id = :id`,
-      {
-        replacements: { status, id },
-        type: QueryTypes.UPDATE
-      }
-    );
-    
-    return res.json({ success: true, message: `Status updated to ${status}` });
+    // the state machine decides who may do what; arrived -> in_progress is only possible through the OTP check
+    const result = await stateMachine.transition(id, status, req.user);
+    return res.json({ success: true, message: `Status updated to ${result.to}`, status: result.to });
   } catch (error) {
+    if (error instanceof stateMachine.TransitionError) {
+      return res.status(error.httpStatus).json({ success: false, error: error.message });
+    }
     console.error("Error updating status:", error);
     return res.status(500).json({ success: false, error: "Failed to update status" });
+  }
+};
+
+// ✅ START-OF-SESSION OTP
+/* Patient only, from `otp.validFromHoursBefore` before the slot until the slot ends.
+   A fresh code is made on every request (the old one stops working); only its hash is stored. */
+exports.getStartOtp = async (req, res) => {
+  const { id } = req.params;
+  try {
+    const [appt] = await sequelize.query(
+      `SELECT id, status, patient_id, therapist_id, date, time, start_time FROM appointments WHERE id = :id`,
+      { replacements: { id }, type: QueryTypes.SELECT }
+    );
+    if (!appt) return res.status(404).json({ success: false, error: "Appointment not found" });
+    if (!access.same(appt.patient_id, req.user.id)) return res.status(403).json({ success: false, error: "Forbidden" });
+    if (![STATUS.CONFIRMED, STATUS.ON_THE_WAY, STATUS.ARRIVED].includes(appt.status)) {
+      return res.status(409).json({ success: false, error: "A start code is not available for this booking" });
+    }
+    const start = access.slotStart(appt);
+    const now = Date.now();
+    const opensAt = start ? start.getTime() - rules.otp.validFromHoursBefore * 3600000 : null;
+    const endsAt = start ? start.getTime() + rules.session.slotMinutes * 60000 : null;
+    if (start && (now < opensAt || now > endsAt)) {
+      return res.status(403).json({ success: false, error: `The start code is available from ${rules.otp.validFromHoursBefore} hours before your session` });
+    }
+    const { otp, hash } = otpService.issue(appt.id);
+    await sequelize.query(`UPDATE appointments SET start_otp_hash = :hash WHERE id = :id`, { replacements: { hash, id }, type: QueryTypes.UPDATE });
+    res.set("Cache-Control", "no-store");
+    return res.json({ success: true, data: { otp } });
+  } catch (error) {
+    console.error("Error issuing start code:", error.message);
+    return res.status(500).json({ success: false, error: "Failed to get the start code" });
+  }
+};
+
+// ✅ VERIFY START OTP (assigned therapist, status must be "arrived")
+exports.verifyStartOtp = async (req, res) => {
+  const { id } = req.params;
+  const otp = String((req.body || {}).otp ?? "");
+  const t = await sequelize.transaction();
+  try {
+    const [appt] = await sequelize.query(
+      `SELECT id, status, patient_id, therapist_id, start_otp_hash, COALESCE(otp_attempts, 0) AS otp_attempts
+       FROM appointments WHERE id = :id FOR UPDATE`,
+      { replacements: { id }, type: QueryTypes.SELECT, transaction: t }
+    );
+    if (!appt) { await t.rollback(); return res.status(404).json({ success: false, error: "Appointment not found" }); }
+    if (!access.same(appt.therapist_id, req.user.id)) { await t.rollback(); return res.status(403).json({ success: false, error: "Forbidden" }); }
+    if (appt.status !== STATUS.ARRIVED) {
+      await t.rollback();
+      return res.status(409).json({ success: false, error: "You can start the session only after you have arrived" });
+    }
+    if (appt.otp_attempts >= rules.otp.maxAttempts) {
+      await t.rollback();
+      return res.status(423).json({ success: false, error: "Too many wrong codes. This booking is locked - support has been told." });
+    }
+
+    if (!otpService.matches(appt.id, otp, appt.start_otp_hash)) {
+      const attempts = appt.otp_attempts + 1;
+      await sequelize.query(`UPDATE appointments SET otp_attempts = :attempts WHERE id = :id`, { replacements: { attempts, id }, type: QueryTypes.UPDATE, transaction: t });
+      await t.commit();
+      if (attempts >= rules.otp.maxAttempts) {
+        await notificationStore.notifyRoles(["admin.super", "admin.therapy"], {
+          type: "otp_locked",
+          title: "Start code locked",
+          message: `Booking #${appt.id}: the therapist entered ${rules.otp.maxAttempts} wrong start codes. The booking is locked.`,
+          link: "/dashboard/admin/appointments",
+          data: { appointmentId: appt.id },
+        }).catch((e) => console.error("otp lock alert failed:", e.message));
+        return res.status(423).json({ success: false, error: "Too many wrong codes. This booking is locked - support has been told." });
+      }
+      return res.status(400).json({ success: false, error: "Wrong code", attemptsLeft: rules.otp.maxAttempts - attempts });
+    }
+
+    await stateMachine.transition(appt.id, STATUS.IN_PROGRESS, { system: true }, { transaction: t, note: "start code verified", extra: { otp_verified_at: new Date(), start_otp_hash: null } });
+    await t.commit();
+    return res.json({ success: true, message: "Session started" });
+  } catch (error) {
+    await t.rollback().catch(() => {});
+    if (error instanceof stateMachine.TransitionError) return res.status(error.httpStatus).json({ success: false, error: error.message });
+    console.error("Error verifying start code:", error.message);
+    return res.status(500).json({ success: false, error: "Failed to verify the code" });
   }
 };
 
@@ -1447,7 +1518,7 @@ exports.addReview = async (req, res) => {
       return res.status(403).json({ success: false, error: "Only the patient of this booking can review it" });
     }
 
-    if (appt.status !== 'Completed') {
+    if (appt.status !== STATUS.COMPLETED) {
       return res.status(400).json({ success: false, error: "You can only review completed sessions" });
     }
 
@@ -1514,14 +1585,13 @@ exports.confirmPayment = async (req, res) => {
       return res.status(404).json({ success: false, error: "Appointment not found" });
     }
 
-    const newStatus = ['Payment Pending', 'Accepted'].includes(appt.status) ? 'Confirmed' : appt.status;
-
     await sequelize.query(
-      `UPDATE appointments
-       SET status = :newStatus, payment_status = 'Paid', paid_at = NOW(), payment_method = :method
-       WHERE id = :id`,
-      { replacements: { id, newStatus, method: gateway }, type: QueryTypes.UPDATE }
+      `UPDATE appointments SET payment_status = 'Paid', paid_at = NOW(), payment_method = :method WHERE id = :id`,
+      { replacements: { id, method: gateway }, type: QueryTypes.UPDATE }
     );
+    if ([STATUS.PENDING_PAYMENT, STATUS.ACCEPTED_UNPAID].includes(appt.status)) {
+      await stateMachine.transition(id, STATUS.CONFIRMED, { system: true }, { note: "offline payment recorded by admin" });
+    }
 
     await sequelize.query(
       `UPDATE payout_items SET state = 'paid' WHERE source_id = :id`,
@@ -1541,28 +1611,27 @@ exports.confirmPayment = async (req, res) => {
 exports.cancelUnpaidAppointments = async () => {
   let cancelled = 0;
   const direct = await sequelize.query(
-    `UPDATE appointments SET status = 'cancelled_unpaid'
-     WHERE status = 'Pending' AND payment_status = 'Pending'
+    `SELECT id FROM appointments
+     WHERE status = 'pending_payment' AND payment_status = 'Pending'
        AND razorpay_order_id IS NOT NULL AND price_source = 'therapist_rate'
-       AND created_at < NOW() - interval '30 minutes'
-     RETURNING id`,
+       AND created_at < NOW() - interval '30 minutes'`,
     { type: QueryTypes.SELECT }
   );
-  cancelled += direct.length;
+  for (const d of direct) {
+    try { await stateMachine.transition(d.id, STATUS.CANCELLED_UNPAID, { system: true }, { note: "not paid within 30 minutes" }); cancelled += 1; }
+    catch (e) { if (!(e instanceof stateMachine.TransitionError)) throw e; }
+  }
 
   const accepted = await sequelize.query(
     `SELECT id, date, time, start_time FROM appointments
-     WHERE status IN ('Accepted', 'Payment Pending') AND payment_status = 'Pending'`,
+     WHERE status = 'accepted_unpaid' AND payment_status = 'Pending'`,
     { type: QueryTypes.SELECT }
   );
   for (const a of accepted) {
     const start = access.slotStart(a);
     if (start && start.getTime() - 2 * 3600 * 1000 <= Date.now()) {
-      await sequelize.query(
-        `UPDATE appointments SET status = 'cancelled_unpaid' WHERE id = :id AND payment_status = 'Pending'`,
-        { replacements: { id: a.id }, type: QueryTypes.UPDATE }
-      );
-      cancelled += 1;
+      try { await stateMachine.transition(a.id, STATUS.CANCELLED_UNPAID, { system: true }, { note: "not paid 2 hours before the slot" }); cancelled += 1; }
+      catch (e) { if (!(e instanceof stateMachine.TransitionError)) throw e; }
     }
   }
   return cancelled;
@@ -1595,7 +1664,7 @@ exports.rescheduleAppointment = async (req, res) => {
         return res.status(403).json({ success: false, error: "Unauthorized to reschedule this appointment" });
       }
   
-      if (appt.status === 'Completed' || appt.status === 'Cancelled') {
+      if (stateMachine.TERMINAL.includes(appt.status) || appt.status === STATUS.PCR_PENDING) {
         return res.status(400).json({ success: false, error: "Cannot reschedule at this stage" });
       }
   

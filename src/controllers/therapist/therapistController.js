@@ -1508,7 +1508,7 @@ exports.getDashboardStats = async (req, res) => {
     // 1. KPIs
     // Sessions Completed (status = Completed)
     const [[sessionsCompletedRow]] = await sequelize.query(
-      `SELECT COUNT(*) as count FROM appointments WHERE therapist_id = :id AND status = 'Completed'`,
+      `SELECT COUNT(*) as count FROM appointments WHERE therapist_id = :id AND status = 'completed'`,
       { replacements: { id: therapistId } }
     );
     const sessionsCompleted = parseInt(sessionsCompletedRow.count || 0, 10);
@@ -1529,7 +1529,7 @@ exports.getDashboardStats = async (req, res) => {
 
     // Net Payout (Estimate based on 90% of service_amount)
     const [[netPayoutRow]] = await sequelize.query(
-      `SELECT SUM(service_amount) as total FROM appointments WHERE therapist_id = :id AND status = 'Completed'`,
+      `SELECT SUM(service_amount) as total FROM appointments WHERE therapist_id = :id AND status = 'completed'`,
       { replacements: { id: therapistId } }
     );
     const grossPayout = parseFloat(netPayoutRow.total || 0);
@@ -1541,7 +1541,7 @@ exports.getDashboardStats = async (req, res) => {
     // PCR Lock Rate (Estimate - % of completed sessions that have PCR locked)
     // Assuming PCR is locked if pcr_status = 'locked'
     const [[pcrLockedRow]] = await sequelize.query(
-      `SELECT COUNT(*) as count FROM appointments WHERE therapist_id = :id AND status = 'Completed' AND pcr_status = 'locked'`,
+      `SELECT COUNT(*) as count FROM appointments WHERE therapist_id = :id AND status = 'completed' AND pcr_status = 'locked'`,
       { replacements: { id: therapistId } }
     );
     const pcrLockedCount = parseInt(pcrLockedRow.count || 0, 10);
@@ -1552,7 +1552,7 @@ exports.getDashboardStats = async (req, res) => {
     const sessionDataQuery = await sequelize.query(
       `SELECT DATE(date) as date, COUNT(*) as "sessionCount" 
        FROM appointments 
-       WHERE therapist_id = :id AND status = 'Completed' AND date >= current_date - interval '7 days'
+       WHERE therapist_id = :id AND status = 'completed' AND date >= current_date - interval '7 days'
        GROUP BY DATE(date) ORDER BY DATE(date) ASC`,
       { replacements: { id: therapistId }, type: QueryTypes.SELECT }
     );
@@ -1561,7 +1561,7 @@ exports.getDashboardStats = async (req, res) => {
     const modeSplitQuery = await sequelize.query(
       `SELECT mode as name, COUNT(*) as value 
        FROM appointments 
-       WHERE therapist_id = :id AND status = 'Completed'
+       WHERE therapist_id = :id AND status = 'completed'
        GROUP BY mode`,
       { replacements: { id: therapistId }, type: QueryTypes.SELECT }
     );
@@ -1570,7 +1570,7 @@ exports.getDashboardStats = async (req, res) => {
     const weeklyEarningsQuery = await sequelize.query(
       `SELECT to_char(date, 'WW') as week_num, MIN(date) as week_start, SUM(service_amount) * 0.9 as "Service"
        FROM appointments 
-       WHERE therapist_id = :id AND status = 'Completed' AND date >= current_date - interval '28 days'
+       WHERE therapist_id = :id AND status = 'completed' AND date >= current_date - interval '28 days'
        GROUP BY week_num ORDER BY week_num ASC`,
       { replacements: { id: therapistId }, type: QueryTypes.SELECT }
     );

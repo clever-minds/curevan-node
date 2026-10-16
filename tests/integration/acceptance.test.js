@@ -163,7 +163,7 @@ async function seed() {
 
   // ============================================================ #3 data privacy
   const [ap] = await q(`INSERT INTO appointments(patient_id, patient_name, patient_phone, therapist_id, therapist_name, therapist_phone, service_type_id, therapy_type, service_amount, total_amount, date, time, mode, status, payment_status, pcr_status, service_address_id)
-    VALUES ($1,'Patient One','9000000001',$2,'Dr One','9000000011',1,'Physio',1500,1500,'2031-01-10','10:00','home','Confirmed','Paid','not_started',$3) RETURNING id`, [U.p1.id, U.t1.id, U.a1]);
+    VALUES ($1,'Patient One','9000000001',$2,'Dr One','9000000011',1,'Physio',1500,1500,'2031-01-10','10:00','home','confirmed','Paid','not_started',$3) RETURNING id`, [U.p1.id, U.t1.id, U.a1]);
   await q("INSERT INTO pcr(appointment_id, patient_id, therapist_id, service_type_id, status, version, chief_complaint) VALUES ($1,$2,$3,1,'in_progress',1,'knee pain')", [ap.id, U.p1.id, U.t1.id]);
   const [ord] = await q("INSERT INTO orders(order_number, user_id, total, status, payment_status, billing_address_id, shipping_address_id) VALUES ('ORD-X',$1,100,'Placed','Paid',$2,$2) RETURNING id", [U.p1.id, U.a1]);
   const [tk] = await q("INSERT INTO tickets(user_id, subject, message, status) VALUES ($1,'help','please','open') RETURNING id", [U.p1.id]);
@@ -297,17 +297,17 @@ async function seed() {
   r = await call("POST", "/api/appointments/create-appointment", T.p1, { bookingData: { therapistId: U.t1.id, patientId: U.p2.id, patientName: "P1", serviceTypeId: 1, therapyType: "Physio", date: fdate, time: "10:00", mode: "home", addressId: U.a1, serviceAmount: 1, totalAmount: 1, paymentStatus: "Paid", status: "Completed" } });
   const b1 = r.j && r.j.appointmentId ? (await q("SELECT * FROM appointments WHERE id = $1", [r.j.appointmentId]))[0] : null;
   check("#5 direct booking (real SQL) -> " + r.s + (PAYFIRST ? " pay-first" : " approval-first"), r.s === 200 && b1, "got " + r.s + " " + (r.raw || "").slice(0, 200));
-  check("#5 server price (1500) not the tampered 1; payment Pending; patient = caller; status not 'Completed'", b1 && Number(b1.service_amount) === 1500 && b1.payment_status === "Pending" && b1.patient_id === U.p1.id && b1.status !== "Completed", b1 && `${b1.service_amount}/${b1.payment_status}/${b1.patient_id}/${b1.status}`);
+  check("#5 server price (1500) not the tampered 1; payment Pending; patient = caller; status not 'Completed'", b1 && Number(b1.service_amount) === 1500 && b1.payment_status === "Pending" && b1.patient_id === U.p1.id && b1.status !== "completed", b1 && `${b1.service_amount}/${b1.payment_status}/${b1.patient_id}/${b1.status}`);
   check("#5 no invoice / PCR / payout row before payment", b1 && (await q("SELECT 1 FROM invoices WHERE booking_id = $1", [b1.id])).length === 0 && (await q("SELECT 1 FROM pcr WHERE appointment_id = $1", [b1.id])).length === 0 && (await q("SELECT 1 FROM payout_items WHERE source_id = $1", [b1.id])).length === 0);
   let rzB;
   if (!PAYFIRST) {
-    check("#5 approval-first: status 'Pending Approval', no Razorpay order yet", b1.status === "Pending Approval" && !b1.razorpay_order_id);
+    check("#5 approval-first: status 'searching_therapist', no Razorpay order yet", b1.status === "searching_therapist" && !b1.razorpay_order_id);
     r = await call("POST", "/api/appointments/create-appointment", T.p1, { appointmentId: b1.id });
     check("#5 cannot pay before the therapist approves -> " + r.s, r.s === 400);
     r = await call("POST", "/api/appointments/accept/" + b1.id, T.t2, {});
     check("#5 a different therapist cannot accept someone else's booking -> " + r.s, r.s === 403);
     r = await call("POST", "/api/appointments/accept/" + b1.id, T.t1, {});
-    check("#5 assigned therapist approves -> 'Accepted' -> " + r.s, r.s === 200 && (await q("SELECT status FROM appointments WHERE id = $1", [b1.id]))[0].status === "Accepted", "got " + r.s + " " + (r.raw || "").slice(0, 150));
+    check("#5 assigned therapist approves -> 'accepted_unpaid' -> " + r.s, r.s === 200 && (await q("SELECT status FROM appointments WHERE id = $1", [b1.id]))[0].status === "accepted_unpaid", "got " + r.s + " " + (r.raw || "").slice(0, 150));
     r = await call("POST", "/api/appointments/create-appointment", T.p1, { appointmentId: b1.id });
     rzB = r.j && r.j.razorpayOrderId;
     check("#5 patient 'Pay now' gets a Razorpay order for 150000 paise -> " + r.s, r.s === 200 && r.j.amountPaise === 150000);
@@ -326,7 +326,7 @@ async function seed() {
   // request a therapist
   r = await call("POST", "/api/appointments/request", T.p2, { bookingData: { patientId: U.p1.id, patientName: "P2", serviceTypeId: 1, therapyType: "Physio", date: fdate, time: "12:00", mode: "home", serviceAmount: 0, totalAmount: 0, addressId: U.a2 } });
   const rq = (await q("SELECT * FROM appointments WHERE id = $1", [r.j && r.j.appointmentId]))[0];
-  check("#5 'Request a therapist' is saved as 'Searching Therapist', payment 'Pending', never Paid ₹0 (real SQL) -> " + r.s, rq && rq.status === "Searching Therapist" && rq.payment_status === "Pending" && rq.patient_id === U.p2.id, rq && `${rq.status}/${rq.payment_status}/${rq.patient_id}`);
+  check("#5 'Request a therapist' is saved as 'searching_therapist', payment 'Pending', never Paid ₹0 (real SQL) -> " + r.s, rq && rq.status === "searching_therapist" && rq.payment_status === "Pending" && rq.patient_id === U.p2.id, rq && `${rq.status}/${rq.payment_status}/${rq.patient_id}`);
   check("#5 request creates no invoice, PCR or payout", (await q("SELECT 1 FROM invoices WHERE booking_id = $1", [rq.id])).length === 0 && (await q("SELECT 1 FROM pcr WHERE appointment_id = $1", [rq.id])).length === 0 && (await q("SELECT 1 FROM payout_items WHERE source_id = $1", [rq.id])).length === 0);
   check("#5 the request is broadcast to approved therapists with the matching specialty (real SQL: specialty is INTEGER[])", pushes.some((x) => Array.isArray(x.tokens) && x.tokens.includes("tokT1") && x.tokens.includes("tokT2")), JSON.stringify(pushes.slice(-3)));
   r = await call("GET", "/api/appointments/requests/available", T.t2);
@@ -335,7 +335,7 @@ async function seed() {
   check("#5 a patient cannot accept a request -> " + r.s, r.s === 403);
   r = await call("POST", "/api/appointments/accept/" + rq.id, T.t2, { therapistId: U.t1.id, therapistName: "Evil" });
   const rqa = (await q("SELECT * FROM appointments WHERE id = $1", [rq.id]))[0];
-  check("#5 accepting therapist = the caller (id " + rqa.therapist_id + "), priced from their rate (" + rqa.service_amount + "), status " + rqa.status, r.s === 200 && rqa.therapist_id === U.t2.id && Number(rqa.service_amount) === 900 && rqa.status === "Accepted" && rqa.price_source === "therapist_rate", "got " + r.s + " " + (r.raw || "").slice(0, 150));
+  check("#5 accepting therapist = the caller (id " + rqa.therapist_id + "), priced from their rate (" + rqa.service_amount + "), status " + rqa.status, r.s === 200 && rqa.therapist_id === U.t2.id && Number(rqa.service_amount) === 900 && rqa.status === "accepted_unpaid" && rqa.price_source === "therapist_rate", "got " + r.s + " " + (r.raw || "").slice(0, 150));
   check("#5 still unpaid: no invoice/PCR/payout after acceptance; patient notified", (await q("SELECT 1 FROM invoices WHERE booking_id = $1", [rq.id])).length === 0 && (await q("SELECT 1 FROM pcr WHERE appointment_id = $1", [rq.id])).length === 0 && (await q("SELECT 1 FROM notifications WHERE user_uid = $1", [String(U.p2.id)])).length === 1);
   r = await call("POST", "/api/appointments/create-appointment", T.p2, { appointmentId: rq.id });
   const rzR = r.j && r.j.razorpayOrderId;
@@ -344,7 +344,7 @@ async function seed() {
   w = await hook("payment.captured", { id: "pay_rq", order_id: rzR, amount: 90000 }, "payment", "evt_rq");
   await sleep(400);
   const rqp = (await q("SELECT * FROM appointments WHERE id = $1", [rq.id]))[0];
-  check("#5 request paid via webhook only: Paid + Confirmed, invoice + PCR created", rqp.payment_status === "Paid" && rqp.status === "Confirmed" && (await q("SELECT 1 FROM invoices WHERE booking_id = $1", [rq.id])).length === 1 && (await q("SELECT 1 FROM pcr WHERE appointment_id = $1", [rq.id])).length === 1, `${rqp.payment_status}/${rqp.status}`);
+  check("#5 request paid via webhook only: Paid + Confirmed, invoice + PCR created", rqp.payment_status === "Paid" && rqp.status === "confirmed" && (await q("SELECT 1 FROM invoices WHERE booking_id = $1", [rq.id])).length === 1 && (await q("SELECT 1 FROM pcr WHERE appointment_id = $1", [rq.id])).length === 1, `${rqp.payment_status}/${rqp.status}`);
   // manual payment
   r = await call("POST", "/api/appointments/" + ap.id + "/pay", T.p1, { gateway: "razorpay" });
   check("#5 a patient cannot mark a booking Paid -> " + r.s, r.s === 403);
@@ -363,7 +363,7 @@ async function seed() {
   }
   const soon2 = new Date(Date.now() + 5.5 * 3600e3 + 90 * 60000);
   const [acc] = await q(`INSERT INTO appointments(patient_id, therapist_id, service_type_id, service_amount, total_amount, date, time, status, payment_status, price_source)
-    VALUES ($1,$2,1,900,900,$3,$4,'Accepted','Pending','therapist_rate') RETURNING id`, [U.p1.id, U.t2.id, `${soon2.getUTCFullYear()}-${pad(soon2.getUTCMonth() + 1)}-${pad(soon2.getUTCDate())}`, `${pad(soon2.getUTCHours())}:${pad(soon2.getUTCMinutes())}`]);
+    VALUES ($1,$2,1,900,900,$3,$4,'accepted_unpaid','Pending','therapist_rate') RETURNING id`, [U.p1.id, U.t2.id, `${soon2.getUTCFullYear()}-${pad(soon2.getUTCMonth() + 1)}-${pad(soon2.getUTCDate())}`, `${pad(soon2.getUTCHours())}:${pad(soon2.getUTCMinutes())}`]);
   await apptCtl.cancelUnpaidAppointments();
   check("#5 accepted request still unpaid <2h before the slot is cancelled (real SQL)", (await q("SELECT status FROM appointments WHERE id = $1", [acc.id]))[0].status === "cancelled_unpaid");
   const bad = await q("SELECT id FROM appointments WHERE payment_status = 'Paid' AND razorpay_payment_id IS NULL AND COALESCE(payment_method,'') NOT LIKE 'manual\\_%'");
@@ -401,7 +401,7 @@ async function seed() {
 
   // SOS
   const [sosAppt] = await q(`INSERT INTO appointments(patient_id, therapist_id, therapist_name, patient_name, service_type_id, service_amount, total_amount, date, time, status, payment_status)
-    VALUES ($1,$2,'Dr One','Patient One',1,1500,1500,'2031-03-01','10:00','Confirmed','Paid') RETURNING id`, [U.p1.id, U.t1.id]);
+    VALUES ($1,$2,'Dr One','Patient One',1,1500,1500,'2031-03-01','10:00','confirmed','Paid') RETURNING id`, [U.p1.id, U.t1.id]);
   const adminNotifBefore = (await q("SELECT COUNT(*)::int AS n FROM notifications WHERE type = 'sos'"))[0].n;
   r = await call("POST", "/api/sos/create", T.p2, { bookingId: String(sosAppt.id), location: { lat: 22.3, lng: 73.2 }, type: "sos" });
   check("P10 a user who is not part of the booking cannot raise an alert for it -> 403", r.s === 403);
@@ -443,26 +443,107 @@ async function seed() {
   // cancel
   const day = (n) => { const d = new Date(Date.now() + 5.5 * 3600e3 + n * 86400e3); return `${d.getUTCFullYear()}-${pad(d.getUTCMonth() + 1)}-${pad(d.getUTCDate())}`; };
   const mkA = async (pay, daysAhead, extra = {}) => (await q(`INSERT INTO appointments(patient_id, patient_name, therapist_id, therapist_name, service_type_id, service_amount, total_amount, date, time, status, payment_status, razorpay_payment_id, payment_method)
-    VALUES ($1,'Patient One',$2,'Dr One',1,1500,1500,$3,$4,'Confirmed',$5,$6,$7) RETURNING id`, [U.p1.id, U.t1.id, day(daysAhead), extra.time || "10:00", pay, extra.rzp || null, extra.method || null]))[0].id;
+    VALUES ($1,'Patient One',$2,'Dr One',1,1500,1500,$3,$4,CASE WHEN $5 = 'Paid' THEN 'confirmed' ELSE 'pending_payment' END,$5,$6,$7) RETURNING id`, [U.p1.id, U.t1.id, day(daysAhead), extra.time || "10:00", pay, extra.rzp || null, extra.method || null]))[0].id;
   const unpaid = await mkA("Pending", 0, { time: "23:00" });
   r = await call("POST", "/api/appointments/" + unpaid + "/cancel", T.p2); check("P10 another patient cannot cancel -> " + r.s, r.s === 403);
   const tNotifBefore = (await q("SELECT COUNT(*)::int AS n FROM notifications WHERE user_uid = $1 AND title = 'Appointment cancelled'", [String(U.t1.id)]))[0].n;
   r = await call("POST", "/api/appointments/" + unpaid + "/cancel", T.p1);
-  check("P10 patient cancels an UNPAID booking (even hours before) -> Cancelled, therapist notified", r.s === 200 && (await q("SELECT status FROM appointments WHERE id = $1", [unpaid]))[0].status === "Cancelled" && (await q("SELECT COUNT(*)::int AS n FROM notifications WHERE user_uid = $1 AND title = 'Appointment cancelled'", [String(U.t1.id)]))[0].n === tNotifBefore + 1, "got " + r.s + " " + (r.raw || "").slice(0, 150));
+  check("P10 patient cancels an UNPAID booking (even hours before) -> Cancelled, therapist notified", r.s === 200 && (await q("SELECT status FROM appointments WHERE id = $1", [unpaid]))[0].status === "cancelled_by_patient" && (await q("SELECT COUNT(*)::int AS n FROM notifications WHERE user_uid = $1 AND title = 'Appointment cancelled'", [String(U.t1.id)]))[0].n === tNotifBefore + 1, "got " + r.s + " " + (r.raw || "").slice(0, 150));
   r = await call("PATCH", "/api/appointments/" + unpaid + "/cancel", T.p1); check("P10 cancelling again is refused -> " + r.s, r.s === 400);
   const rfBefore = rzpRefunds.length;
   const paidFar = await mkA("Paid", 3, { rzp: "pay_cancel1", method: "razorpay" });
   r = await call("PATCH", "/api/appointments/" + paidFar + "/cancel", T.p1);
-  check("P10 patient cancels a PAID booking more than 12h away -> Cancelled + full refund through Razorpay (PATCH, as the website calls it)", r.s === 200 && rzpRefunds.length === rfBefore + 1 && rzpRefunds[rfBefore].pid === "pay_cancel1" && rzpRefunds[rfBefore].amount === 150000 && r.j.refund && r.j.refund.status === "pending" && (await q("SELECT status FROM appointments WHERE id = $1", [paidFar]))[0].status === "Cancelled" && (await q("SELECT 1 FROM order_refunds WHERE appointment_id = $1 AND status = 'pending'", [paidFar])).length === 1, "got " + r.s + " " + (r.raw || "").slice(0, 200));
+  check("P10 patient cancels a PAID booking more than 12h away -> Cancelled + full refund through Razorpay (PATCH, as the website calls it)", r.s === 200 && rzpRefunds.length === rfBefore + 1 && rzpRefunds[rfBefore].pid === "pay_cancel1" && rzpRefunds[rfBefore].amount === 150000 && r.j.refund && r.j.refund.status === "pending" && (await q("SELECT status FROM appointments WHERE id = $1", [paidFar]))[0].status === "cancelled_by_patient" && (await q("SELECT 1 FROM order_refunds WHERE appointment_id = $1 AND status = 'pending'", [paidFar])).length === 1, "got " + r.s + " " + (r.raw || "").slice(0, 200));
   const paidNear = await mkA("Paid", 0, { rzp: "pay_cancel2", method: "razorpay", time: pad(Math.min(23, (new Date(Date.now() + 5.5 * 3600e3)).getUTCHours() + 1)) + ":00" });
   r = await call("POST", "/api/appointments/" + paidNear + "/cancel", T.p1);
-  check("P10 a PAID booking inside the 12h window -> 400 'Please contact support', nothing changes", r.s === 400 && /contact support/i.test(r.j.message) && (await q("SELECT status FROM appointments WHERE id = $1", [paidNear]))[0].status === "Confirmed" && rzpRefunds.length === rfBefore + 1, "got " + r.s + " " + JSON.stringify(r.j));
+  check("P10 a PAID booking inside the 12h window -> 400 'Please contact support', nothing changes", r.s === 400 && /contact support/i.test(r.j.message) && (await q("SELECT status FROM appointments WHERE id = $1", [paidNear]))[0].status === "confirmed" && rzpRefunds.length === rfBefore + 1, "got " + r.s + " " + JSON.stringify(r.j));
   const paidManual = await mkA("Paid", 3, { method: "manual_cash" });
   r = await call("POST", "/api/appointments/" + paidManual + "/cancel", T.p1);
-  check("P10 a booking paid in cash (no online payment to refund) -> 400 contact support", r.s === 400 && (await q("SELECT status FROM appointments WHERE id = $1", [paidManual]))[0].status === "Confirmed");
+  check("P10 a booking paid in cash (no online payment to refund) -> 400 contact support", r.s === 400 && (await q("SELECT status FROM appointments WHERE id = $1", [paidManual]))[0].status === "confirmed");
   const paidByTherapist = await mkA("Paid", 0, { rzp: "pay_cancel3", method: "razorpay", time: "23:30" });
   r = await call("POST", "/api/appointments/" + paidByTherapist + "/cancel", T.t1);
   check("P10 therapist cancels their own paid booking -> full refund; patient notified", r.s === 200 && rzpRefunds.some((x) => x.pid === "pay_cancel3") && (await q("SELECT COUNT(*)::int AS n FROM notifications WHERE user_uid = $1 AND title = 'Appointment cancelled'", [String(U.p1.id)]))[0].n >= 1, "got " + r.s + " " + (r.raw || "").slice(0, 150));
+
+  // ---- P12: visit flow, state machine, start OTP
+  const istParts = (minFromNow) => { const d = new Date(Date.now() + 5.5 * 3600e3 + minFromNow * 60000); return { date: `${d.getUTCFullYear()}-${pad(d.getUTCMonth() + 1)}-${pad(d.getUTCDate())}`, time: `${pad(d.getUTCHours())}:${pad(d.getUTCMinutes())}` }; };
+  const mkVisit = async (minFromNow, status, extra = {}) => { const w = istParts(minFromNow); return (await q(`INSERT INTO appointments(patient_id, patient_name, therapist_id, therapist_name, service_type_id, service_amount, total_amount, date, time, status, payment_status, payment_method, start_otp_hash)
+    VALUES ($1,'Patient One',$2,'Dr One',1,1500,1500,$3,$4,$5,'Paid','razorpay',$6) RETURNING id`, [U.p1.id, U.t1.id, w.date, w.time, status, extra.hash || null]))[0].id; };
+  const st = async (id) => (await q("SELECT * FROM appointments WHERE id = $1", [id]))[0];
+  const otpSvc = require("../../src/services/otpService");
+
+  let v = await mkVisit(20, "confirmed");
+  r = await call("PUT", "/api/appointments/status/" + v, T.p1, { status: "therapist_on_the_way" });
+  check("P12 a patient cannot move a booking to 'on the way' -> 403", r.s === 403, "got " + r.s);
+  r = await call("PUT", "/api/appointments/status/" + v, T.t2, { status: "therapist_on_the_way" });
+  check("P12 a different therapist cannot either -> 403", r.s === 403, "got " + r.s);
+  r = await call("PUT", "/api/appointments/status/" + v, T.t1, { status: "completed" });
+  check("P12 confirmed -> completed is refused with 409", r.s === 409 && (await st(v)).status === "confirmed", "got " + r.s + " " + (r.raw || "").slice(0, 120));
+  const far = await mkVisit(60 * 24 * 40, "confirmed");
+  r = await call("PUT", "/api/appointments/status/" + far, T.t1, { status: "therapist_on_the_way" });
+  check("P12 travel cannot start earlier than 45 minutes before the slot -> 409", r.s === 409 && /45 minutes/.test(r.raw || ""), "got " + r.s + " " + (r.raw || "").slice(0, 120));
+
+  r = await call("GET", "/api/appointments/" + v + "/otp", T.t1);
+  check("P12 the therapist cannot read the start code -> 403", r.s === 403 && !/\d{4}/.test(r.j && r.j.data ? JSON.stringify(r.j.data) : ""), "got " + r.s);
+  r = await call("GET", "/api/appointments/" + v + "/otp", T.p2);
+  check("P12 another patient cannot read the start code -> 403", r.s === 403, "got " + r.s);
+  r = await call("GET", "/api/appointments/" + far + "/otp", T.p1);
+  check("P12 the start code is not available days before the slot -> 403", r.s === 403, "got " + r.s);
+  r = await call("GET", "/api/appointments/" + v + "/otp", T.p1);
+  const code = r.j && r.j.data && r.j.data.otp;
+  check("P12 the patient gets a " + 4 + "-digit start code inside the window", r.s === 200 && /^\d{4}$/.test(code || ""), "got " + r.s + " " + (r.raw || "").slice(0, 100));
+  const stored = (await st(v)).start_otp_hash;
+  check("P12 only a hash of the code is stored (never the plain digits)", stored && stored !== code && stored.length === 64 && otpSvc.matches(v, code, stored));
+
+  r = await call("PUT", "/api/appointments/status/" + v, T.t1, { status: "therapist_on_the_way" });
+  check("P12 the assigned therapist starts travelling -> 200, history written, travel time stamped", r.s === 200 && (await st(v)).status === "therapist_on_the_way" && (await st(v)).travel_started_at && (await q("SELECT 1 FROM appointment_status_history WHERE appointment_id = $1 AND from_status = 'confirmed' AND to_status = 'therapist_on_the_way'", [v])).length === 1, "got " + r.s + " " + (r.raw || "").slice(0, 120));
+  r = await call("POST", "/api/appointments/" + v + "/verify-start-otp", T.t1, { otp: code });
+  check("P12 the start code cannot be used before 'arrived' -> 409", r.s === 409, "got " + r.s);
+  r = await call("PUT", "/api/appointments/status/" + v, T.t1, { status: "arrived" });
+  check("P12 therapist arrives -> 200", r.s === 200 && (await st(v)).status === "arrived" && (await st(v)).arrived_at, "got " + r.s);
+  r = await call("PUT", "/api/appointments/status/" + v, T.t1, { status: "in_progress" });
+  check("P12 the therapist cannot jump to in_progress without the code -> 403", r.s === 403 && (await st(v)).status === "arrived", "got " + r.s);
+
+  r = await call("POST", "/api/appointments/" + v + "/verify-start-otp", T.t1, { otp: code === "0000" ? "1111" : "0000" });
+  check("P12 a wrong code is refused, 4 attempts left", r.s === 400 && r.j.attemptsLeft === 4 && (await st(v)).status === "arrived", "got " + r.s + " " + (r.raw || "").slice(0, 120));
+  r = await call("GET", "/api/appointments/" + v, T.t1);
+  check("P12 therapist API responses never contain the code or its hash", r.s === 200 && !(r.raw || "").includes(code) && !/start_otp|startOtp|otp_attempts/.test(r.raw || ""), (r.raw || "").slice(0, 150));
+  r = await call("POST", "/api/appointments/" + v + "/verify-start-otp", T.t1, { otp: code });
+  check("P12 the right code starts the session: in_progress, otp_verified_at + session_started_at set, hash cleared", r.s === 200 && (await st(v)).status === "in_progress" && (await st(v)).otp_verified_at && (await st(v)).session_started_at && (await st(v)).start_otp_hash === null, "got " + r.s + " " + (r.raw || "").slice(0, 120));
+
+  // 5 wrong codes lock the booking and tell admins
+  const lk = await mkVisit(20, "arrived", { hash: otpSvc.issue(0).hash });
+  const alertsBefore = (await q("SELECT COUNT(*)::int AS n FROM notifications WHERE title = 'Start code locked'"))[0].n;
+  let lastLock;
+  for (let i = 0; i < 5; i++) lastLock = await call("POST", "/api/appointments/" + lk + "/verify-start-otp", T.t1, { otp: "9999" });
+  check("P12 the 5th wrong code locks the booking (423) and admins are notified", lastLock.s === 423 && (await q("SELECT COUNT(*)::int AS n FROM notifications WHERE title = 'Start code locked'"))[0].n > alertsBefore, "got " + lastLock.s + " " + (lastLock.raw || "").slice(0, 100));
+  await q("UPDATE appointments SET start_otp_hash = $1 WHERE id = $2", [otpSvc.hash(lk, "9999"), lk]);
+  r = await call("POST", "/api/appointments/" + lk + "/verify-start-otp", T.t1, { otp: "9999" });
+  check("P12 once locked even the right code is refused (423)", r.s === 423 && (await st(lk)).status === "arrived", "got " + r.s);
+
+  // session -> PCR -> completed
+  r = await call("PUT", "/api/appointments/status/" + v, T.t1, { status: "completed" });
+  check("P12 in_progress -> completed directly is refused (409)", r.s === 409, "got " + r.s);
+  await q("INSERT INTO pcr(appointment_id, patient_id, therapist_id, service_type_id, status, version, chief_complaint) VALUES ($1,$2,$3,1,'in_progress',1,'pain')", [v, U.p1.id, U.t1.id]);
+  r = await call("PATCH", "/api/appointments/pcr/" + v, T.t1, { status: "submitted" });
+  check("P12 submitting the PCR while still in_progress is refused (409): complete the session first", r.s === 409 && (await st(v)).status === "in_progress", "got " + r.s + " " + (r.raw || "").slice(0, 120));
+  r = await call("PUT", "/api/appointments/status/" + v, T.t1, { status: "pcr_pending" });
+  check("P12 'Complete session' -> pcr_pending (not completed yet)", r.s === 200 && (await st(v)).status === "pcr_pending" && (await st(v)).session_ended_at, "got " + r.s);
+  r = await call("PUT", "/api/appointments/status/" + v, T.t1, { status: "completed" });
+  check("P12 the therapist cannot mark it completed by hand (403) - only the PCR does", r.s === 403 && (await st(v)).status === "pcr_pending", "got " + r.s);
+  r = await call("PATCH", "/api/appointments/pcr/" + v, T.t1, { status: "submitted" });
+  check("P12 the booking becomes completed only after the PCR is submitted", r.s === 200 && (await st(v)).status === "completed" && (await st(v)).completed_at, "got " + r.s + " " + (r.raw || "").slice(0, 120));
+  check("P12 every move is in the history table (" + 5 + "+ rows)", (await q("SELECT COUNT(*)::int AS n FROM appointment_status_history WHERE appointment_id = $1", [v]))[0].n >= 5);
+
+  // cancel / no-show roles
+  const cx = await mkVisit(600, "confirmed");
+  r = await call("PUT", "/api/appointments/status/" + cx, T.p1, { status: "no_show" });
+  check("P12 a patient cannot mark a no-show (403)", r.s === 403, "got " + r.s);
+  r = await call("PUT", "/api/appointments/status/" + cx, T.t1, { status: "no_show" });
+  check("P12 the therapist can mark a no-show", r.s === 200 && (await st(cx)).status === "no_show", "got " + r.s);
+  r = await call("PUT", "/api/appointments/status/" + cx, T.su, { status: "cancelled_by_admin" });
+  check("P12 a finished booking cannot be cancelled again (409)", r.s === 409, "got " + r.s);
+  r = await call("GET", "/api/config/public");
+  check("P12 /api/config/public gives the 60-minute timer and the 45-minute travel window", r.s === 200 && r.j.data.session.timerMinutes === 60 && r.j.data.visit.travelFromMinutesBefore === 45 && r.j.data.otp.length === 4, "got " + r.s + " " + (r.raw || "").slice(0, 100));
 
   // invoices
   r = await call("GET", "/api/invoices/list", T.su);
