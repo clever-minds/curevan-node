@@ -10,20 +10,19 @@ app.use(cookieParser());
 //   credentials: true   // 🔥 REQUIRED
 // }));
 
+const allowedOrigins = (process.env.CORS_ORIGINS || "")
+  .split(",")
+  .map((o) => o.trim())
+  .filter(Boolean);
+if (allowedOrigins.length === 0 && process.env.NODE_ENV !== "production") {
+  allowedOrigins.push("http://localhost:3000");
+}
 app.use(cors({
-  origin: [
-    "https://your-app.vercel.app",
-    "https://13.235.132.236",
-    "http://localhost:3000",
-    "https://curevan-dev.vercel.app",
-    "https://curevan-nybpeh6ha-cleverminds.vercel.app",
-    "http://192.168.29.237:3000",
-    "https://api.curevan.com",
-    "http://192.168.29.207:3000"
-  ],
+  origin: allowedOrigins,
   credentials: true
 }));
-app.use(express.json({ limit: "600mb" }));
+
+app.use(express.json({ limit: "10mb" }));
 app.use((err, req, res, next) => {
   if (err instanceof SyntaxError && err.status === 400 && "body" in err) {
     console.error("[Error] Invalid JSON from " + req.ip + " to " + req.originalUrl + ":", err.message);
@@ -31,7 +30,7 @@ app.use((err, req, res, next) => {
   }
   next(err);
 });
-app.use(express.urlencoded({ limit: "600mb", extended: true }));
+app.use(express.urlencoded({ limit: "10mb", extended: true }));
 app.use("/uploads", express.static(path.join(__dirname, "..", "uploads")));
 app.use('/api/auth', require('./routes/auth.routes'));
 app.use('/api/category', require('./routes/category.routes'));
@@ -62,6 +61,15 @@ app.use('/api/offers', require('./routes/offers.routes'));
 
 app.get("/", (req, res) => {
   res.send("API running successfully");
+});
+
+// Final error handler: log server-side, never leak stack traces to the client.
+// eslint-disable-next-line no-unused-vars
+app.use((err, req, res, next) => {
+  console.error("[Error]", req.method, req.originalUrl, err && err.message);
+  const status = err && err.status >= 400 && err.status < 500 ? err.status : 500;
+  const message = status === 413 ? "Payload too large" : status === 500 ? "Internal server error" : "Bad request";
+  res.status(status).json({ success: false, message });
 });
 
 module.exports = app;

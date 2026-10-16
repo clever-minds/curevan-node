@@ -3,3 +3,10 @@ node_modules/
 dist/
 build/
 firebase-service-account.json
+# env and secrets
+.env
+.env.*
+!.env.example
+*service-account*.json
+firebase-service-account.json
+uploads/
