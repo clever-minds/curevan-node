@@ -4,6 +4,7 @@ const razorpay = require("../../services/razorpayService");
 const rules = require("../../config/businessRules");
 const stateMachine = require("../../services/appointmentStateMachine");
 const otpService = require("../../services/otpService");
+const slotService = require("../../services/slotService");
 const { STATUS } = stateMachine;
 const refundService = require("../../services/refundService");
 const notificationStore = require("../../services/notificationStore");
@@ -288,27 +289,8 @@ exports.createBookingAndInvoice = async (req, res) => {
       amount = Number(therapist.hourly_rate);
       if (!(amount > 0)) { await t.rollback(); return res.status(400).json({ success: false, error: "This therapist has no price set yet" }); }
 
-      // availability / leave checks (unchanged)
-      const availabilityRows = await sequelize.query(
-        "SELECT day_of_week, is_enabled FROM therapist_availability ta JOIN therapist_profiles tp ON ta.therapist_id = tp.id WHERE tp.user_id = :therapistId",
-        { replacements: { therapistId: bookingData.therapistId }, type: sequelize.QueryTypes.SELECT, transaction: t }
-      );
-      const bookingDateObj = new Date(bookingData.date);
-      const days = ["sun", "mon", "tue", "wed", "thu", "fri", "sat"];
-      const dayName = days[bookingDateObj.getDay()];
-      const dayAvail = availabilityRows.find(row => row.day_of_week === dayName);
-      if (!dayAvail || dayAvail.is_enabled === false || dayAvail.is_enabled === "false" || dayAvail.is_enabled === 0 || dayAvail.is_enabled === "0") {
-        await t.rollback();
-        return res.status(400).json({ success: false, error: "Therapist is not available on this day." });
-      }
-      const [leaves] = await sequelize.query(
-        `SELECT 1 FROM therapist_leaves tl
-         JOIN therapist_profiles tp ON tl.therapist_id = tp.id
-         WHERE tp.user_id = :therapistId
-           AND :bookingDate >= tl.start_date AND :bookingDate <= tl.end_date`,
-        { replacements: { therapistId: bookingData.therapistId, bookingDate: bookingData.date }, type: sequelize.QueryTypes.SELECT, transaction: t }
-      );
-      if (leaves) { await t.rollback(); return res.status(400).json({ success: false, error: "Therapist is on leave on this date" }); }
+      // working hours, leave, double booking, 4-hour lead time and 30-day limit are all checked here, inside the transaction
+      await slotService.assertSlotBookable(bookingData.therapistId, bookingData.date, bookingData.time, { transaction: t });
 
       // patients book for themselves; only an admin may book on behalf of someone
       const patientId = access.isAdmin(req.user) && bookingData.patientId ? bookingData.patientId : req.user.id;
@@ -373,6 +355,8 @@ exports.createBookingAndInvoice = async (req, res) => {
     });
   } catch (error) {
     await t.rollback();
+    if (error instanceof slotService.SlotError) return res.status(error.httpStatus).json({ success: false, error: error.message });
+    if (slotService.isSlotConflict(error)) return res.status(409).json({ success: false, error: "Slot no longer available" });
     console.error("Error creating booking:", error);
     return res.status(500).json({ success: false, error: "Failed to create booking" });
   }
@@ -1020,6 +1004,8 @@ exports.createBookingRequest = async (req, res) => {
     // patients request for themselves; the price comes from the service type (set by the server),
     // otherwise it is fixed from the accepting therapist's rate when someone accepts.
     bookingData.patientId = access.isAdmin(req.user) && bookingData.patientId ? bookingData.patientId : req.user.id;
+    const windowProblem = slotService.checkWindowRules(bookingData.date, slotService.toMinutes(bookingData.time));
+    if (windowProblem) return res.status(400).json({ success: false, error: windowProblem });
     const [serviceType] = await sequelize.query(
       `SELECT base_price FROM service_types WHERE id = :id`,
       { replacements: { id: bookingData.serviceTypeId || 0 }, type: QueryTypes.SELECT }
@@ -1134,6 +1120,7 @@ exports.createBookingRequest = async (req, res) => {
 
     return res.json({ success: true, appointmentId, message: "Booking requested. Searching for therapists." });
   } catch (error) {
+    if (slotService.isSlotConflict(error)) return res.status(409).json({ success: false, error: "Slot no longer available" });
     console.error("Error creating booking request:", error);
     return res.status(500).json({ success: false, error: "Failed to create booking request" });
   }
@@ -1195,7 +1182,7 @@ exports.acceptBookingRequest = async (req, res) => {
 
   try {
     const [appt] = await sequelize.query(
-      `SELECT status, patient_id, patient_name, service_type_id, therapist_id, date, time, price_source, service_amount
+      `SELECT status, patient_id, patient_name, service_type_id, therapist_id, date, to_char(date, 'YYYY-MM-DD') AS date_ymd, time, price_source, service_amount
        FROM appointments WHERE id = :id FOR UPDATE`,
       { replacements: { id }, type: QueryTypes.SELECT, transaction: t }
     );
@@ -1217,6 +1204,9 @@ exports.acceptBookingRequest = async (req, res) => {
       await t.rollback();
       return res.status(400).json({ success: false, error: "Appointment already accepted or cancelled" });
     }
+
+    // the accepting therapist must really be free then (working hours, leave, no other booking)
+    await slotService.assertSlotBookable(therapistId, appt.date_ymd, appt.time, { transaction: t, skipLead: true, ignoreAppointmentId: id });
 
     const [therapist] = await sequelize.query(
       `SELECT u.name, u.phone, tp.hourly_rate
@@ -1292,6 +1282,8 @@ exports.acceptBookingRequest = async (req, res) => {
     return res.json({ success: true, message: "Booking accepted successfully" });
   } catch (error) {
     await t.rollback();
+    if (error instanceof slotService.SlotError) return res.status(error.httpStatus === 400 ? 409 : error.httpStatus).json({ success: false, error: error.httpStatus === 400 ? `You cannot take this request: ${error.message}` : error.message });
+    if (slotService.isSlotConflict(error)) return res.status(409).json({ success: false, error: "Slot no longer available" });
     console.error("Error accepting booking:", error);
     return res.status(500).json({ success: false, error: "Failed to accept booking" });
   }

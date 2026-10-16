@@ -26,7 +26,7 @@ CREATE TABLE therapist_profiles (
 );
 CREATE TABLE therapist_availability (id SERIAL PRIMARY KEY, therapist_id INT, day_of_week TEXT, is_enabled BOOLEAN,
   morning_start TEXT, morning_end TEXT, evening_start TEXT, evening_end TEXT, start_time TEXT, end_time TEXT);
-CREATE TABLE therapist_leaves (id SERIAL PRIMARY KEY, therapist_id INT, start_date DATE, end_date DATE, reason TEXT);
+CREATE TABLE therapist_leaves (id SERIAL PRIMARY KEY, therapist_id INT, start_date DATE, end_date DATE, start_time TEXT, end_time TEXT, reason TEXT, status TEXT DEFAULT 'approved');
 CREATE TABLE therapist_reviews (id SERIAL PRIMARY KEY, therapist_id INT, patient_id INT, appointment_id INT, rating INT, review TEXT, created_at TIMESTAMPTZ DEFAULT now());
 
 CREATE TABLE order_addresses (id SERIAL PRIMARY KEY, user_id INT, address_type TEXT, full_name TEXT, email TEXT, phone TEXT,

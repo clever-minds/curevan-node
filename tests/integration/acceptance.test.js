@@ -90,7 +90,7 @@ async function seed() {
     VALUES ($1, 1500, 'approved', '{1}', 'ABCDE1234F', '1234567890', 'HDFC0001', 22.3, 73.2, 'secret street') RETURNING id`, [U.t1.id]);
   const [tp2] = await q(`INSERT INTO therapist_profiles(user_id, hourly_rate, profile_status, specialty) VALUES ($1, 900, 'approved', '{1,2}') RETURNING id`, [U.t2.id]);
   U.tp1 = tp1.id; U.tp2 = tp2.id;
-  for (const tp of [tp1.id, tp2.id]) for (const d of ["sun", "mon", "tue", "wed", "thu", "fri", "sat"]) await q("INSERT INTO therapist_availability(therapist_id, day_of_week, is_enabled, morning_start, morning_end) VALUES ($1,$2,true,'09:00','13:00')", [tp, d]);
+  for (const tp of [tp1.id, tp2.id]) for (const d of ["sun", "mon", "tue", "wed", "thu", "fri", "sat"]) await q("INSERT INTO therapist_availability(therapist_id, day_of_week, is_enabled, morning_start, morning_end) VALUES ($1,$2,true,'09:00','18:00')", [tp, d]);
   await q("INSERT INTO categories(name) VALUES ('Rehab')");
   await q(`INSERT INTO products(title, selling_price, mrp, sku, category_id, hsn_code, gst_slab, is_tax_inclusive, weight_kg) VALUES
     ('Band', 1000, 1200, 'A1', 1, '9021', 18, false, 0.5), ('Ball', 590, 700, 'B1', 1, '9021', 18, true, 0.2)`);
@@ -442,8 +442,9 @@ async function seed() {
 
   // cancel
   const day = (n) => { const d = new Date(Date.now() + 5.5 * 3600e3 + n * 86400e3); return `${d.getUTCFullYear()}-${pad(d.getUTCMonth() + 1)}-${pad(d.getUTCDate())}`; };
+  let mkN = 0;   // every test booking gets its own time, because the database now refuses two active bookings in one slot
   const mkA = async (pay, daysAhead, extra = {}) => (await q(`INSERT INTO appointments(patient_id, patient_name, therapist_id, therapist_name, service_type_id, service_amount, total_amount, date, time, status, payment_status, razorpay_payment_id, payment_method)
-    VALUES ($1,'Patient One',$2,'Dr One',1,1500,1500,$3,$4,CASE WHEN $5 = 'Paid' THEN 'confirmed' ELSE 'pending_payment' END,$5,$6,$7) RETURNING id`, [U.p1.id, U.t1.id, day(daysAhead), extra.time || "10:00", pay, extra.rzp || null, extra.method || null]))[0].id;
+    VALUES ($1,'Patient One',$2,'Dr One',1,1500,1500,$3,$4,CASE WHEN $5 = 'Paid' THEN 'confirmed' ELSE 'pending_payment' END,$5,$6,$7) RETURNING id`, [U.p1.id, U.t1.id, day(daysAhead), extra.time || `${pad(1 + (mkN++ % 20))}:30`, pay, extra.rzp || null, extra.method || null]))[0].id;
   const unpaid = await mkA("Pending", 0, { time: "23:00" });
   r = await call("POST", "/api/appointments/" + unpaid + "/cancel", T.p2); check("P10 another patient cannot cancel -> " + r.s, r.s === 403);
   const tNotifBefore = (await q("SELECT COUNT(*)::int AS n FROM notifications WHERE user_uid = $1 AND title = 'Appointment cancelled'", [String(U.t1.id)]))[0].n;
@@ -511,7 +512,7 @@ async function seed() {
   check("P12 the right code starts the session: in_progress, otp_verified_at + session_started_at set, hash cleared", r.s === 200 && (await st(v)).status === "in_progress" && (await st(v)).otp_verified_at && (await st(v)).session_started_at && (await st(v)).start_otp_hash === null, "got " + r.s + " " + (r.raw || "").slice(0, 120));
 
   // 5 wrong codes lock the booking and tell admins
-  const lk = await mkVisit(20, "arrived", { hash: otpSvc.issue(0).hash });
+  const lk = await mkVisit(21, "arrived", { hash: otpSvc.issue(0).hash });
   const alertsBefore = (await q("SELECT COUNT(*)::int AS n FROM notifications WHERE title = 'Start code locked'"))[0].n;
   let lastLock;
   for (let i = 0; i < 5; i++) lastLock = await call("POST", "/api/appointments/" + lk + "/verify-start-otp", T.t1, { otp: "9999" });
@@ -547,7 +548,7 @@ async function seed() {
 
   // address only inside the visit window (P04 + P12)
   const [addr] = await q("INSERT INTO order_addresses(user_id, address_type, full_name, full_address, city, state, pincode) VALUES ($1,'shipping','Patient One','12 Test Lane','Vadodara','Gujarat','390001') RETURNING id", [U.p1.id]);
-  const nearA = await mkVisit(20, "confirmed"); const farA = await mkVisit(60 * 24 * 30, "confirmed");
+  const nearA = await mkVisit(22, "confirmed"); const farA = await mkVisit(60 * 24 * 30, "confirmed");
   await q("UPDATE appointments SET service_address_id = $1 WHERE id = ANY($2)", [addr.id, [nearA, farA]]);
   r = await call("GET", "/api/appointments/" + nearA, T.t1);
   check("P12 the therapist gets the full address + session timestamps inside the 2-hour window", r.s === 200 && r.j.data.serviceAddressDetail && r.j.data.serviceAddressDetail.fullAddress === "12 Test Lane" && "sessionStartedAt" in r.j.data, "got " + r.s + " " + (r.raw || "").slice(0, 160));
@@ -555,6 +556,82 @@ async function seed() {
   check("P12 ...but no address days before the slot", r.s === 200 && r.j.data.serviceAddressDetail === null, "got " + r.s + " " + JSON.stringify(r.j && r.j.data && r.j.data.serviceAddressDetail));
   r = await call("GET", "/api/appointments/" + farA, T.p1);
   check("P12 the patient always sees their own address", r.s === 200 && r.j.data.serviceAddressDetail && r.j.data.serviceAddressDetail.city === "Vadodara", "got " + r.s);
+
+  // ---- P13: slot guard (availability, leave, double booking, 4 h lead, 30 day limit)
+  const bk = (therapistId, date, time, extra = {}) => ({ bookingData: { therapistId, patientName: "P", serviceTypeId: 1, therapyType: "Physio", date, time, mode: "home", addressId: U.a1, ...extra } });
+  r = await call("GET", "/api/therapists/" + U.t1.id + "/slots?date=" + day(10));
+  const slotTimes = (r.j && r.j.data && r.j.data.slots || []).map((x) => x.time);
+  check("P13 the public slots endpoint lists hourly slots inside the working hours (09:00-18:00 -> 9 slots)", r.s === 200 && slotTimes.length === 9 && slotTimes[0] === "09:00" && slotTimes[8] === "17:00", "got " + r.s + " " + JSON.stringify(slotTimes));
+  r = await call("GET", "/api/therapists/" + U.t1.id + "/slots?date=" + day(0));
+  const todayLimit = Date.now() + 5.5 * 3600e3 + 4 * 3600e3;
+  check("P13 today's slots start at least 4 hours from now", r.s === 200 && r.j.data.slots.every((x) => { const [h, m] = x.time.split(":").map(Number); const t = new Date(day(0) + "T00:00:00Z").getTime() + (h * 60 + m) * 60000; return t >= todayLimit - 60000; }), "got " + JSON.stringify(r.j && r.j.data && r.j.data.slots));
+  r = await call("GET", "/api/therapists/" + U.t1.id + "/slots?date=" + day(31));
+  check("P13 no slots more than 30 days ahead", r.s === 200 && r.j.data.slots.length === 0);
+  r = await call("GET", "/api/therapists/" + U.t1.id + "/slots?date=2020-01-01");
+  check("P13 no slots in the past", r.s === 200 && r.j.data.slots.length === 0);
+  r = await call("GET", "/api/therapists/" + U.t1.id + "/slots?date=nonsense");
+  check("P13 a bad date is a 400", r.s === 400, "got " + r.s);
+  r = await call("GET", "/api/therapists/99999/slots?date=" + day(10));
+  check("P13 unknown therapist -> 404", r.s === 404, "got " + r.s);
+
+  // leave days and partial-day leave
+  await q("INSERT INTO therapist_leaves(therapist_id, start_date, end_date, reason, status) VALUES ($1,$2,$2,'trip','approved')", [U.tp1, day(11)]);
+  await q("INSERT INTO therapist_leaves(therapist_id, start_date, end_date, start_time, end_time, reason, status) VALUES ($1,$2,$2,'11:00','13:00','appointment','approved')", [U.tp1, day(12)]);
+  r = await call("GET", "/api/therapists/" + U.t1.id + "/slots?date=" + day(11));
+  check("P13 a leave day has no slots", r.s === 200 && r.j.data.slots.length === 0, JSON.stringify(r.j && r.j.data));
+  r = await call("GET", "/api/therapists/" + U.t1.id + "/slots?date=" + day(12));
+  const partial = (r.j.data.slots || []).map((x) => x.time);
+  check("P13 a part-day leave removes only its hours (11:00 and 12:00 gone)", !partial.includes("11:00") && !partial.includes("12:00") && partial.includes("10:00") && partial.includes("13:00"), JSON.stringify(partial));
+  r = await call("POST", "/api/appointments/create-appointment", T.p1, bk(U.t1.id, day(11), "10:00"));
+  check("P13 booking on a leave day is refused by the API (400)", r.s === 400 && /leave/i.test(r.raw || ""), "got " + r.s + " " + (r.raw || "").slice(0, 120));
+
+  // rules the API enforces even when the browser is bypassed
+  r = await call("POST", "/api/appointments/create-appointment", T.p1, bk(U.t1.id, day(10), "20:00"));
+  check("P13 outside the working hours is refused (400)", r.s === 400 && /working hours/i.test(r.raw || ""), "got " + r.s + " " + (r.raw || "").slice(0, 120));
+  const soonT = istParts(60);
+  r = await call("POST", "/api/appointments/create-appointment", T.p1, bk(U.t1.id, soonT.date, soonT.time));
+  check("P13 less than 4 hours ahead is refused (400)", r.s === 400 && /4 hours/.test(r.raw || ""), "got " + r.s + " " + (r.raw || "").slice(0, 120));
+  r = await call("POST", "/api/appointments/create-appointment", T.p1, bk(U.t1.id, day(31), "10:00"));
+  check("P13 more than 30 days ahead is refused (400)", r.s === 400 && /30 days/.test(r.raw || ""), "got " + r.s + " " + (r.raw || "").slice(0, 120));
+  r = await call("POST", "/api/appointments/request", T.p1, { bookingData: { patientId: U.p1.id, patientName: "P", serviceTypeId: 1, therapyType: "Physio", date: day(31), time: "10:00", mode: "home", addressId: U.a1 } });
+  check("P13 a 'request a therapist' for a date >30 days ahead is refused too", r.s === 400, "got " + r.s);
+
+  if (PAYFIRST) {
+    // double booking
+    r = await call("POST", "/api/appointments/create-appointment", T.p1, bk(U.t1.id, day(13), "10:00"));
+    const first = r.s;
+    r = await call("POST", "/api/appointments/create-appointment", T.p2, bk(U.t1.id, day(13), "10:00"));
+    check("P13 the second booking of the same slot -> 409 'Slot no longer available'", first === 200 && r.s === 409 && /no longer available/i.test(r.raw || ""), "got " + first + "/" + r.s + " " + (r.raw || "").slice(0, 120));
+    r = await call("GET", "/api/therapists/" + U.t1.id + "/slots?date=" + day(13));
+    check("P13 a booked slot disappears from the slots list", !r.j.data.slots.some((x) => x.time === "10:00") && r.j.data.slots.some((x) => x.time === "11:00"));
+
+    // two simultaneous bookings, exactly one wins
+    const both = await Promise.all([
+      call("POST", "/api/appointments/create-appointment", T.p1, bk(U.t1.id, day(14), "14:00")),
+      call("POST", "/api/appointments/create-appointment", T.p2, bk(U.t1.id, day(14), "14:00")),
+    ]);
+    const codes = both.map((x) => x.s).sort();
+    const rowsAt = (await q("SELECT COUNT(*)::int AS n FROM appointments WHERE therapist_id = $1 AND date = $2 AND time = '14:00' AND status = 'pending_payment'", [U.t1.id, day(14)]))[0].n;
+    check("P13 two simultaneous bookings for one slot: exactly one succeeds (" + codes.join("/") + "), one row saved", codes[0] === 200 && codes[1] === 409 && rowsAt === 1, JSON.stringify(both.map((x) => x.s + " " + (x.raw || "").slice(0, 80))));
+  }
+
+  // the database refuses it as well, whatever the code does
+  let dbRefused = false;
+  try {
+    await q(`INSERT INTO appointments(patient_id, therapist_id, date, time, status, payment_status) VALUES ($1,$2,$3,'09:00','confirmed','Paid')`, [U.p1.id, U.t2.id, day(15)]);
+    await q(`INSERT INTO appointments(patient_id, therapist_id, date, time, status, payment_status) VALUES ($1,$2,$3,'09:00','pending_payment','Pending')`, [U.p2.id, U.t2.id, day(15)]);
+  } catch (e) { dbRefused = /uq_appointments_active_slot/.test(e.message); }
+  check("P13 the unique index stops a duplicate active booking at database level", dbRefused);
+  await q(`INSERT INTO appointments(patient_id, therapist_id, date, time, status, payment_status) VALUES ($1,$2,$3,'09:00','cancelled_by_patient','Pending')`, [U.p2.id, U.t2.id, day(15)]);
+  check("P13 ...but a cancelled booking does not block the slot", true);
+
+  // accepting a request needs the therapist to be free
+  r = await call("POST", "/api/appointments/request", T.p1, { bookingData: { patientId: U.p1.id, patientName: "P", serviceTypeId: 1, therapyType: "Physio", date: day(16), time: "11:00", mode: "home", addressId: U.a1 } });
+  const reqRow = (await q("SELECT id FROM appointments WHERE patient_id = $1 AND date = $2 AND time = '11:00' AND status = 'searching_therapist'", [U.p1.id, day(16)]))[0];
+  await q(`INSERT INTO appointments(patient_id, therapist_id, date, time, status, payment_status) VALUES ($1,$2,$3,'11:00','confirmed','Paid')`, [U.p2.id, U.t2.id, day(16)]);
+  r = await call("POST", "/api/appointments/accept/" + reqRow.id, T.t2, {});
+  check("P13 a therapist who already has that slot cannot accept the request (409)", r.s === 409 && (await q("SELECT status FROM appointments WHERE id = $1", [reqRow.id]))[0].status === "searching_therapist", "got " + r.s + " " + (r.raw || "").slice(0, 120));
+  await q("DELETE FROM therapist_leaves WHERE therapist_id = $1", [U.tp1]);
 
   // invoices
   r = await call("GET", "/api/invoices/list", T.su);
