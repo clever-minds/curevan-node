@@ -39,6 +39,7 @@ router.post("/:id/pay", authMiddleware, requireRole("admin.therapy", "admin.ecom
 
 // ✅ PATCH cancel appointment
 router.patch("/:id/cancel", authMiddleware, responseHandler, appointmentsController.cancelAppointment);
+router.post("/:id/cancel", authMiddleware, responseHandler, appointmentsController.cancelAppointment);
 
 router.post("/create-appointment", authMiddleware,responseHandler, appointmentsController.createBookingAndInvoice);
 

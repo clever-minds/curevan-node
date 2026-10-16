@@ -76,7 +76,7 @@ CREATE TABLE invoices (id SERIAL PRIMARY KEY, invoice_number TEXT UNIQUE, invoic
 CREATE TABLE order_returns (id SERIAL PRIMARY KEY, order_id INT, user_id INT, reason TEXT, status TEXT, created_at TIMESTAMPTZ DEFAULT now(), updated_at TIMESTAMPTZ);
 CREATE TABLE order_refunds (id SERIAL PRIMARY KEY, order_id INT NOT NULL, return_id INT, user_id INT, amount NUMERIC, reason TEXT, transaction_id TEXT, status TEXT);
 
-CREATE TABLE notifications (id SERIAL PRIMARY KEY, user_uid TEXT, type TEXT, title TEXT, message TEXT, link TEXT, is_read BOOLEAN DEFAULT false, created_at TIMESTAMPTZ DEFAULT now());
+CREATE TABLE notifications (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), user_uid VARCHAR(255) NOT NULL, type VARCHAR(100), title VARCHAR(255) NOT NULL, message TEXT, link VARCHAR(255), is_read BOOLEAN DEFAULT false, created_at TIMESTAMPTZ DEFAULT now());
 CREATE TABLE audit_logs (id SERIAL PRIMARY KEY, actor_id TEXT, action TEXT, entity_type TEXT, entity_id TEXT, details TEXT, created_at TIMESTAMPTZ DEFAULT now());
 CREATE TABLE tickets (id SERIAL PRIMARY KEY, user_id INT, item_id TEXT, type TEXT, topic TEXT, subject TEXT, message TEXT, file TEXT, priority TEXT, rating INT,
   status TEXT DEFAULT 'open', created_at TIMESTAMPTZ DEFAULT now(), updated_at TIMESTAMPTZ DEFAULT now());

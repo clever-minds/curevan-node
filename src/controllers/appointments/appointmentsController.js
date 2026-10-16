@@ -2,6 +2,8 @@ const { QueryTypes } = require("sequelize");
 const access = require("../../utils/access");
 const razorpay = require("../../services/razorpayService");
 const rules = require("../../config/businessRules");
+const refundService = require("../../services/refundService");
+const notificationStore = require("../../services/notificationStore");
 const { sequelize } = require("../../config/db");
 const transporter = require("../../config/mailer");
 const firebaseNotifier = require("../../utils/firebaseNotifier");
@@ -1252,13 +1254,13 @@ exports.acceptBookingRequest = async (req, res) => {
       );
       const link = `${process.env.FRONTEND_URL || ""}/dashboard/bookings`;
       if (patient) {
-        await sequelize.query(
-          `INSERT INTO notifications (user_uid, type, title, message, link) VALUES (:uid, 'booking', :title, :message, :link)`,
-          { replacements: { uid: String(patient.id), title: "Therapist found", message: "Therapist found - please pay to confirm your session.", link: "/dashboard/bookings" }, type: QueryTypes.INSERT }
-        ).catch((e) => console.error("notification insert failed:", e.message));
-        if (patient.fcm_token) {
-          await firebaseNotifier.sendToTherapist(patient.fcm_token, "Therapist found", "Therapist found - please pay to confirm your session.", { appointmentId: String(id), type: "payment_required", link: "/dashboard/bookings" });
-        }
+        await notificationStore.notify(patient.id, {
+          type: "payment_required",
+          title: "Therapist found",
+          message: "Therapist found - please pay to confirm your session.",
+          link: "/dashboard/bookings",
+          data: { appointmentId: id },
+        });
         if (patient.email) {
           await transporter.sendMail({
             from: `"Curevan Appointments" <${process.env.MAIL_FROM || process.env.MAIL_USER}>`,
@@ -1312,38 +1314,82 @@ exports.rejectBookingRequest = async (req, res) => {
 };
 
 // ✅ Cancel Appointment
+/* Basic cancellation (the full policy engine is P14).
+   Patient: an unpaid booking at any time, or a PAID booking more than `cancellation.freeHoursBefore` hours away
+            (full refund through Razorpay). Anything else -> 400 "Please contact support".
+   Therapist: may cancel their own booking; a paid one is refunded in full.
+   The other side is told (bell + push). */
 exports.cancelAppointment = async (req, res) => {
   const { id } = req.params;
   const userId = req.user.id;
-  
+  const contactSupport = () => res.status(400).json({ success: false, error: "Please contact support", message: "Please contact support" });
+
   try {
     const [appt] = await sequelize.query(
-      `SELECT status, therapist_id, patient_id, date, time FROM appointments WHERE id = :id`,
+      `SELECT id, status, therapist_id, patient_id, patient_name, therapist_name, date, time, start_time,
+              payment_status, razorpay_payment_id, payment_method
+       FROM appointments WHERE id = :id`,
       { replacements: { id }, type: QueryTypes.SELECT }
     );
 
     if (!appt) {
-      return res.status(404).json({ success: false, error: "Appointment not found" });
+      return res.status(404).json({ success: false, error: "Appointment not found", message: "Appointment not found" });
     }
 
-    if (appt.status === 'Completed' || appt.status === 'Cancelled') {
-      return res.status(400).json({ success: false, error: "Appointment cannot be cancelled at this stage" });
+    const isPatient = access.same(appt.patient_id, userId);
+    const isTherapist = access.same(appt.therapist_id, userId);
+    if (!isPatient && !isTherapist) {
+      return res.status(403).json({ success: false, error: "Unauthorized to cancel this appointment", message: "Forbidden" });
     }
 
-    // Allow therapist or patient to cancel
-    if (appt.therapist_id != userId && appt.patient_id != userId) {
-      return res.status(403).json({ success: false, error: "Unauthorized to cancel this appointment" });
+    if (["Completed", "Cancelled", "cancelled_unpaid", "Rejected"].includes(appt.status)) {
+      return res.status(400).json({ success: false, error: "Appointment cannot be cancelled at this stage", message: "Appointment cannot be cancelled at this stage" });
+    }
+
+    const paid = appt.payment_status === "Paid";
+
+    if (isPatient && !isTherapist && paid) {
+      const start = access.slotStart(appt);
+      const hoursAway = start ? (start.getTime() - Date.now()) / 3600000 : -1;
+      if (hoursAway <= rules.cancellation.freeHoursBefore) return contactSupport();
+    }
+
+    // paid -> refund in full first; if Razorpay refuses (or there is no online payment) nothing is cancelled
+    let refund = null;
+    if (paid) {
+      try {
+        refund = await refundService.refund({ appointmentId: appt.id, reason: isPatient ? "Cancelled by patient" : "Cancelled by therapist", actorId: userId });
+      } catch (err) {
+        if (err instanceof refundService.RefundError) return contactSupport();
+        throw err;
+      }
     }
 
     await sequelize.query(
-      `UPDATE appointments SET status = 'Cancelled' WHERE id = :id`,
-      { replacements: { id }, type: QueryTypes.UPDATE }
+      `UPDATE appointments SET status = 'Cancelled', cancellation_reason = :reason WHERE id = :id`,
+      { replacements: { id, reason: isPatient ? "Cancelled by patient" : "Cancelled by therapist" }, type: QueryTypes.UPDATE }
     );
 
-    return res.json({ success: true, message: "Appointment Cancelled" });
+    // tell the other person
+    const otherId = isPatient ? appt.therapist_id : appt.patient_id;
+    if (otherId) {
+      await notificationStore.notify(otherId, {
+        type: "booking",
+        title: "Appointment cancelled",
+        message: `${isPatient ? (appt.patient_name || "The patient") : (appt.therapist_name || "The therapist")} cancelled the appointment on ${appt.date instanceof Date ? appt.date.toISOString().slice(0, 10) : appt.date}.`,
+        link: "/dashboard/bookings",
+        data: { appointmentId: appt.id },
+      });
+    }
+
+    return res.json({
+      success: true,
+      message: "Appointment Cancelled",
+      refund: refund ? { refundId: refund.refundId, status: refund.status, amount: refund.amount } : undefined,
+    });
   } catch (error) {
     console.error("Error cancelling appointment:", error);
-    return res.status(500).json({ success: false, error: "Failed to cancel appointment" });
+    return res.status(500).json({ success: false, error: "Failed to cancel appointment", message: "Failed to cancel appointment" });
   }
 };
 

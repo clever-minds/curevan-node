@@ -66,7 +66,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 async function seed() {
   await q(`TRUNCATE users, roles, user_roles, therapist_profiles, therapist_availability, therapist_leaves, service_types, order_addresses, appointments, pcr,
     categories, products, product_variants, inventory, cart, offers, coupons, orders, order_items, payment_transactions, invoices, order_refunds,
-    coupon_usages, order_stock_reservations, payment_webhook_events, notifications, audit_logs, tickets, ticket_messages, payout_items, media RESTART IDENTITY`);
+    coupon_usages, order_stock_reservations, payment_webhook_events, sos_alerts, consent_logs, notifications, audit_logs, tickets, ticket_messages, payout_items, media RESTART IDENTITY`);
   for (const r of ["patient", "therapist", "admin.super", "admin.ecom", "admin.therapy"]) await q("INSERT INTO roles(name) VALUES ($1)", [r]);
   const mk = async (uid, email, name, phone, role, extra = {}) => {
     // like production: users.role holds the generic 'admin' for every admin, the real role lives in user_roles
@@ -383,6 +383,102 @@ async function seed() {
   check("P09 media delete by a non-owner -> 403", r.s === 403);
   r = await call("DELETE", "/api/media/delete/" + mrow.id, T.t1);
   check("P09 media delete by the uploader works on real SQL -> " + r.s, r.s === 200 && (await q("SELECT 1 FROM media WHERE id = $1", [mrow.id])).length === 0, "got " + r.s + " " + (r.raw || "").slice(0, 100));
+
+  // ============================================================ P10 notifications, SOS, consent, cancel, invoices
+  const [nA] = await q("INSERT INTO notifications(user_uid, type, title, message) VALUES ($1,'booking','For patient one','x') RETURNING id", [String(U.p1.id)]);
+  const [nB] = await q("INSERT INTO notifications(user_uid, type, title, message) VALUES ($1,'booking','For patient two','y') RETURNING id", [String(U.p2.id)]);
+  r = await call("GET", "/api/notifications/list/" + U.p2.id, T.p1);
+  check("P10 notification list returns only the caller's own rows even when another user's id is in the URL", r.s === 200 && r.j.data.length >= 1 && r.j.data.every((n) => n.title !== "For patient two") && r.j.data.some((n) => n.title === "For patient one"), "got " + r.s + " " + JSON.stringify(r.j && r.j.data && r.j.data.map((n) => n.title)));
+  r = await call("GET", "/api/notifications/unread-count/" + U.p2.id, T.p1);
+  const ownUnread = (await q("SELECT COUNT(*)::int AS n FROM notifications WHERE user_uid = $1 AND is_read = false", [String(U.p1.id)]))[0].n;
+  check("P10 unread count is the caller's own (" + ownUnread + ")", r.s === 200 && r.j.data.count === ownUnread);
+  r = await call("POST", "/api/notifications/read/" + nB.id, T.p1);
+  check("P10 marking someone else's notification as read -> 404 and it stays unread", r.s === 404 && (await q("SELECT is_read FROM notifications WHERE id = $1", [nB.id]))[0].is_read === false);
+  r = await call("POST", "/api/notifications/read/not-a-uuid", T.p1);
+  check("P10 malformed notification id -> 404 (not a 500)", r.s === 404, "got " + r.s);
+  r = await call("POST", "/api/notifications/read/" + nA.id, T.p1);
+  check("P10 mark-as-read works for the owner", r.s === 200 && (await q("SELECT is_read FROM notifications WHERE id = $1", [nA.id]))[0].is_read === true);
+
+  // SOS
+  const [sosAppt] = await q(`INSERT INTO appointments(patient_id, therapist_id, therapist_name, patient_name, service_type_id, service_amount, total_amount, date, time, status, payment_status)
+    VALUES ($1,$2,'Dr One','Patient One',1,1500,1500,'2031-03-01','10:00','Confirmed','Paid') RETURNING id`, [U.p1.id, U.t1.id]);
+  const adminNotifBefore = (await q("SELECT COUNT(*)::int AS n FROM notifications WHERE type = 'sos'"))[0].n;
+  r = await call("POST", "/api/sos/create", T.p2, { bookingId: String(sosAppt.id), location: { lat: 22.3, lng: 73.2 }, type: "sos" });
+  check("P10 a user who is not part of the booking cannot raise an alert for it -> 403", r.s === 403);
+  r = await call("POST", "/api/sos/create", null, { type: "sos" });
+  check("P10 SOS needs a login -> 401", r.s === 401);
+  r = await call("POST", "/api/sos/create", T.t1, { bookingId: String(sosAppt.id), location: { lat: 22.3072, lng: 73.1812 }, type: "sos" });
+  const alertRow = (await q("SELECT * FROM sos_alerts ORDER BY id DESC LIMIT 1"))[0];
+  check("P10 therapist presses SOS -> alert saved with booking, location and role -> " + r.s, r.s === 200 && r.j.success && alertRow && alertRow.raised_by === U.t1.id && alertRow.appointment_id === sosAppt.id && Number(alertRow.lat) === 22.3072 && alertRow.status === "active", "got " + r.s + " " + (r.raw || "").slice(0, 200));
+  const sosNotifs = (await q("SELECT user_uid FROM notifications WHERE type = 'sos'")).map((x) => x.user_uid);
+  check("P10 every Super Admin and Therapy Admin gets an in-app notification (" + sosNotifs.length + " rows, none for the ecom admin)", sosNotifs.length - adminNotifBefore === 3 && sosNotifs.includes(String(U.su.id)) && sosNotifs.includes(String(U.therapy.id)) && !sosNotifs.includes(String(U.ecom.id)), JSON.stringify(sosNotifs));
+  r = await call("POST", "/api/sos/create", T.p1, { bookingId: String(sosAppt.id), type: "missed-checkin" });
+  check("P10 a patient can raise an alert for their own booking too (no location needed)", r.s === 200 && r.j.success);
+  r = await call("GET", "/api/sos/list", T.p1); check("P10 a patient cannot read the alert list -> " + r.s, r.s === 403);
+  r = await call("GET", "/api/sos/list", T.ecom); check("P10 the e-com admin cannot read the alert list -> " + r.s, r.s === 403);
+  r = await call("GET", "/api/sos/list", T.therapy);
+  const a0 = r.j && r.j.data && r.j.data.find((x) => x.therapistName === "Dr One" && x.type === "sos");
+  check("P10 Therapy Admin sees the alert in the shape the page needs (name, booking, location, status, timestamp)", r.s === 200 && a0 && a0.status === "active" && a0.bookingId === String(sosAppt.id) && a0.location.lat === 22.3072 && a0.location.lng === 73.1812 && a0.timestamp, JSON.stringify(a0));
+  r = await call("GET", "/api/sos/list?status=active", T.su);
+  check("P10 Super Admin sees the same active alerts -> " + (r.j && r.j.data && r.j.data.length), r.s === 200 && r.j.data.length === 2);
+  r = await call("POST", "/api/sos/resolve", T.ecom, { alertId: alertRow.id }); check("P10 the e-com admin cannot resolve -> " + r.s, r.s === 403);
+  r = await call("POST", "/api/sos/resolve", T.therapy, { alertId: alertRow.id, actorId: "someone-else" });
+  const resolved = (await q("SELECT * FROM sos_alerts WHERE id = $1", [alertRow.id]))[0];
+  check("P10 an admin resolves it; resolver = the logged-in admin, not the actorId in the body", r.s === 200 && resolved.status === "resolved" && resolved.resolved_by === U.therapy.id && resolved.resolved_at, "got " + r.s);
+  r = await call("POST", "/api/sos/resolve", T.su, { alertId: alertRow.id }); check("P10 resolving twice -> 404", r.s === 404);
+  r = await call("GET", "/api/sos/list?status=resolved", T.su);
+  check("P10 the resolved alert now shows resolvedAt and leaves the active list", r.s === 200 && r.j.data.length === 1 && r.j.data[0].resolvedAt);
+
+  // consent
+  r = await call("POST", "/api/consent/log", null, { consentType: "cookies", version: "1", granted: false });
+  const cAnon = (await q("SELECT * FROM consent_logs ORDER BY id DESC LIMIT 1"))[0];
+  check("P10 anonymous cookie consent is logged (user_id NULL, granted false, ip + user agent kept)", r.s === 200 && cAnon.user_id === null && cAnon.consent_type === "cookies" && cAnon.granted === false && cAnon.ip);
+  r = await call("POST", "/api/consent/log", T.p1, { consentType: "privacy", version: "2026-10", userId: U.p2.id });
+  const cUser = (await q("SELECT * FROM consent_logs ORDER BY id DESC LIMIT 1"))[0];
+  check("P10 accepting a consent form creates a consent_logs row for the TOKEN's user (body userId ignored)", r.s === 200 && cUser.user_id === U.p1.id && cUser.policy_version === "2026-10" && cUser.granted === true, JSON.stringify(cUser));
+  r = await call("POST", "/api/consent/log", T.p1, { consentType: "hack" }); check("P10 unknown consent type -> 400", r.s === 400);
+  r = await call("GET", "/api/consent/list", T.therapy); check("P10 only the Super Admin can read consent records -> " + r.s, r.s === 403);
+  r = await call("GET", "/api/consent/list?type=privacy", T.su); check("P10 Super Admin lists consent records (filter by type)", r.s === 200 && r.j.data.length === 1 && r.j.data[0].userName === "Patient One");
+
+  // cancel
+  const day = (n) => { const d = new Date(Date.now() + 5.5 * 3600e3 + n * 86400e3); return `${d.getUTCFullYear()}-${pad(d.getUTCMonth() + 1)}-${pad(d.getUTCDate())}`; };
+  const mkA = async (pay, daysAhead, extra = {}) => (await q(`INSERT INTO appointments(patient_id, patient_name, therapist_id, therapist_name, service_type_id, service_amount, total_amount, date, time, status, payment_status, razorpay_payment_id, payment_method)
+    VALUES ($1,'Patient One',$2,'Dr One',1,1500,1500,$3,$4,'Confirmed',$5,$6,$7) RETURNING id`, [U.p1.id, U.t1.id, day(daysAhead), extra.time || "10:00", pay, extra.rzp || null, extra.method || null]))[0].id;
+  const unpaid = await mkA("Pending", 0, { time: "23:00" });
+  r = await call("POST", "/api/appointments/" + unpaid + "/cancel", T.p2); check("P10 another patient cannot cancel -> " + r.s, r.s === 403);
+  const tNotifBefore = (await q("SELECT COUNT(*)::int AS n FROM notifications WHERE user_uid = $1 AND title = 'Appointment cancelled'", [String(U.t1.id)]))[0].n;
+  r = await call("POST", "/api/appointments/" + unpaid + "/cancel", T.p1);
+  check("P10 patient cancels an UNPAID booking (even hours before) -> Cancelled, therapist notified", r.s === 200 && (await q("SELECT status FROM appointments WHERE id = $1", [unpaid]))[0].status === "Cancelled" && (await q("SELECT COUNT(*)::int AS n FROM notifications WHERE user_uid = $1 AND title = 'Appointment cancelled'", [String(U.t1.id)]))[0].n === tNotifBefore + 1, "got " + r.s + " " + (r.raw || "").slice(0, 150));
+  r = await call("PATCH", "/api/appointments/" + unpaid + "/cancel", T.p1); check("P10 cancelling again is refused -> " + r.s, r.s === 400);
+  const rfBefore = rzpRefunds.length;
+  const paidFar = await mkA("Paid", 3, { rzp: "pay_cancel1", method: "razorpay" });
+  r = await call("PATCH", "/api/appointments/" + paidFar + "/cancel", T.p1);
+  check("P10 patient cancels a PAID booking more than 12h away -> Cancelled + full refund through Razorpay (PATCH, as the website calls it)", r.s === 200 && rzpRefunds.length === rfBefore + 1 && rzpRefunds[rfBefore].pid === "pay_cancel1" && rzpRefunds[rfBefore].amount === 150000 && r.j.refund && r.j.refund.status === "pending" && (await q("SELECT status FROM appointments WHERE id = $1", [paidFar]))[0].status === "Cancelled" && (await q("SELECT 1 FROM order_refunds WHERE appointment_id = $1 AND status = 'pending'", [paidFar])).length === 1, "got " + r.s + " " + (r.raw || "").slice(0, 200));
+  const paidNear = await mkA("Paid", 0, { rzp: "pay_cancel2", method: "razorpay", time: pad(Math.min(23, (new Date(Date.now() + 5.5 * 3600e3)).getUTCHours() + 1)) + ":00" });
+  r = await call("POST", "/api/appointments/" + paidNear + "/cancel", T.p1);
+  check("P10 a PAID booking inside the 12h window -> 400 'Please contact support', nothing changes", r.s === 400 && /contact support/i.test(r.j.message) && (await q("SELECT status FROM appointments WHERE id = $1", [paidNear]))[0].status === "Confirmed" && rzpRefunds.length === rfBefore + 1, "got " + r.s + " " + JSON.stringify(r.j));
+  const paidManual = await mkA("Paid", 3, { method: "manual_cash" });
+  r = await call("POST", "/api/appointments/" + paidManual + "/cancel", T.p1);
+  check("P10 a booking paid in cash (no online payment to refund) -> 400 contact support", r.s === 400 && (await q("SELECT status FROM appointments WHERE id = $1", [paidManual]))[0].status === "Confirmed");
+  const paidByTherapist = await mkA("Paid", 0, { rzp: "pay_cancel3", method: "razorpay", time: "23:30" });
+  r = await call("POST", "/api/appointments/" + paidByTherapist + "/cancel", T.t1);
+  check("P10 therapist cancels their own paid booking -> full refund; patient notified", r.s === 200 && rzpRefunds.some((x) => x.pid === "pay_cancel3") && (await q("SELECT COUNT(*)::int AS n FROM notifications WHERE user_uid = $1 AND title = 'Appointment cancelled'", [String(U.p1.id)]))[0].n >= 1, "got " + r.s + " " + (r.raw || "").slice(0, 150));
+
+  // invoices
+  r = await call("GET", "/api/invoices/list", T.su);
+  const allInv = (await q("SELECT COUNT(*)::int AS n FROM invoices"))[0].n;
+  check("P10 admin invoice list returns every invoice (" + allInv + ") in the frontend's shape", r.s === 200 && r.j.data.length === allInv && r.j.data[0].invoiceNumber && r.j.data[0].source && typeof r.j.data[0].totalAmountPaise === "number" && "issuedAt" in r.j.data[0], "got " + r.s + " " + (r.j && r.j.data && r.j.data.length));
+  r = await call("GET", "/api/invoices/list?type=order", T.ecom);
+  check("P10 filter type=order returns only shop invoices", r.s === 200 && r.j.data.length > 0 && r.j.data.every((x) => x.source.orderId));
+  r = await call("GET", "/api/invoices/list?type=service", T.therapy);
+  check("P10 filter type=service returns only booking invoices", r.s === 200 && r.j.data.length > 0 && r.j.data.every((x) => x.source.bookingId));
+  r = await call("GET", "/api/invoices/list?from=2999-01-01", T.su); check("P10 date filter works (nothing after 2999)", r.s === 200 && r.j.data.length === 0);
+  r = await call("GET", "/api/invoices/list?from=2020-01-01&to=2999-12-31", T.su); check("P10 date range filter accepts a range", r.s === 200 && r.j.data.length === allInv);
+  r = await call("GET", "/api/invoices/list", T.p1);
+  const p1Inv = (await q("SELECT COUNT(*)::int AS n FROM invoices WHERE user_id = $1", [U.p1.id]))[0].n;
+  check("P10 a patient sees only their own invoices (" + p1Inv + " of " + allInv + ")", r.s === 200 && r.j.data.length === p1Inv && r.j.data.every((x) => x.userId === U.p1.id) && p1Inv < allInv);
+  r = await call("GET", "/api/invoices/list?userId=" + U.p2.id, T.p1); check("P10 a patient cannot widen the list with ?userId=", r.s === 200 && r.j.data.every((x) => x.userId === U.p1.id));
+  r = await call("GET", "/api/invoices/list", null); check("P10 invoice list needs a login -> " + r.s, r.s === 401);
 
   // ============================================================ #6 every website call reaches a real route
   const map = fs.readFileSync(path.resolve(root, "../curevan-dev/docs/API_CALL_MAP.md"), "utf8");
