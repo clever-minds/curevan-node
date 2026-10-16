@@ -17,7 +17,7 @@ router.post(
 
 /* DELETE */
 router.delete(
-  "/delete/:type/:filename",authMiddleware, requireRole("admin.ecom", "admin.therapy", "therapist"),
+  "/delete/:id",authMiddleware, requireRole("admin.ecom", "admin.therapy", "therapist"),
   media.deleteMedia
 );
 

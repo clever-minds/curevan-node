@@ -1,4 +1,3 @@
-const therapistAvailabilityController = require("../controllers/therapist/therapistAvailabilityController");
 const therapistLeavesController = require("../controllers/therapist/therapistLeavesController");
 const express = require("express");
 const router = express.Router();
@@ -36,10 +35,6 @@ router.post("/leaves", authMiddleware, requireRole("therapist"), responseHandler
 router.get("/leaves", authMiddleware, requireRole("therapist", "admin.ecom", "admin.therapy"), responseHandler, therapistLeavesController.listLeaves);
 router.delete("/leaves/:id", authMiddleware, requireRole("therapist"), responseHandler, therapistLeavesController.deleteLeave);
 
-
-// --- Availability ---
-router.post("/availability", authMiddleware, requireRole("therapist"), responseHandler, therapistAvailabilityController.setAvailability);
-router.get("/availability", authMiddleware, requireRole("therapist", "admin.ecom", "admin.therapy"), responseHandler, therapistAvailabilityController.getAvailability);
 
 module.exports = router;
 

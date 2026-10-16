@@ -14,6 +14,9 @@ router.post("/create", authMiddleware, requireRole("admin.ecom"), shipment.creat
 // ✅ Get All Shipments
 router.get("/list", authMiddleware, requireRole("admin.ecom"), shipment.listShipments);
 
+// ✅ Estimate Shipping (Public) - must stay above "/:id" or it is captured by it
+router.get("/estimate", responseHandler, shipment.estimateShipping);
+
 // ✅ Get Shipment by ID
 router.get("/:id", authMiddleware, requireRole("admin.ecom"), shipment.getShipmentById);
 
@@ -22,8 +25,5 @@ router.get("/track/:awb", responseHandler, shipment.trackShipment);
 
 // ✅ Cancel Shipment
 router.post("/cancel/:id", authMiddleware, requireRole("admin.ecom"), shipment.cancelShipment);
-
-// ✅ Estimate Shipping (Public)
-router.get("/estimate", responseHandler, shipment.estimateShipping);
 
 module.exports = router;

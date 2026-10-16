@@ -345,7 +345,18 @@ exports.updateUserRoles = async (req, res) => {
 
   const transaction = await sequelize.transaction();
   try {
-    const { id, roles } = req.body || {};
+    const body = req.body || {};
+    const { roles } = body;
+    let id = body.id;
+
+    // the admin screens identify users by uid; resolve it to the numeric id
+    if (!id && body.uid) {
+      const [byUid] = await sequelize.query(
+        `SELECT id FROM users WHERE uid = :uid`,
+        { replacements: { uid: String(body.uid) }, type: QueryTypes.SELECT, transaction }
+      );
+      id = byUid ? byUid.id : null;
+    }
 
     if (!id) {
       await transaction.rollback();

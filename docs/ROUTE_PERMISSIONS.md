@@ -51,7 +51,7 @@ Ownership checks (a user may only see their own records) are added in P04; route
 | DELETE | `/api/products/delete/:id` | yes | admin.super, admin.ecom | products.routes |
 | GET | `/api/media/list` | yes | admin.super, admin.ecom, admin.therapy, therapist | media.routes |
 | POST | `/api/media/upload` | yes | admin.super, admin.ecom, admin.therapy, therapist | media.routes |
-| DELETE | `/api/media/delete/:type/:filename` | yes | admin.super, admin.ecom, admin.therapy, therapist | media.routes |
+| DELETE | `/api/media/delete/:id` | yes | admin.super, admin.ecom, admin.therapy, therapist | media.routes |
 | GET | `/api/media/url/:id` | no | public (no login) | media.routes |
 | POST | `/api/coupons/add` | yes | admin.super, admin.ecom, admin.therapy | coupons.routes |
 | GET | `/api/coupons/list` | yes | admin.super, admin.ecom, admin.therapy | coupons.routes |
@@ -108,13 +108,12 @@ Ownership checks (a user may only see their own records) are added in P04; route
 | POST | `/api/therapists/leaves` | yes | admin.super, therapist | therapist.routes |
 | GET | `/api/therapists/leaves` | yes | admin.super, therapist, admin.ecom, admin.therapy | therapist.routes |
 | DELETE | `/api/therapists/leaves/:id` | yes | admin.super, therapist | therapist.routes |
-| POST | `/api/therapists/availability` | yes | admin.super, therapist | therapist.routes |
-| GET | `/api/therapists/availability` | yes | admin.super, therapist, admin.ecom, admin.therapy | therapist.routes |
 | GET | `/api/notifications/list/:id` | yes | any logged-in user | notifications.routes |
 | GET | `/api/notifications/unread-count/:id` | yes | any logged-in user | notifications.routes |
 | POST | `/api/notifications/read/:id` | yes | any logged-in user | notifications.routes |
 | GET | `/api/appointments` | yes | admin.super, admin.ecom, admin.therapy | appointments.routes |
 | GET | `/api/appointments/user/:userId/:role` | yes | any logged-in user | appointments.routes |
+| GET | `/api/appointments/pcr-list` | yes | admin.super, admin.therapy | appointments.routes |
 | GET | `/api/appointments/:id` | yes | any logged-in user | appointments.routes |
 | POST | `/api/appointments/request` | yes | any logged-in user | appointments.routes |
 | GET | `/api/appointments/requests/available` | yes | admin.super, therapist | appointments.routes |
@@ -154,10 +153,10 @@ Ownership checks (a user may only see their own records) are added in P04; route
 | POST | `/api/support/contact-us` | no | public (no login) | support.routes |
 | POST | `/api/shipment/create` | yes | admin.super, admin.ecom | shipment.routes |
 | GET | `/api/shipment/list` | yes | admin.super, admin.ecom | shipment.routes |
+| GET | `/api/shipment/estimate` | no | public (no login) | shipment.routes |
 | GET | `/api/shipment/:id` | yes | admin.super, admin.ecom | shipment.routes |
 | GET | `/api/shipment/track/:awb` | no | public (no login) | shipment.routes |
 | POST | `/api/shipment/cancel/:id` | yes | admin.super, admin.ecom | shipment.routes |
-| GET | `/api/shipment/estimate` | no | public (no login) | shipment.routes |
 | GET | `/api/stats/public` | no | public (no login) | stats.routes |
 | GET | `/api/reviews/product/:productId` | no | public (no login) | review.routes |
 | POST | `/api/reviews` | yes | any logged-in user | review.routes |
@@ -170,4 +169,4 @@ Ownership checks (a user may only see their own records) are added in P04; route
 | PUT | `/api/offers/update/:id` | yes | admin.super, admin.ecom | offers.routes |
 | DELETE | `/api/offers/delete/:id` | yes | admin.super, admin.ecom | offers.routes |
 
-Total routes: 164
+Total routes: 163

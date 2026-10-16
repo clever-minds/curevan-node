@@ -1409,6 +1409,15 @@ exports.listUsersWithProfilesInRadius = async (req, res) => {
 exports.saveAvailability = async (req, res) => {
   try {
     const { therapist_id, availability } = req.body;
+
+    // therapist_id is the therapist PROFILE id; it must belong to the caller (admins may edit any)
+    if (!access.isAdmin(req.user)) {
+      const [own] = await sequelize.query(
+        `SELECT id FROM therapist_profiles WHERE id = :profileId AND user_id = :userId`,
+        { replacements: { profileId: therapist_id, userId: req.user.id }, type: QueryTypes.SELECT }
+      );
+      if (!own) return res.status(403).json({ status: false, message: "Forbidden" });
+    }
     await sequelize.query(
       `DELETE FROM therapist_availability WHERE therapist_id = :id`,
       { replacements: { id: therapist_id }, type: QueryTypes.DELETE }

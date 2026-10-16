@@ -119,6 +119,48 @@ exports.getAppointmentById = async (req, res) => {
   }
 };
 
+// ✅ LIST PCRs (admin.therapy / admin.super) - filters: bookingId, status, therapistId
+exports.listPcrs = async (req, res) => {
+  try {
+    const { bookingId, status, therapistId } = req.query;
+    const where = [];
+    const replacements = {};
+    if (bookingId) { where.push("pcr.appointment_id = :bookingId"); replacements.bookingId = Number(bookingId); }
+    if (status) { where.push("pcr.status = :status"); replacements.status = status; }
+    if (therapistId) { where.push("pcr.therapist_id = :therapistId"); replacements.therapistId = Number(therapistId); }
+
+    const rows = await sequelize.query(
+      `SELECT
+         pcr.appointment_id            AS "id",
+         pcr.patient_id                AS "patientId",
+         pcr.therapist_id              AS "therapistId",
+         a.patient_name                AS "patientFullName",
+         a.therapist_name              AS "therapistName",
+         pcr.service_type_id           AS "serviceTypeId",
+         pcr.chief_complaint           AS "chiefComplaint",
+         pcr.assessment                AS "assessment",
+         pcr.diagnosis                 AS "diagnosis",
+         pcr.treatment_provided        AS "treatmentProvided",
+         pcr.plan_of_care              AS "planOfCare",
+         pcr.status                    AS "status",
+         pcr.version                   AS "version",
+         pcr.created_at                AS "createdAt",
+         pcr.locked_at                 AS "lockedAt",
+         pcr.locked_by                 AS "lockedBy",
+         pcr.next_treatment_date       AS "nextTreatmentDate"
+       FROM pcr
+       JOIN appointments a ON a.id = pcr.appointment_id
+       ${where.length ? "WHERE " + where.join(" AND ") : ""}
+       ORDER BY pcr.created_at DESC`,
+      { replacements, type: QueryTypes.SELECT }
+    );
+    return res.success(rows, "PCRs fetched successfully");
+  } catch (error) {
+    console.error("listPcrs error:", error);
+    return res.error("Failed to fetch PCRs");
+  }
+};
+
 // ✅ LIST APPOINTMENTS FOR USER
 exports.listAppointmentsForUser = async (req, res) => {
   try {

@@ -13,6 +13,9 @@ router.get("/", authMiddleware, requireRole("admin.ecom", "admin.therapy"), resp
 router.get("/user/:userId/:role", authMiddleware,responseHandler, appointmentsController.listAppointmentsForUser);
 
 // ✅ GET single appointment
+// admin: list of PCRs (filters: bookingId, status, therapistId) - must stay above "/:id"
+router.get("/pcr-list", authMiddleware, requireRole("admin.therapy"), responseHandler, appointmentsController.listPcrs);
+
 router.get("/:id", authMiddleware,responseHandler, appointmentsController.getAppointmentById);
 
 // ✅ POST create new booking request (Service-First Flow)
