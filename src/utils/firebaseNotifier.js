@@ -1,5 +1,4 @@
-const { initializeApp, cert } = require("firebase-admin/app");
-const { getMessaging } = require("firebase-admin/messaging");
+const { getMessaging } = require("../config/firebaseAdmin");
 const { sequelize } = require("../config/db");
 
 const saveNotification = async (token, title, body, data) => {
@@ -12,34 +11,6 @@ const saveNotification = async (token, title, body, data) => {
   } catch (err) { console.error('Error saving notification to db:', err); }
 };
 
-
-// Note: You must provide a valid service account JSON to initialize Firebase Admin.
-// For now, this handles the initialization safely if no credentials are provided yet.
-try {
-  let serviceAccount;
-  try {
-    serviceAccount = require("../../firebase-service-account.json");
-  } catch (err) {
-    // Ignore error if file doesn't exist locally
-  }
-
-  // If service account JSON is available locally, use it
-  if (serviceAccount) {
-    initializeApp({
-      credential: cert(serviceAccount)
-    });
-  } else if (process.env.FIREBASE_SERVICE_ACCOUNT) {
-    serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT);
-    initializeApp({
-      credential: cert(serviceAccount)
-    });
-  } else {
-    // Attempt default initialization if credentials are in the environment (e.g. GOOGLE_APPLICATION_CREDENTIALS)
-    initializeApp();
-  }
-} catch (error) {
-  console.warn("Firebase Admin Initialization Warning:", error.message);
-}
 
 /**
  * Sends a targeted notification to a specific therapist.

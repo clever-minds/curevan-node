@@ -6,6 +6,25 @@ const { v4: uuidv4 } = require('uuid');
 const transporter = require("../../config/mailer");
 const { OAuth2Client } = require('google-auth-library');
 const client = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
+const { getAuth: getFirebaseAuth } = require('../../config/firebaseAdmin');
+
+// "1d", "12h", "30m", "3600" (seconds) -> milliseconds. Keeps cookie life equal to the JWT life.
+function durationToMs(value, fallbackMs = 24 * 60 * 60 * 1000) {
+  const m = String(value || '').trim().match(/^(\d+)\s*([smhd]?)$/i);
+  if (!m) return fallbackMs;
+  const n = Number(m[1]);
+  const unit = (m[2] || 's').toLowerCase();
+  return n * { s: 1000, m: 60 * 1000, h: 3600 * 1000, d: 86400 * 1000 }[unit];
+}
+
+function authCookieOptions() {
+  return {
+    httpOnly: true,
+    secure: process.env.NODE_ENV === 'production',
+    sameSite: 'lax',
+    maxAge: durationToMs(process.env.JWT_EXPIRE),
+  };
+}
 
 // exports.register = async (req, res) => {
 //   const { email, password, name, phone, role, roles = [] } = req.body;
@@ -97,7 +116,11 @@ const client = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
 // };
 
 exports.register = async (req, res) => {
-  const { email, password, name, phone, role, roles = [] } = req.body;
+  // Public sign-up always creates a patient. Role/roles in the body are ignored on purpose:
+  // therapists register via /api/therapists/register, admins are invited by a Super Admin.
+  const { email, password, name, phone } = req.body;
+  const role = 'patient';
+  const roles = ['patient'];
 
   const transaction = await sequelize.transaction();
 
@@ -255,13 +278,8 @@ exports.login = async (req, res) => {
     expiresIn: process.env.JWT_EXPIRE || "1d"
   }
 );
- res.cookie("token", token, {
-    httpOnly: true,
-    secure: false, // localhost
-    sameSite: "lax",
-    maxAge: 24 * 60 * 60 * 1000,
-  });
-  console.log("Login successful, token set in cookie", res);
+ res.cookie("token", token, authCookieOptions());
+  console.log("Login successful, token set in cookie");
 
     res.json({
       success: true,
@@ -938,11 +956,11 @@ exports.logout = async (req, res) => {
   try {
     res.clearCookie("token", {
       httpOnly: true,
-      secure: false,         
+      secure: process.env.NODE_ENV === "production",
       sameSite: "lax",     
       path: "/",
     });
-    console.log("Logout successful", res);
+    console.log("Logout successful");
 
     return res.status(200).json({
       success: true,
@@ -963,16 +981,30 @@ exports.loginWithMobile = async (req, res) => {
     return res.status(405).json({ success: false, error: "Method not allowed" });
   }
 
-  const { phoneNumber, verifyOtp } = req.body;
+  // The phone number comes ONLY from the verified Firebase ID token.
+  // phoneNumber / verifyOtp in the body are ignored.
+  const { firebaseIdToken } = req.body || {};
+  const unauthorized = (message = "Phone verification failed") =>
+    res.status(401).json({ success: false, error: message, message });
 
-  if (!phoneNumber) {
-    return res.status(400).json({ success: false, error: "Phone number is required" });
+  if (!firebaseIdToken || typeof firebaseIdToken !== "string") {
+    return unauthorized("firebaseIdToken is required");
   }
 
-  const phone = phoneNumber.replace(/^\+91/, '');
+  let decoded;
+  try {
+    decoded = await getFirebaseAuth().verifyIdToken(firebaseIdToken);
+  } catch (err) {
+    return unauthorized();
+  }
+
+  if (!decoded || !decoded.phone_number) {
+    return unauthorized();
+  }
+
+  const phone = String(decoded.phone_number).replace(/^\+91/, "");
 
   try {
-    // 1️⃣ Check if the phone number exists
     const users = await sequelize.query(
       "SELECT * FROM users WHERE phone = :phoneNumber",
       {
@@ -982,12 +1014,11 @@ exports.loginWithMobile = async (req, res) => {
     );
 
     if (users.length === 0) {
-      return res.status(400).json({ success: false, error: "Phone number not registered" });
+      return unauthorized("Phone number not registered");
     }
 
     const user = users[0];
 
-    // 2️⃣ Fetch all roles of this user
     const rolesResult = await sequelize.query(
       "SELECT r.name FROM roles r INNER JOIN user_roles ur ON r.id = ur.role_id WHERE ur.user_id = :userId",
       {
@@ -995,45 +1026,30 @@ exports.loginWithMobile = async (req, res) => {
         type: QueryTypes.SELECT,
       }
     );
-
-    // Extract role names into an array
     const roles = rolesResult.map(r => r.name);
 
-    // 3️⃣ If OTP is verified, generate JWT including roles
-    if (verifyOtp === true) {
-      const token = jwt.sign(
-        {
-          id: user.id,
-          uid: user.uid,
-          email: user.email,
-          role: user.role,
-          roles, // add array of roles here
-        },
-        process.env.JWT_SECRET,
-        {
-          expiresIn: process.env.JWT_EXPIRE || "1d",
-        }
-      );
-
-      res.cookie("token", token, {
-        httpOnly: true,
-        secure: false, // set true in production with HTTPS
-        sameSite: "lax",
-        maxAge: 24 * 60 * 60 * 1000,
-      });
-
-      console.log("Login successful, token set in cookie");
-
-      return res.status(200).json({
-        success: true,
-        message: "OTP verified, token generated",
-        token,
+    const token = jwt.sign(
+      {
+        id: user.id,
+        uid: user.uid,
+        email: user.email,
+        role: user.role,
         roles,
-      });
-    }
+      },
+      process.env.JWT_SECRET,
+      {
+        expiresIn: process.env.JWT_EXPIRE || "1d",
+      }
+    );
 
-    // 4️⃣ OTP not verified yet
-    res.status(200).json({ success: true, message: "Number exists, proceed with OTP" });
+    res.cookie("token", token, authCookieOptions());
+
+    return res.status(200).json({
+      success: true,
+      message: "OTP verified, token generated",
+      token,
+      roles,
+    });
   } catch (err) {
     console.error(err);
     res.status(500).json({ success: false, error: "Server error" });
