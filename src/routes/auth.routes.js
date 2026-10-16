@@ -35,14 +35,21 @@ router.get(
 router.get(
   '/google/callback',
   passport.authenticate('google', { session: false, failureRedirect: '/login' }),
-  (req, res) => {
+  async (req, res) => {
     const jwt = require('jsonwebtoken');
+    const { sequelize } = require('../config/db');
+    // same token shape as every other login: id, uid, email, role AND the roles array
+    const roleRows = await sequelize.query(
+      'SELECT r.name FROM roles r JOIN user_roles ur ON ur.role_id = r.id WHERE ur.user_id = :id',
+      { replacements: { id: req.user.id }, type: sequelize.QueryTypes.SELECT }
+    );
     const token = jwt.sign(
       {
         id: req.user.id,
         uid: req.user.uid,
         email: req.user.email,
-        role: req.user.role
+        role: req.user.role,
+        roles: roleRows.map((r) => r.name)
       },
       process.env.JWT_SECRET,
       { expiresIn: '1d' }

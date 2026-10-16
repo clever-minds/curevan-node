@@ -84,3 +84,14 @@ CREATE TABLE ticket_messages (id SERIAL PRIMARY KEY, ticket_id INT, sender_id IN
 CREATE TABLE payout_items (id SERIAL PRIMARY KEY, source_id INT, therapist_id INT, gross_amount NUMERIC, platform_fee_amount NUMERIC, gst_on_platform_fee NUMERIC,
   tds_deducted NUMERIC, net_amount NUMERIC, state TEXT, week_start DATE);
 CREATE TABLE knowledge_base (id SERIAL PRIMARY KEY, title TEXT, slug TEXT, author_id INT, author_name TEXT, status TEXT);
+
+CREATE TABLE shipments (id SERIAL PRIMARY KEY, order_id INT, awb TEXT, carrier TEXT, status TEXT, created_at TIMESTAMPTZ DEFAULT now(), eta TIMESTAMPTZ, provider TEXT, shiprocket_shipment_id INT, delivered_at TIMESTAMPTZ, tracking_url TEXT, label_url TEXT);
+
+CREATE TABLE change_requests (id SERIAL PRIMARY KEY, user_id INT, role TEXT, entity_id TEXT, section TEXT, changes JSONB, status TEXT DEFAULT 'pending',
+  reason TEXT, reviewed_by INT, reviewed_at TIMESTAMPTZ, created_at TIMESTAMPTZ DEFAULT now(), updated_at TIMESTAMPTZ);
+CREATE TABLE therapist_documents (id SERIAL PRIMARY KEY, therapist_id INT, document_type TEXT, type TEXT, file_url TEXT, media_id INT, created_at TIMESTAMPTZ DEFAULT now());
+CREATE TABLE reviews (id SERIAL PRIMARY KEY, user_id INT, product_id INT, rating INT, comment TEXT, created_at TIMESTAMPTZ DEFAULT now());
+CREATE TABLE journal_categories (id SERIAL PRIMARY KEY, name TEXT, slug TEXT, description TEXT, status TEXT DEFAULT 'active', created_at TIMESTAMPTZ DEFAULT now());
+CREATE TABLE journal_tags (id SERIAL PRIMARY KEY, name TEXT, slug TEXT, created_at TIMESTAMPTZ DEFAULT now());
+CREATE TABLE sub_categories (id SERIAL PRIMARY KEY, category_id INT, name TEXT, description TEXT, image_id INT, status TEXT DEFAULT 'active', created_at TIMESTAMPTZ DEFAULT now());
+CREATE TABLE order_return_items (id SERIAL PRIMARY KEY, return_id INT, order_item_id INT, qty INT, reason TEXT);

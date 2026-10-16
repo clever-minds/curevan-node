@@ -60,7 +60,7 @@ const q = async (sql, p) => (await pg.query(sql, p)).rows;
 const results = []; let failed = 0;
 const check = (name, ok, detail = "") => { results.push({ name, ok, detail }); if (!ok) failed++; };
 const sign = (o, p) => crypto.createHmac("sha256", process.env.RAZORPAY_KEY_SECRET).update(o + "|" + p).digest("hex");
-const token = (u) => jwt.sign({ id: u.id, uid: u.uid, email: u.email, role: u.role, roles: [u.role] }, process.env.JWT_SECRET);
+const token = (u) => jwt.sign({ id: u.id, uid: u.uid, email: u.email, role: u.role, roles: [u.roleName || u.role] }, process.env.JWT_SECRET);
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 async function seed() {
@@ -69,8 +69,11 @@ async function seed() {
     coupon_usages, order_stock_reservations, payment_webhook_events, notifications, audit_logs, tickets, ticket_messages, payout_items, media RESTART IDENTITY`);
   for (const r of ["patient", "therapist", "admin.super", "admin.ecom", "admin.therapy"]) await q("INSERT INTO roles(name) VALUES ($1)", [r]);
   const mk = async (uid, email, name, phone, role, extra = {}) => {
-    const [u] = await q(`INSERT INTO users(uid,email,name,phone,role,is_verified,fcm_token,city,state) VALUES ($1,$2,$3,$4,$5,true,$6,'Vadodara','Gujarat') RETURNING *`, [uid, email, name, phone, role, extra.fcm || null]);
+    // like production: users.role holds the generic 'admin' for every admin, the real role lives in user_roles
+    const generic = role.startsWith("admin.") ? "admin" : role;
+    const [u] = await q(`INSERT INTO users(uid,email,name,phone,role,is_verified,fcm_token,city,state) VALUES ($1,$2,$3,$4,$5,true,$6,'Vadodara','Gujarat') RETURNING *`, [uid, email, name, phone, generic, extra.fcm || null]);
     await q("INSERT INTO user_roles(user_id, role_id) SELECT $1, id FROM roles WHERE name = $2", [u.id, role]);
+    u.roleName = role;
     return u;
   };
   const U = {};
