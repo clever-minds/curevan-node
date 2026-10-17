@@ -2,6 +2,7 @@ const { QueryTypes } = require("sequelize");
 const { sequelize } = require("../../config/db");
 const access = require("../../utils/access");
 const notificationStore = require("../../services/notificationStore");
+const notifications = require("../../services/notifications");
 
 const ADMIN_ROLES = ["admin.super", "admin.therapy"];
 
@@ -54,7 +55,7 @@ exports.createAlert = async (req, res) => {
     const alertId = rows[0].id;
 
     // tell every Super Admin and Therapy Admin (bell + push)
-    const [who] = await sequelize.query(`SELECT name FROM users WHERE id = :id`, { replacements: { id: req.user.id }, type: QueryTypes.SELECT });
+    const [who] = await sequelize.query(`SELECT name, phone FROM users WHERE id = :id`, { replacements: { id: req.user.id }, type: QueryTypes.SELECT });
     const notified = await notificationStore.notifyRoles(ADMIN_ROLES, {
       type: "sos",
       title: alertType === "sos" ? "SOS alert" : "Missed check-in",
@@ -62,6 +63,16 @@ exports.createAlert = async (req, res) => {
       link: "/dashboard/admin/sos-alerts",
       data: { alertId },
     });
+
+    // P24: Dispatch sos_raised via notifications (Admin: push + SMS to on-call)
+    await notifications.notify("sos_raised", {
+      therapistName: who?.name,
+      phone: who?.phone,
+      bookingId: appointmentId,
+      time: new Date().toLocaleTimeString("en-IN"),
+      lat,
+      lng,
+    }).catch((err) => console.error("Failed to notify sos_raised:", err.message));
 
     return res.json({ success: true, message: "Alert sent", data: { id: String(alertId), notifiedAdmins: notified } });
   } catch (error) {

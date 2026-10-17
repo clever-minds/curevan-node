@@ -13,6 +13,7 @@ const { generatePcrPdf } = require("../../services/pcrPdfService");
 const { STATUS } = stateMachine;
 const refundService = require("../../services/refundService");
 const notificationStore = require("../../services/notificationStore");
+const notifications = require("../../services/notifications");
 const { sequelize } = require("../../config/db");
 const transporter = require("../../config/mailer");
 const firebaseNotifier = require("../../utils/firebaseNotifier");
@@ -419,52 +420,32 @@ exports.finalizePaidBooking = async (appt, transaction) => {
 // Push + e-mail after the payment commit (best effort, never fails the payment).
 exports.notifyPaidBooking = async (appt) => {
   try {
-    if (appt.therapist_id) {
-      const [therapistInfo] = await sequelize.query(
-        `SELECT fcm_token FROM users WHERE id = :id`,
-        { replacements: { id: appt.therapist_id }, type: QueryTypes.SELECT }
-      );
-      if (therapistInfo && therapistInfo.fcm_token) {
-        await firebaseNotifier.sendToTherapist(
-          therapistInfo.fcm_token,
-          appt.price_source === "therapist_rate" && appt.status === STATUS.PENDING_PAYMENT ? "New Direct Booking Assigned" : "Booking Paid - Session Confirmed",
-          `You have a confirmed appointment with ${appt.patient_name} on ${appt.date} at ${appt.time}.`,
-          { appointmentId: String(appt.id), type: "direct_booking" }
-        );
-      }
-    }
-  } catch (fcmErr) {
-    console.error("Failed to send booking push:", fcmErr.message);
-  }
-
-  try {
-    const [patient] = await sequelize.query(
-      `SELECT email FROM users WHERE id = :id`,
-      { replacements: { id: appt.patient_id }, type: QueryTypes.SELECT }
-    );
-    if (patient && patient.email) {
-      await transporter.sendMail({
-        from: `"Curevan Appointments" <${process.env.MAIL_FROM || process.env.MAIL_USER}>`,
-        to: patient.email,
-        subject: "Your Appointment is Booked",
-        html: `
-          <h3>Booking Confirmation</h3>
-          <p>Hi ${appt.patient_name || "there"},</p>
-          <p>Your payment was received and your appointment is booked.</p>
-          <ul>
-            <li><strong>Date:</strong> ${appt.date}</li>
-            <li><strong>Time:</strong> ${appt.time}</li>
-            <li><strong>Therapist:</strong> ${appt.therapist_name || ""}</li>
-            <li><strong>Service:</strong> ${appt.therapy_type || ""}</li>
-            <li><strong>Mode:</strong> ${appt.mode ? String(appt.mode).toUpperCase() : "Not Specified"}</li>
-            <li><strong>Total Amount:</strong> ₹${appt.total_amount}</li>
-          </ul>
-          <p>Thank you for choosing Curevan.</p>
-        `,
+    let otp = appt.start_otp;
+    if (!otp && appt.id) {
+      const issued = otpService.issue(appt.id);
+      otp = issued.otp;
+      await sequelize.query(`UPDATE appointments SET start_otp_hash = :hash WHERE id = :id`, {
+        replacements: { hash: issued.hash, id: appt.id },
+        type: QueryTypes.UPDATE,
       });
     }
-  } catch (mailErr) {
-    console.error("Failed to send booking email:", mailErr.message);
+
+    const dateStr = appt.date instanceof Date ? appt.date.toISOString().slice(0, 10) : appt.date;
+
+    await notifications.notify("booking_confirmed", {
+      appointmentId: appt.id,
+      patientId: appt.patient_id,
+      therapistId: appt.therapist_id,
+      patientName: appt.patient_name,
+      therapistName: appt.therapist_name,
+      date: dateStr,
+      time: appt.time,
+      locality: appt.locality || appt.city,
+      otp,
+      link: "https://curevan.com/dashboard/bookings",
+    });
+  } catch (err) {
+    console.error("Failed to dispatch booking_confirmed notification:", err.message);
   }
 };
 
@@ -1048,6 +1029,12 @@ exports.updatePcr = async (req, res) => {
     );
     if (completeNow) {
       await stateMachine.transition(appointmentId, STATUS.COMPLETED, { system: true }, { transaction: t, note: "PCR submitted" });
+      notifications.notify("session_completed_review", {
+        patientId: owner.patient_id,
+        therapistId: owner.therapist_id,
+        therapistName: owner.therapist_name,
+        link: "https://curevan.com/dashboard/bookings",
+      }).catch(() => {});
     }
 
     // 7️⃣ Commit transaction
@@ -1058,7 +1045,15 @@ exports.updatePcr = async (req, res) => {
       catch (fuErr) { console.error("follow-up proposals failed:", fuErr.message); }   // the PCR is saved either way; the therapist can re-plan
     }
     if (clinical.reportToMake) {
-      try { await clinicalService.createReport(clinical.reportToMake); }
+      try {
+        await clinicalService.createReport(clinical.reportToMake);
+        notifications.notify("progress_report_ready", {
+          patientId: owner.patient_id,
+          therapistId: owner.therapist_id,
+          therapistName: owner.therapist_name,
+          link: "https://curevan.com/dashboard/patient/progress",
+        }).catch(() => {});
+      }
       catch (reportErr) { console.error("progress report failed:", reportErr.message); }
     }
 
@@ -1626,6 +1621,15 @@ exports.updateAppointmentStatus = async (req, res) => {
     }
     // the state machine decides who may do what; arrived -> in_progress is only possible through the OTP check
     const result = await stateMachine.transition(id, status, req.user);
+    if (result.to === STATUS.ON_THE_WAY) {
+      notifications.notify("therapist_on_the_way", {
+        patientId: appt.patient_id,
+        therapistId: appt.therapist_id,
+        patientName: appt.patient_name,
+        therapistName: appt.therapist_name,
+        time: appt.time,
+      }).catch(() => {});
+    }
     let settlement;
     if (result.to === STATUS.NO_SHOW) settlement = await settleNoShow(id, req.user);
     return res.json({ success: true, message: `Status updated to ${result.to}`, status: result.to, settlement });

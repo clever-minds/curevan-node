@@ -1,6 +1,7 @@
 const { QueryTypes } = require("sequelize");
 const { sequelize } = require("../../config/db");
 const transporter = require("../../config/mailer");
+const notifications = require("../../services/notifications");
 const firebaseNotifier = require("../../utils/firebaseNotifier");
 const access = require("../../utils/access");
 const rules = require("../../config/businessRules");
@@ -1528,6 +1529,16 @@ exports.cancelOrder = async (req, res) => {
       }
     } catch (mailErr) {
       console.error("Failed to send order cancel email:", mailErr);
+    }
+
+    if (refundResult && !refundResult.error && refundResult.amount > 0) {
+      notifications.notify("refund_processed", {
+        userId: req.user.id,
+        customerName: req.user.name,
+        amount: refundResult.amount,
+        reference: `Order #${orderId}`,
+        refundId: refundResult.refundId,
+      }).catch(() => {});
     }
 
     return res.json({

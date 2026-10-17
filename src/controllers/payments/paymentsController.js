@@ -1,6 +1,7 @@
 const { QueryTypes } = require("sequelize");
 const { sequelize } = require("../../config/db");
 const transporter = require("../../config/mailer");
+const notifications = require("../../services/notifications");
 const razorpay = require("../../services/razorpayService");
 const stateMachine = require("../../services/appointmentStateMachine");
 const appointmentsController = require("../appointments/appointmentsController");
@@ -144,26 +145,19 @@ async function confirmOrderPayment({ razorpayOrderId, paymentId, signature = nul
     await transaction.commit();
 
     try {
-      const [user] = await sequelize.query(`SELECT email, name FROM users WHERE id = :id`, {
+      const [user] = await sequelize.query(`SELECT email, name, phone FROM users WHERE id = :id`, {
         replacements: { id: order.user_id },
         type: QueryTypes.SELECT,
       });
-      if (user && user.email) {
-        await transporter.sendMail({
-          from: `"Curevan Orders" <${process.env.MAIL_FROM || process.env.MAIL_USER}>`,
-          to: user.email,
-          subject: `Order Confirmation - ${order.order_number}`,
-          html: `
-            <h3>Order Received!</h3>
-            <p>Hi ${user.name || "Customer"},</p>
-            <p>Your payment was received and order <strong>${order.order_number}</strong> has been placed successfully.</p>
-            <p><strong>Total Amount:</strong> ₹${order.total}</p>
-            <p>We will notify you once your order is shipped.</p>
-          `,
-        });
-      }
-    } catch (mailErr) {
-      console.error("Failed to send order confirmation email:", mailErr.message);
+      await notifications.notify("order_paid", {
+        userId: order.user_id,
+        customerName: user?.name,
+        amount: order.total,
+        orderNumber: order.order_number,
+        link: "https://curevan.com/dashboard/orders",
+      });
+    } catch (notifErr) {
+      console.error("Failed to send order confirmation notification:", notifErr.message);
     }
 
     return {

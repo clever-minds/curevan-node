@@ -4,6 +4,7 @@ const { QueryTypes } = require("sequelize");
 const { sequelize } = require("../config/db");
 const rules = require("../config/businessRules");
 const notificationStore = require("./notificationStore");
+const notifications = require("./notifications");
 
 const q = (sql, replacements, transaction) => sequelize.query(sql, { replacements, type: QueryTypes.SELECT, transaction });
 const r2 = (n) => Math.round((Number(n) + Number.EPSILON) * 100) / 100;
@@ -221,6 +222,13 @@ async function markPaid(id, { utr, paidAt }) {
     await t.commit();
   } catch (err) { await t.rollback(); throw err; }
   await notificationStore.notify(batch.therapist_id, { type: "payout_paid", title: "Your payout was sent", message: `Your payout of INR ${batch.net} for the week of ${String(batch.week_start).slice(0, 10)} was sent. Bank reference: ${ref}.`, link: "/dashboard/earnings" }).catch(() => {});
+  await notifications.notify("payout_paid", {
+    therapistId: batch.therapist_id,
+    amount: batch.net,
+    week: String(batch.week_start).slice(0, 10),
+    utr: ref,
+    link: "https://curevan.com/dashboard/earnings",
+  }).catch(() => {});
   return { id, status: "paid" };
 }
 

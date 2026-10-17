@@ -6,6 +6,7 @@ const { sequelize } = require("../config/db");
 const rules = require("../config/businessRules");
 const access = require("../utils/access");
 const notificationStore = require("./notificationStore");
+const notifications = require("./notifications");
 
 const q = (sql, replacements) => sequelize.query(sql, { replacements, type: QueryTypes.SELECT });
 const IST_MS = 5.5 * 3600 * 1000;
@@ -27,7 +28,7 @@ async function sendTo(userId, appointmentId, type, payload) {
 }
 
 async function run(now = Date.now()) {
-  const sent = { patient24h: 0, patient2h: 0, therapist60: 0, agenda: 0, hep: 0 };
+  const sent = { patient24h: 0, patient2h: 0, patient30m: 0, therapist60: 0, agenda: 0, hep: 0 };
   const sessions = await q(
     `SELECT a.id, a.patient_id, a.therapist_id, a.patient_name, a.therapist_name, a.date, a.time, oa.city, u.reminder_prefs
      FROM appointments a LEFT JOIN order_addresses oa ON oa.id = a.service_address_id LEFT JOIN users u ON u.id = a.patient_id
@@ -39,7 +40,7 @@ async function run(now = Date.now()) {
     const start = access.slotStart(s);
     if (!start) continue;
     const untilMin = (start.getTime() - now) / 60000;
-    const prefs = s.reminder_prefs || { r24h: true, r2h: true };
+    const prefs = s.reminder_prefs || { r24h: true, r2h: true, r30m: true };
 
     for (const h of rules.reminders.patientHoursBefore) {
       const inWindow = untilMin <= h * 60 && untilMin > (h - 1) * 60;          // a late job still sends within the hour, never days late
@@ -50,7 +51,33 @@ async function run(now = Date.now()) {
         message: `Your Curevan home session with ${s.therapist_name || "your therapist"} is ${when} at ${hhmm(s.time)}.${h <= 2 ? " Your start code will be visible in the app." : ""}`,
         link: "/dashboard/bookings",
       });
-      if (sentNow) sent[h >= 24 ? "patient24h" : "patient2h"] += 1;
+      if (sentNow) {
+        sent[h >= 24 ? "patient24h" : "patient2h"] += 1;
+        // Also dispatch via notification service channels (WhatsApp utility + SMS fallback)
+        await notifications.notify(`reminder_${h}h`, {
+          patientId: s.patient_id,
+          appointmentId: s.id,
+          therapistName: s.therapist_name,
+          time: hhmm(s.time),
+          link: "https://curevan.com/dashboard/bookings",
+        }).catch(() => {});
+      }
+    }
+
+    // 30 minutes before reminder for slots starting in 25–35 minutes (P24)
+    if (untilMin <= 35 && untilMin > 25 && prefs.r30m !== false) {
+      const claimed = await claim(s.id, s.patient_id, "reminder_30_min");
+      if (claimed) {
+        await notifications.notify("reminder_30_min", {
+          patientId: s.patient_id,
+          therapistId: s.therapist_id,
+          appointmentId: s.id,
+          patientName: firstName(s.patient_name),
+          therapistName: s.therapist_name,
+          time: hhmm(s.time),
+        }).catch(() => {});
+        sent.patient30m += 1;
+      }
     }
 
     if (untilMin <= rules.reminders.therapistMinutesBefore && untilMin > 0 && s.therapist_id) {
@@ -59,7 +86,16 @@ async function run(now = Date.now()) {
         message: `Your Curevan home session with ${firstName(s.patient_name)} starts at ${hhmm(s.time)}${s.city ? ` in ${s.city}` : ""}.`,
         link: "/dashboard/therapist/schedule",
       });
-      if (sentNow) sent.therapist60 += 1;
+      if (sentNow) {
+        sent.therapist60 += 1;
+        await notifications.notify("therapist_60min", {
+          therapistId: s.therapist_id,
+          patientName: firstName(s.patient_name),
+          time: hhmm(s.time),
+          city: s.city,
+          link: "/dashboard/therapist/schedule",
+        }).catch(() => {});
+      }
     }
   }
 
@@ -75,7 +111,15 @@ async function run(now = Date.now()) {
         message: rows.map((r) => `${hhmm(r.time)} ${firstName(r.patient_name)}`).join(", "),
         link: "/dashboard/therapist/schedule",
       });
-      if (ok) sent.agenda += 1;
+      if (ok) {
+        sent.agenda += 1;
+        await notifications.notify("therapist_daily_agenda", {
+          therapistId,
+          date: ymd,
+          agendaSummary: rows.map((r) => `${hhmm(r.time)} ${firstName(r.patient_name)}`).join(", "),
+          link: "/dashboard/therapist/schedule",
+        }).catch(() => {});
+      }
     }
   }
 
@@ -88,7 +132,13 @@ async function run(now = Date.now()) {
     for (const pt of patients) {
       if (!pt.last_appt) continue;
       const ok = await sendTo(pt.id, 0, `hep_daily_${ymd}`, { title: "Time for your home exercises", message: "A few minutes of your exercises today keeps your recovery on track.", link: `/pcr/${pt.last_appt}` });
-      if (ok) sent.hep += 1;
+      if (ok) {
+        sent.hep += 1;
+        await notifications.notify("hep_daily", {
+          patientId: pt.id,
+          link: `/pcr/${pt.last_appt}`,
+        }).catch(() => {});
+      }
     }
   }
   return sent;

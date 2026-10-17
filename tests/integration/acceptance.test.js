@@ -72,7 +72,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 async function seed() {
   await q(`TRUNCATE users, roles, user_roles, therapist_profiles, therapist_availability, therapist_leaves, service_types, order_addresses, appointments, pcr,
     categories, products, product_variants, inventory, cart, offers, coupons, orders, order_items, payment_transactions, invoices, order_refunds,
-    coupon_usages, order_stock_reservations, payment_webhook_events, sos_alerts, consent_logs, notifications, audit_logs, tickets, ticket_messages, payout_items, media RESTART IDENTITY`);
+    coupon_usages, order_stock_reservations, payment_webhook_events, sos_alerts, consent_logs, notifications, notification_log, audit_logs, tickets, ticket_messages, payout_items, media RESTART IDENTITY`);
   for (const r of ["patient", "therapist", "admin.super", "admin.ecom", "admin.therapy"]) await q("INSERT INTO roles(name) VALUES ($1)", [r]);
   const mk = async (uid, email, name, phone, role, extra = {}) => {
     // like production: users.role holds the generic 'admin' for every admin, the real role lives in user_roles
@@ -1887,6 +1887,95 @@ async function seed() {
   check("P10 a patient sees only their own invoices (" + p1Inv + " of " + allInv + ")", r.s === 200 && r.j.data.length === p1Inv && r.j.data.every((x) => x.userId === U.p1.id) && p1Inv < allInv);
   r = await call("GET", "/api/invoices/list?userId=" + U.p2.id, T.p1); check("P10 a patient cannot widen the list with ?userId=", r.s === 200 && r.j.data.every((x) => x.userId === U.p1.id));
   r = await call("GET", "/api/invoices/list", null); check("P10 invoice list needs a login -> " + r.s, r.s === 401);
+
+  // ============================================================ #24 Notification service: WhatsApp, SMS (DLT) and transactional e-mail
+  const notifService = require(path.join(root, "src/services/notifications"));
+  const emailAdapter = require(path.join(root, "src/services/notifications/channels/email"));
+
+  // 1. Dispatch booking_confirmed with an OTP
+  const testOtp = "849201";
+  const bRes = await notifService.notify("booking_confirmed", {
+    patientId: U.p1.id,
+    therapistId: U.t1.id,
+    date: "2026-10-25",
+    time: "10:00",
+    locality: "Alkapuri",
+    otp: testOtp,
+    link: "https://curevan.com/dashboard/bookings",
+  });
+  check("P24 notify('booking_confirmed') returns success", bRes && bRes.success === true);
+
+  const bLogs = await q("SELECT * FROM notification_log WHERE event = 'booking_confirmed' AND user_id = $1", [U.p1.id]);
+  check("P24 booking_confirmed logged attempts for patient channels (whatsapp, inapp, email)", bLogs.some((l) => l.channel === "whatsapp" && l.status === "sent") && bLogs.some((l) => l.channel === "inapp" && l.status === "sent") && bLogs.some((l) => l.channel === "email" && l.status === "sent"));
+
+  const tPushLog = await q("SELECT * FROM notification_log WHERE event = 'booking_confirmed' AND user_id = $1 AND channel = 'push'", [U.t1.id]);
+  check("P24 booking_confirmed logged push attempt for therapist", tPushLog.length > 0 && ["sent", "skipped"].includes(tPushLog[0].status));
+
+  // 2. Critical Rule: Zero OTP in notification_log
+  const otpInLogs = await q("SELECT * FROM notification_log WHERE template LIKE $1 OR provider_message_id LIKE $1 OR error LIKE $1", [`%${testOtp}%`]);
+  check("P24 OTP never appears in notification_log (zero leak)", otpInLogs.length === 0);
+
+  // 3. Fallback: WhatsApp failure triggers SMS fallback
+  const origWaProvider = process.env.WHATSAPP_PROVIDER;
+  process.env.WHATSAPP_PROVIDER = "fail";
+  await notifService.notify("booking_confirmed", {
+    patientId: U.p2.id,
+    therapistId: U.t1.id,
+    date: "2026-10-26",
+    time: "11:00",
+    locality: "Fatehgunj",
+    otp: "716253",
+    link: "https://curevan.com/dashboard/bookings",
+  });
+  process.env.WHATSAPP_PROVIDER = origWaProvider;
+
+  const fallbackLogs = await q("SELECT channel, status, template FROM notification_log WHERE event = 'booking_confirmed' AND user_id = $1 ORDER BY id ASC", [U.p2.id]);
+  const waFailed = fallbackLogs.some((l) => l.channel === "whatsapp" && l.status === "failed");
+  const smsFallbackSent = fallbackLogs.some((l) => l.channel === "sms" && l.status === "sent");
+  check("P24 WhatsApp failure on booking_confirmed triggers SMS fallback and logs both attempts", waFailed && smsFallbackSent);
+
+  // 4. Opt-out: whatsapp_opt_in = false directly uses SMS
+  await q("UPDATE users SET whatsapp_opt_in = false WHERE id = $1", [U.p2.id]);
+  await notifService.notify("reminder_24h", {
+    patientId: U.p2.id,
+    therapistName: "Dr. Sharma",
+    time: "10:00",
+    link: "https://curevan.com/dashboard/bookings",
+  });
+  const optOutLogs = await q("SELECT channel, status FROM notification_log WHERE event = 'reminder_24h' AND user_id = $1 ORDER BY id DESC LIMIT 2", [U.p2.id]);
+  check("P24 patient with whatsapp_opt_in=false receives reminder via SMS", optOutLogs.some((l) => l.channel === "sms" && l.status === "sent"));
+
+  // 5. reminder_30_min dispatch
+  const r30Res = await notifService.notify("reminder_30_min", {
+    patientId: U.p1.id,
+    therapistId: U.t1.id,
+    patientName: "Patient One",
+    therapistName: "Dr. Sharma",
+    time: "14:00",
+  });
+  check("P24 reminder_30_min dispatches successfully", r30Res && r30Res.success === true);
+  const r30Logs = await q("SELECT * FROM notification_log WHERE event = 'reminder_30_min' ORDER BY id DESC LIMIT 5");
+  check("P24 reminder_30_min logs attempts for patient whatsapp and therapist push", r30Logs.some((l) => l.channel === "whatsapp" && l.user_id === U.p1.id) && r30Logs.some((l) => l.channel === "push" && l.user_id === U.t1.id));
+
+  // 6. SOS Alert triggers SMS and Push
+  r = await call("POST", "/api/sos/create", T.t1, { message: "Test SOS alert" });
+  check("P24 SOS alert creation returns success", r.s === 200 && r.j.success === true);
+  const sosLogs = await q("SELECT * FROM notification_log WHERE event = 'sos_raised' ORDER BY id DESC LIMIT 5");
+  check("P24 sos_raised dispatches SMS to on-call and push to admin", sosLogs.some((l) => l.channel === "sms" && l.status === "sent") && sosLogs.some((l) => l.channel === "push"));
+
+  // 7. Security: Email channel refuses to transmit OTP
+  let emailOtpBlocked = false;
+  try {
+    await emailAdapter.sendEmail({
+      to: "patient@example.com",
+      subject: "Your OTP is 123456",
+      text: "Start code: 123456",
+    });
+  } catch (err) {
+    emailOtpBlocked = /Security Violation|OTP/i.test(err.message);
+  }
+  check("P24 Email channel strictly blocks transmission of OTP", emailOtpBlocked);
+
 
   // ============================================================ #6 every website call reaches a real route
   const map = fs.readFileSync(path.resolve(root, "../curevan-dev/docs/API_CALL_MAP.md"), "utf8");

@@ -4,6 +4,7 @@ const { sequelize } = require("../../config/db");
 const qualityService = require("../../services/qualityService");
 const progressService = require("../../services/progressService");
 const notificationStore = require("../../services/notificationStore");
+const notifications = require("../../services/notifications");
 const rules = require("../../config/businessRules");
 
 // Helper: Haversine distance in km
@@ -296,6 +297,17 @@ exports.reassignBooking = async (req, res) => {
         data: { appointmentId: bookingId },
       }).catch(() => {});
     }
+
+    // P24: Dispatch booking_reassigned (WhatsApp to patient + Push to new therapist + InApp to Admin)
+    await notifications.notify("booking_reassigned", {
+      patientId: appt.patient_id,
+      therapistId: newTherapist.id,
+      oldTherapistId,
+      newTherapistName: newTherapist.name,
+      date: dateText,
+      time: appt.time,
+      link: "https://curevan.com/dashboard/bookings",
+    }).catch(() => {});
 
     res.json({
       success: true,
