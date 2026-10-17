@@ -16,6 +16,7 @@ module.exports = Object.freeze({
     email: 'accounts@curevan.com',
   }),
   booking: Object.freeze({ directBookingNeedsApproval: process.env.DIRECT_BOOKING_NEEDS_APPROVAL === 'true' }),   // false (default, as in handoff pack P07) = patient pays immediately; true = optional approval-first flow
+  consent: Object.freeze({ policyVersion: '2026-10', adultAge: 18 }),                          // P25: version stored with every consent; below adultAge a guardian must consent
   warehouseState: 'Gujarat',                                    // GST: CGST+SGST inside this state, IGST outside
   session: Object.freeze({ slotMinutes: 60, timerMinutes: 60, minLeadHours: 4, maxAdvanceDays: 30 }),   // D10
   visit: Object.freeze({ travelFromMinutesBefore: 45 }),                                                // P12

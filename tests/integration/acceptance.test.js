@@ -113,6 +113,8 @@ async function seed() {
   await pg.connect();
   const U = await seed();
   const app = require(root + "/src/app");
+  // P25: patients of the fixture have already accepted the medical consent and the privacy notice (first-booking rule); the P25 tests use fresh patients
+  await q("INSERT INTO consent_logs(user_id, consent_type, policy_version, granted) SELECT u.id, c, '2026-10', true FROM users u, unnest(ARRAY['medical','privacy']) c WHERE u.role = 'patient'");
   const T = Object.fromEntries(Object.entries({ p1: U.p1, p2: U.p2, t1: U.t1, t2: U.t2, su: U.su, su2: U.su2, ecom: U.ecom, therapy: U.therapy }).map(([k, v]) => [k, token(v)]));
   const srv = app.listen(0);
   await new Promise((r) => srv.on("listening", r));
@@ -445,7 +447,7 @@ async function seed() {
   check("P10 accepting a consent form creates a consent_logs row for the TOKEN's user (body userId ignored)", r.s === 200 && cUser.user_id === U.p1.id && cUser.policy_version === "2026-10" && cUser.granted === true, JSON.stringify(cUser));
   r = await call("POST", "/api/consent/log", T.p1, { consentType: "hack" }); check("P10 unknown consent type -> 400", r.s === 400);
   r = await call("GET", "/api/consent/list", T.therapy); check("P10 only the Super Admin can read consent records -> " + r.s, r.s === 403);
-  r = await call("GET", "/api/consent/list?type=privacy", T.su); check("P10 Super Admin lists consent records (filter by type)", r.s === 200 && r.j.data.length === 1 && r.j.data[0].userName === "Patient One");
+  r = await call("GET", "/api/consent/list?type=privacy", T.su); check("P10 Super Admin lists consent records (filter by type)", r.s === 200 && r.j.data.length >= 1 && r.j.data.some((x) => x.userName === "Patient One" && x.consentType === "privacy"));
 
   // cancel
   const day = (n) => { const d = new Date(Date.now() + 5.5 * 3600e3 + n * 86400e3); return `${d.getUTCFullYear()}-${pad(d.getUTCMonth() + 1)}-${pad(d.getUTCDate())}`; };
@@ -1848,8 +1850,11 @@ async function seed() {
     r = await call("POST", "/api/therapy-admin/reassign", T.therapy, { bookingId: emAppt.id, newTherapistId: U.t2.id });
     check("P22 a booking already moved to that therapist is refused (400)", r.s === 400, "got " + r.s);
 
+    // a time of tomorrow that no other fixture of t1 uses (the suite's other bookings depend on the clock minute it runs at)
+    const freeTime = async (list) => { const used = (await q("SELECT time FROM appointments WHERE therapist_id = $1 AND date = $2 AND status NOT LIKE 'cancelled%'", [U.t1.id, tomorrowStr])).map((x) => x.time); return list.find((t) => !used.includes(t)); };
+    const timeB = await freeTime(["12:00", "12:20", "12:40", "13:20"]);
     const [emB] = await q(`INSERT INTO appointments(patient_id, patient_name, therapist_id, therapist_name, service_type_id, therapy_type, service_amount, total_amount, date, time, status, payment_status, mode, created_at)
-      VALUES ($1, 'Patient P1', $2, 'Dr T1', 1, 'Physio', 1200, 1200, $3, '12:00', 'confirmed', 'Paid', 'home', now()) RETURNING id`, [U.p1.id, U.t1.id, tomorrowStr]);
+      VALUES ($1, 'Patient P1', $2, 'Dr T1', 1, 'Physio', 1200, 1200, $3, $4, 'confirmed', 'Paid', 'home', now()) RETURNING id`, [U.p1.id, U.t1.id, tomorrowStr, timeB]);
     await q("UPDATE therapist_profiles SET quality_status = 'frozen' WHERE user_id = $1", [U.t2.id]);
     r = await call("POST", "/api/therapy-admin/reassign", T.therapy, { bookingId: emB.id, newTherapistId: U.t2.id });
     check("P22 a frozen therapist cannot take over (400)", r.s === 400 && /not currently accepting/i.test(r.raw || ""), "got " + r.s + " " + (r.raw || "").slice(0, 120));
@@ -1869,7 +1874,7 @@ async function seed() {
     await q("UPDATE appointments SET payment_status = 'Paid', razorpay_payment_id = 'pay_p22_auto', payment_method = 'razorpay' WHERE id = $1", [emB.id]);
     const emergencyService = require("../../src/services/emergencyService");
     const accessUtil = require("../../src/utils/access");
-    const slotMs = accessUtil.slotStart({ date: tomorrowStr, time: "12:00" }).getTime();
+    const slotMs = accessUtil.slotStart({ date: tomorrowStr, time: timeB }).getTime();
     const early = await emergencyService.autoCancelUnassigned(slotMs - 5 * 3600e3);
     check("P22 more than 2 hours before the slot nothing is cancelled", early.cancelled === 0 && (await q("SELECT status FROM appointments WHERE id = $1", [emB.id]))[0].status === "confirmed");
     const refundsBefore = rzpRefunds.length;
@@ -1884,7 +1889,7 @@ async function seed() {
 
     // a leave with hours only blocks those hours
     const [emC] = await q(`INSERT INTO appointments(patient_id, patient_name, therapist_id, therapist_name, service_type_id, therapy_type, service_amount, total_amount, date, time, status, payment_status, mode, created_at)
-      VALUES ($1, 'Patient P1', $2, 'Dr T1', 1, 'Physio', 1200, 1200, $3, '16:00', 'confirmed', 'Paid', 'home', now()) RETURNING id`, [U.p1.id, U.t1.id, tomorrowStr]);
+      VALUES ($1, 'Patient P1', $2, 'Dr T1', 1, 'Physio', 1200, 1200, $3, $4, 'confirmed', 'Paid', 'home', now()) RETURNING id`, [U.p1.id, U.t1.id, tomorrowStr, await freeTime(["16:00", "16:20", "16:40", "17:00"])]);
     await q("UPDATE therapist_leaves SET start_time = '09:00', end_time = '13:00' WHERE therapist_id = $1 AND start_date = $2", [U.tp1, tomorrowStr]);
     const impacted = (await emergencyService.listImpacted()).map((x) => x.id);
     check("P22 a leave for 09:00-13:00 does not flag the 16:00 booking", !impacted.includes(emC.id));
@@ -2076,6 +2081,135 @@ async function seed() {
       r.s === 200 && r.j.success && paidBatch.status === "paid" && paidBatch.utr === "CMSP23TESTUTR123" && paidBatch.paid_at !== null,
       "got " + r.s + " " + JSON.stringify(paidBatch)
     );
+  }
+
+  // P25 invoices, GST tagging, consent, DPDP rights
+  {
+    const pad2 = (n) => String(n).padStart(2, "0");
+    const dayN = (n) => { const d = new Date(Date.now() + 5.5 * 3600e3 + n * 86400e3); return `${d.getUTCFullYear()}-${pad2(d.getUTCMonth() + 1)}-${pad2(d.getUTCDate())}`; };
+    const mkP = async (tag) => {
+      const [u] = await q("INSERT INTO users(uid,email,name,phone,role,is_verified,city,state) VALUES ($1,$2,$3,'9000000700','patient',true,'Vadodara','Gujarat') RETURNING *", ["p25-" + tag, "p25" + tag + "@x.com", "Patient " + tag]);
+      await q("INSERT INTO user_roles(user_id, role_id) SELECT $1, id FROM roles WHERE name = 'patient'", [u.id]);
+      const [a] = await q("INSERT INTO order_addresses(user_id, address_type, full_name, phone, full_address, city, state, pincode) VALUES ($1,'home','P','9000000700','1 Road','Vadodara','Gujarat','390001') RETURNING id", [u.id]);
+      return { ...u, addr: a.id, tk: token({ ...u, roleName: "patient" }) };
+    };
+    const book = (p, over = {}, time = "09:00", date = dayN(24)) => call("POST", "/api/appointments/create-appointment", p.tk, { bookingData: { therapistId: U.t1.id, patientName: p.name, serviceTypeId: 1, therapyType: "Physio", date, time, mode: "home", addressId: p.addr, ...over } });
+
+    // --- legal entity: from settings, nothing invented
+    r = await call("GET", "/api/config/legal-entity");
+    const le = r.j && r.j.data;
+    check("P25 legal-entity is public and comes from businessRules (name, city, state)", r.s === 200 && le.name === "Himaya Care Pvt. Ltd." && le.tradeName === "Curevan" && le.state === "Gujarat");
+    check("P25 GSTIN, CIN and PAN are empty (never invented) and listed as missing", le.gstin === "" && le.cin === "" && le.pan === "" && ["gstin", "cin", "pan"].every((k) => le.missing.includes(k)), JSON.stringify(le));
+
+    // --- first booking: consent
+    const pa = await mkP("a");
+    r = await book(pa);
+    check("P25 a first booking without the medical consent and privacy notice is refused (400)", r.s === 400 && /medical consent/i.test(r.raw || ""), "got " + r.s + " " + (r.raw || "").slice(0, 120));
+    r = await book(pa, { consents: { medical: true } });
+    check("P25 ... the privacy notice is needed too (400)", r.s === 400 && /privacy/i.test(r.raw || ""));
+    r = await book(pa, { consents: { medical: true, privacy: true } });
+    const ca = await q("SELECT consent_type, policy_version, granted FROM consent_logs WHERE user_id = $1 ORDER BY id", [pa.id]);
+    check("P25 with both accepted the booking goes ahead and both consents are stored with the policy version", r.s === 200 && ca.length === 2 && ca.every((x) => x.policy_version === "2026-10" && x.granted === true) && ca.map((x) => x.consent_type).sort().join() === "medical,privacy", "got " + r.s + " " + JSON.stringify(ca) + (r.raw || "").slice(0, 100));
+    r = await book(pa, {}, "10:00");
+    check("P25 later bookings need no new consent", r.s === 200, "got " + r.s + " " + (r.raw || "").slice(0, 100));
+    check("P25 consent is not stored twice", (await q("SELECT COUNT(*)::int AS n FROM consent_logs WHERE user_id = $1", [pa.id]))[0].n === 2);
+
+    // --- minors
+    const pm = await mkP("m");
+    const dob12 = `${new Date().getUTCFullYear() - 12}-01-15`;
+    const okConsents = { medical: true, privacy: true };
+    r = await book(pm, { dateofBirth: dob12, consents: okConsents }, "11:00");
+    check("P25 a 12-year-old cannot be booked without guardian details (400)", r.s === 400 && /under 18/i.test(r.raw || ""), "got " + r.s + " " + (r.raw || "").slice(0, 120));
+    r = await book(pm, { dateofBirth: dob12, consents: okConsents, guardian: { name: "Asha Rao", relation: "Mother", phone: "9000000701" } }, "11:00");
+    check("P25 ... nor without the guardian's consent (400)", r.s === 400 && /must consent/i.test(r.raw || ""), "got " + r.s + " " + (r.raw || "").slice(0, 120));
+    r = await book(pm, { dateofBirth: dob12, consents: okConsents, guardian: { name: "Asha Rao", relation: "Mother", phone: "123", consent: true } }, "11:00");
+    check("P25 ... nor with a phone number that is not 10 digits (400)", r.s === 400);
+    check("P25 a refused booking leaves no appointment and no guardian row behind", (await q("SELECT COUNT(*)::int AS n FROM appointments WHERE patient_id = $1", [pm.id]))[0].n === 0 && (await q("SELECT COUNT(*)::int AS n FROM patient_guardians WHERE patient_user_id = $1", [pm.id]))[0].n === 0);
+    r = await book(pm, { dateofBirth: dob12, consents: okConsents, guardian: { name: "Asha Rao", relation: "Mother", phone: "9000000701", consent: true } }, "11:00");
+    const gd = await q("SELECT guardian_name, relation, phone, consent_log_id FROM patient_guardians WHERE patient_user_id = $1", [pm.id]);
+    check("P25 with a guardian and the guardian's consent the booking goes ahead; the guardian and the consent are stored", r.s === 200 && gd.length === 1 && gd[0].guardian_name === "Asha Rao" && gd[0].phone === "9000000701" && gd[0].consent_log_id, "got " + r.s + " " + JSON.stringify(gd) + (r.raw || "").slice(0, 100));
+    const pad17 = await mkP("n");
+    const dob30 = `${new Date().getUTCFullYear() - 30}-06-01`;
+    r = await book(pad17, { dateofBirth: dob30, consents: okConsents }, "12:00");
+    check("P25 an adult needs no guardian", r.s === 200);
+    const pb18 = await mkP("b");
+    const exactly18 = `${new Date().getUTCFullYear() - 18}-01-01`;
+    r = await book(pb18, { dateofBirth: exactly18, consents: okConsents }, "13:00");
+    check("P25 a patient who turned 18 this year needs no guardian", r.s === 200, "got " + r.s + " " + (r.raw || "").slice(0, 100));
+    const pr = await mkP("r");
+    r = await call("POST", "/api/appointments/request", pr.tk, { bookingData: { patientName: pr.name, serviceTypeId: 1, therapyType: "Physio", date: dayN(20), time: "14:00", mode: "home", addressId: pr.addr, dateofBirth: dob12 } });
+    check("P25 the 'find me a therapist' request path applies the same consent rule (400)", r.s === 400, "got " + r.s + " " + (r.raw || "").slice(0, 100));
+
+    // --- GST on service invoices
+    const payFor = async (p, time, date) => {
+      const c = await book(p, { consents: okConsents }, time, date);
+      const rz = c.j && c.j.razorpayOrderId;
+      if (!rz) return { id: c.j && c.j.appointmentId, c };
+      await call("POST", "/api/payments/verify-booking", p.tk, { razorpay_order_id: rz, razorpay_payment_id: "pay_p25_" + time, razorpay_signature: sign(rz, "pay_p25_" + time) });
+      return { id: c.j.appointmentId, c };
+    };
+    const pg = await mkP("g");
+    const ex = await payFor(pg, "14:00", dayN(24));
+    const invEx = ex.id ? (await q("SELECT tax_category, gst_amount, cgst_amount, sgst_amount, igst_amount, total_amount_paise FROM invoices WHERE booking_id = $1", [ex.id]))[0] : null;
+    check("P25 a clinical service (exempt_clinical, the default) has an invoice with no GST", invEx && invEx.tax_category === "exempt_clinical" && Number(invEx.gst_amount) === 0 && Number(invEx.cgst_amount) === 0 && Number(invEx.igst_amount) === 0 && Number(invEx.total_amount_paise) === 150000, JSON.stringify(invEx));
+    r = await call("PUT", "/api/service-types/update/1", T.therapy, { name: "Physio", is_active: true, tax_category: "nonsense" });
+    check("P25 an unknown tax category is refused", r.s === 400 || (r.j && r.j.success === false), "got " + r.s + " " + (r.raw || "").slice(0, 100));
+    r = await call("PUT", "/api/service-types/update/1", T.therapy, { name: "Physio", is_active: true, tax_category: "taxable_18" });
+    check("P25 the Therapy Admin can mark a service as taxable_18", (await q("SELECT tax_category FROM service_types WHERE id = 1"))[0].tax_category === "taxable_18", "got " + r.s + " " + (r.raw || "").slice(0, 100));
+    r = await call("PUT", "/api/service-types/update/1", T.p1, { name: "Physio", tax_category: "exempt_clinical" });
+    check("P25 a patient cannot change it (403)", r.s === 403);
+    const tx = await payFor(pg, "15:00", dayN(24));
+    const invTx = tx.id ? (await q("SELECT tax_category, gst_amount, cgst_amount, sgst_amount, igst_amount, total_amount_paise FROM invoices WHERE booking_id = $1", [tx.id]))[0] : null;
+    check("P25 a taxable_18 service: price 1500 includes 18% GST = 228.81, split in two equal halves (CGST + SGST) inside Gujarat", invTx && invTx.tax_category === "taxable_18" && Number(invTx.gst_amount) === 228.81 && Number(invTx.cgst_amount) + Number(invTx.sgst_amount) === 228.81 && Math.abs(Number(invTx.cgst_amount) - Number(invTx.sgst_amount)) <= 0.01 && Number(invTx.igst_amount) === 0, JSON.stringify(invTx));
+    await q("UPDATE order_addresses SET state = 'Maharashtra' WHERE id = $1", [pg.addr]);
+    const tx2 = await payFor(pg, "16:00", dayN(24));
+    const invTx2 = tx2.id ? (await q("SELECT cgst_amount, sgst_amount, igst_amount FROM invoices WHERE booking_id = $1", [tx2.id]))[0] : null;
+    check("P25 outside Gujarat the whole 228.81 is IGST", invTx2 && Number(invTx2.igst_amount) === 228.81 && Number(invTx2.cgst_amount) === 0 && Number(invTx2.sgst_amount) === 0, JSON.stringify(invTx2));
+    const invOne = tx.id ? (await q("SELECT id FROM invoices WHERE booking_id = $1", [tx.id]))[0] : null;
+    r = invOne ? await call("GET", "/api/orders/invoice/" + invOne.id, pg.tk) : { s: 0 };
+    check("P25 the invoice API gives the tax category and GST to the website", r.s === 200 && r.j.data.invoice.tax_category === "taxable_18" && Number(r.j.data.invoice.gst_amount) === 228.81, "got " + r.s);
+    await call("PUT", "/api/service-types/update/1", T.therapy, { name: "Physio", is_active: true, tax_category: "exempt_clinical" });
+
+    // --- DPDP rights
+    const pd = await mkP("d");
+    await q("INSERT INTO appointments(patient_id, patient_name, therapist_id, therapist_name, service_type_id, therapy_type, service_amount, total_amount, date, time, status, payment_status, mode, created_at) VALUES ($1,'D',$2,'Dr One',1,'Physio',1500,1500,'2031-03-03','09:00','completed','Paid','home',now())", [pd.id, U.t1.id]);
+    await q("INSERT INTO consent_logs(user_id, consent_type, policy_version, granted) VALUES ($1,'privacy','2026-10',true)", [pd.id]);
+    r = await fetch(base + "/api/privacy/export", { headers: { authorization: "Bearer " + pd.tk } });
+    const body = await r.json();
+    check("P25 download my data: JSON with profile, bookings, orders, session records and consents - only this user's", r.status === 200 && /attachment/.test(r.headers.get("content-disposition") || "") && body.profile.email === "p25d@x.com" && body.bookings.length === 1 && Array.isArray(body.orders) && Array.isArray(body.sessionRecords) && body.consents.length >= 1 && !JSON.stringify(body).includes("p25a@x.com"), JSON.stringify(Object.keys(body)));
+    check("P25 ... the download is recorded as a done 'export' request", (await q("SELECT 1 FROM privacy_requests WHERE user_id = $1 AND type = 'export' AND status = 'done'", [pd.id])).length === 1);
+    r = await call("POST", "/api/privacy/requests", pd.tk, { type: "erasure", note: "Please delete my account" });
+    check("P25 an erasure request is saved as open (nothing is deleted automatically)", r.s === 201 && r.j.data.status === "open" && (await q("SELECT 1 FROM users WHERE id = $1", [pd.id])).length === 1 && (await q("SELECT 1 FROM appointments WHERE patient_id = $1", [pd.id])).length === 1);
+    r = await call("POST", "/api/privacy/requests", pd.tk, { type: "erasure" });
+    check("P25 a second open request of the same kind is refused (409)", r.s === 409);
+    r = await call("POST", "/api/privacy/requests", pd.tk, { type: "hack" });
+    check("P25 an unknown request type is refused (400)", r.s === 400);
+    r = await call("POST", "/api/privacy/requests", pd.tk, { type: "correction", note: "My name is spelled wrong" });
+    check("P25 a correction request is saved", r.s === 201);
+    await q("UPDATE users SET marketing_opt_in = true WHERE id = $1", [pd.id]);
+    r = await call("POST", "/api/privacy/requests", pd.tk, { type: "withdraw_consent" });
+    check("P25 withdrawing marketing consent is applied at once and logged", r.s === 201 && r.j.data.status === "done" && (await q("SELECT marketing_opt_in FROM users WHERE id = $1", [pd.id]))[0].marketing_opt_in === false && (await q("SELECT 1 FROM consent_logs WHERE user_id = $1 AND consent_type = 'marketing' AND granted = false", [pd.id])).length === 1);
+    r = await call("GET", "/api/privacy/requests", pd.tk);
+    check("P25 the user sees their own requests", r.s === 200 && r.j.data.length === 4, "got " + (r.j && r.j.data && r.j.data.length));
+    r = await call("GET", "/api/privacy/admin/requests", T.su);
+    const mine = (r.j.data || []).filter((x) => x.userId === pd.id);
+    check("P25 the Super Admin sees the requests with the user's name, open ones first", r.s === 200 && mine.length === 4 && mine.some((x) => x.type === "erasure" && x.status === "open" && x.userName === "Patient d"), JSON.stringify(mine.map((x) => x.type + ":" + x.status)));
+    r = await call("GET", "/api/privacy/admin/requests", T.therapy);
+    check("P25 only the Super Admin can list them (403)", r.s === 403);
+    r = await call("GET", "/api/privacy/admin/requests", pd.tk);
+    check("P25 a patient cannot list everyone's requests (403)", r.s === 403);
+    const er = mine.find((x) => x.type === "erasure");
+    r = await call("PATCH", "/api/privacy/admin/requests/" + er.id, T.su, { status: "done", note: "Handled per the retention schedule" });
+    check("P25 the Super Admin closes a request with a note; it records who and when", r.s === 200 && (await q("SELECT status, handled_by, closed_at, note FROM privacy_requests WHERE id = $1", [er.id])).every((x) => x.status === "done" && x.handled_by === U.su.id && x.closed_at && /retention/.test(x.note)));
+    r = await call("GET", "/api/privacy/requests");
+    check("P25 the privacy API needs a login (401)", r.s === 401);
+
+    // --- the two documents
+    const fsx = require("fs"), pathx = require("path");
+    const breach = fsx.readFileSync(pathx.join(__dirname, "../../docs/BREACH_RUNBOOK.md"), "utf8");
+    const retention = fsx.readFileSync(pathx.join(__dirname, "../../docs/DATA_RETENTION.md"), "utf8");
+    check("P25 the breach runbook names CERT-In 6 hours, the Data Protection Board with the 72-hour report, and informing users", /CERT-In/.test(breach) && /6 hours/.test(breach) && /Data Protection Board/.test(breach) && /72 hours/.test(breach) && /affected (users|individuals|people)/i.test(breach));
+    check("P25 the retention schedule has clinical records, minors, tax/payment and marketing rules", /3 years/.test(retention) && /18/.test(retention) && /8 years/.test(retention) && /marketing/i.test(retention));
   }
 
   // invoices

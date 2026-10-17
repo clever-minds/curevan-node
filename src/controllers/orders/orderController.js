@@ -1862,10 +1862,12 @@ exports.getInvoiceById = async (req, res) => {
     }
 
     // 1️⃣ Get Invoice
+    // a number can be an invoice id, a booking id or an order id: of the matches, only the caller's own are considered (admins see all), the exact invoice id first
     const invoice = await sequelize.query(
-      `SELECT * FROM invoices WHERE ${queryCondition}`,
+      `SELECT * FROM invoices WHERE (${queryCondition}) AND (:isAdmin OR user_id = :userId)
+       ORDER BY (CASE WHEN id::text = :invoiceId THEN 0 ELSE 1 END), id LIMIT 1`,
       {
-        replacements: { invoiceId },
+        replacements: { invoiceId, isAdmin: access.isAdmin(req.user), userId },
         type: QueryTypes.SELECT,
       }
     );

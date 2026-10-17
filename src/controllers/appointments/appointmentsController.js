@@ -14,6 +14,7 @@ const { STATUS } = stateMachine;
 const refundService = require("../../services/refundService");
 const notificationStore = require("../../services/notificationStore");
 const notifications = require("../../services/notifications");
+const compliance = require("../../services/complianceService");
 const { sequelize } = require("../../config/db");
 const transporter = require("../../config/mailer");
 const firebaseNotifier = require("../../utils/firebaseNotifier");
@@ -295,6 +296,12 @@ exports.createBookingAndInvoice = async (req, res) => {
       amount = Number(therapist.hourly_rate);
       if (!(amount > 0)) { await t.rollback(); return res.status(400).json({ success: false, error: "This therapist has no price set yet" }); }
 
+      // first booking: medical consent + privacy notice; patient under 18: a guardian and the guardian's consent
+      await compliance.enforceBookingConsents({
+        userId: req.user.id, dob: bookingData.dateofBirth || bookingData.dateOfBirth || bookingData.dob, consents: bookingData.consents || {}, guardian: bookingData.guardian || null,
+        ip: req.ip, userAgent: req.headers["user-agent"], transaction: t,
+      });
+
       // working hours, leave, double booking, 4-hour lead time and 30-day limit are all checked here, inside the transaction
       await slotService.assertSlotBookable(bookingData.therapistId, bookingData.date, bookingData.time, { transaction: t });
 
@@ -361,6 +368,7 @@ exports.createBookingAndInvoice = async (req, res) => {
     });
   } catch (error) {
     await t.rollback();
+    if (error instanceof compliance.ComplianceError) return res.status(error.httpStatus).json({ success: false, error: error.message, message: error.message });
     if (error instanceof slotService.SlotError) return res.status(error.httpStatus).json({ success: false, error: error.message });
     if (slotService.isSlotConflict(error)) return res.status(409).json({ success: false, error: "Slot no longer available" });
     console.error("Error creating booking:", error);
@@ -380,11 +388,17 @@ exports.finalizePaidBooking = async (appt, transaction) => {
   );
   let invoiceId = existing ? existing.id : null;
   if (!existing) {
+    const [svc] = await sequelize.query(
+      `SELECT st.tax_category AS "taxCategory", oa.state AS "placeState"
+       FROM appointments a LEFT JOIN service_types st ON st.id = a.service_type_id LEFT JOIN order_addresses oa ON oa.id = a.service_address_id WHERE a.id = :id`,
+      { replacements: { id: appt.id }, type: QueryTypes.SELECT, transaction }
+    );
+    const tax = compliance.serviceTax({ taxCategory: svc && svc.taxCategory, totalInr: appt.total_amount, placeOfSupplyState: svc && svc.placeState });
     const [invoiceRows] = await sequelize.query(
-      `INSERT INTO invoices (invoice_number, status, user_id, booking_id, issued_at, total_amount_paise)
-       VALUES (:invoiceNumber, 'issued', :userId, :id, NOW(), :paise) RETURNING id`,
+      `INSERT INTO invoices (invoice_number, invoice_type, status, user_id, booking_id, issued_at, total_amount_paise, tax_category, gst_amount, cgst_amount, sgst_amount, igst_amount)
+       VALUES (:invoiceNumber, 'booking', 'issued', :userId, :id, NOW(), :paise, :taxCategory, :gst, :cgst, :sgst, :igst) RETURNING id`,
       {
-        replacements: { invoiceNumber, userId: appt.patient_id, id: appt.id, paise: Math.round(Number(appt.total_amount) * 100) },
+        replacements: { invoiceNumber, userId: appt.patient_id, id: appt.id, paise: Math.round(Number(appt.total_amount) * 100), taxCategory: tax.taxCategory, gst: tax.gst, cgst: tax.cgst, sgst: tax.sgst, igst: tax.igst },
         type: QueryTypes.INSERT,
         transaction,
       }
@@ -1136,6 +1150,12 @@ exports.createBookingRequest = async (req, res) => {
     // patients request for themselves; the price comes from the service type (set by the server),
     // otherwise it is fixed from the accepting therapist's rate when someone accepts.
     bookingData.patientId = access.isAdmin(req.user) && bookingData.patientId ? bookingData.patientId : req.user.id;
+    if (!access.isAdmin(req.user)) {
+      await compliance.enforceBookingConsents({
+        userId: req.user.id, dob: bookingData.dateofBirth || bookingData.dateOfBirth || bookingData.dob, consents: bookingData.consents || {}, guardian: bookingData.guardian || null,
+        ip: req.ip, userAgent: req.headers["user-agent"],
+      });
+    }
     const windowProblem = slotService.checkWindowRules(bookingData.date, slotService.toMinutes(bookingData.time));
     if (windowProblem) return res.status(400).json({ success: false, error: windowProblem });
     const [serviceType] = await sequelize.query(
@@ -1253,6 +1273,7 @@ exports.createBookingRequest = async (req, res) => {
     return res.json({ success: true, appointmentId, message: "Booking requested. Searching for therapists." });
   } catch (error) {
     if (slotService.isSlotConflict(error)) return res.status(409).json({ success: false, error: "Slot no longer available" });
+    if (error instanceof compliance.ComplianceError) return res.status(error.httpStatus).json({ success: false, error: error.message, message: error.message });
     console.error("Error creating booking request:", error);
     return res.status(500).json({ success: false, error: "Failed to create booking request" });
   }

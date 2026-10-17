@@ -226,3 +226,14 @@ Total routes: 170
 | POST | /api/coupons/generate-missing | admin.ecom, admin.therapy |
 | GET | /api/therapists/affiliate | therapist (own DR code and commission numbers) |
 | GET | /api/patients/me/dashboard | patient only (own summary: booking, proposals, plan, records, orders) |
+
+## Added in P25
+
+| Method | Path | Who |
+|---|---|---|
+| GET | /api/config/legal-entity | anyone (supplier details of the invoices; empty fields stay empty) |
+| POST | /api/privacy/requests | any logged-in user (export, correction, erasure, withdraw_consent) |
+| GET | /api/privacy/requests | any logged-in user (own requests) |
+| GET | /api/privacy/export | any logged-in user (own data as JSON) |
+| GET | /api/privacy/admin/requests | admin.super |
+| PATCH | /api/privacy/admin/requests/:id | admin.super |

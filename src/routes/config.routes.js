@@ -26,4 +26,14 @@ router.get("/public", (req, res) => {
   });
 });
 
+// Who issues the invoices (businessRules.legalEntity, owner decision D1). Empty fields stay empty: the website shows a warning instead of inventing numbers.
+router.get("/legal-entity", (req, res) => {
+  const e = rules.legalEntity;
+  res.set("Cache-Control", "public, max-age=300");
+  res.json({
+    success: true,
+    data: { ...e, missing: ["gstin", "cin", "pan", "addressLine1", "pin", "phone"].filter((k) => !String(e[k] || "").trim()) },
+  });
+});
+
 module.exports = router;

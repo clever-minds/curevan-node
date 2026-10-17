@@ -58,6 +58,7 @@ app.use('/api/clinical', require('./routes/clinical.routes'));
 app.use('/api/calendar', require('./routes/calendar.routes'));
 app.use('/api/payout-batches', require('./routes/payouts.routes'));
 app.use('/api/hooks', require('./routes/hooks.routes'));
+app.use('/api/privacy', require('./routes/privacy.routes'));
 app.use('/api/invoices', require('./routes/invoices.routes'));
 app.use('/api/therapists', require('./routes/therapist.routes'));
 app.use('/api/therapy-admin', require('./routes/therapy-admin.routes'));

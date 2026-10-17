@@ -14,7 +14,7 @@ CREATE TABLE roles (id SERIAL PRIMARY KEY, name TEXT UNIQUE NOT NULL);
 CREATE TABLE user_roles (user_id INT NOT NULL, role_id INT NOT NULL, PRIMARY KEY (user_id, role_id));
 CREATE TABLE media (id SERIAL PRIMARY KEY, user_id INT, filename TEXT, file_path TEXT, media_type TEXT, created_at TIMESTAMPTZ DEFAULT now());
 
-CREATE TABLE service_types (id SERIAL PRIMARY KEY, name VARCHAR(255) UNIQUE NOT NULL, is_active BOOLEAN DEFAULT true,
+CREATE TABLE service_types (id SERIAL PRIMARY KEY, name VARCHAR(255) UNIQUE NOT NULL, is_active BOOLEAN DEFAULT true, fa_icon TEXT, description TEXT, base_price NUMERIC,
   created_at TIMESTAMP DEFAULT now(), updated_at TIMESTAMP DEFAULT now());
 
 CREATE TABLE therapist_profiles (
