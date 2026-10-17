@@ -462,7 +462,7 @@ async function seed() {
   const paidFar = await mkA("Paid", 3, { rzp: "pay_cancel1", method: "razorpay" });
   r = await call("PATCH", "/api/appointments/" + paidFar + "/cancel", T.p1);
   check("P10 patient cancels a PAID booking more than 12h away -> Cancelled + full refund through Razorpay (PATCH, as the website calls it)", r.s === 200 && rzpRefunds.length === rfBefore + 1 && rzpRefunds[rfBefore].pid === "pay_cancel1" && rzpRefunds[rfBefore].amount === 150000 && r.j.refund && r.j.refund.status === "pending" && (await q("SELECT status FROM appointments WHERE id = $1", [paidFar]))[0].status === "cancelled_by_patient" && (await q("SELECT 1 FROM order_refunds WHERE appointment_id = $1 AND status = 'pending'", [paidFar])).length === 1, "got " + r.s + " " + (r.raw || "").slice(0, 200));
-  const paidNear = await mkA("Paid", 0, { rzp: "pay_cancel2", method: "razorpay", time: pad(Math.min(23, (new Date(Date.now() + 5.5 * 3600e3)).getUTCHours() + 1)) + ":00" });
+  const paidNear = await mkA("Paid", 0, { rzp: "pay_cancel2", method: "razorpay", time: pad(Math.min(23, (new Date(Date.now() + 5.5 * 3600e3)).getUTCHours() + 1)) + ":07" });      // :07 never collides with the fixed :00 / :30 fixtures, whatever the hour the suite runs in
   r = await call("POST", "/api/appointments/" + paidNear + "/cancel", T.p1);
   check("P10/P14 a PAID booking less than 2h away can be cancelled, but the whole price is kept (no refund)", r.s === 200 && (await q("SELECT status, cancellation_charge, refund_amount FROM appointments WHERE id = $1", [paidNear]))[0].status === "cancelled_by_patient" && Number((await q("SELECT cancellation_charge FROM appointments WHERE id = $1", [paidNear]))[0].cancellation_charge) === 1500 && rzpRefunds.length === rfBefore + 1, "got " + r.s + " " + JSON.stringify(r.j));
   const paidManual = await mkA("Paid", 3, { method: "manual_cash" });
@@ -1893,6 +1893,34 @@ async function seed() {
     await q("UPDATE therapist_leaves SET therapist_id = $1 WHERE therapist_id = $2 AND start_date = $3", [U.t1.id + 1000, U.tp1, tomorrowStr]);
     check("P22 a leave belonging to a different therapist id (id mix-up) flags nothing", !(await emergencyService.listImpacted()).map((x) => x.id).includes(emC.id));
     await q("UPDATE therapist_leaves SET therapist_id = $1 WHERE therapist_id = $2 AND start_date = $3", [U.tp1, U.t1.id + 1000, tomorrowStr]);
+
+    // Definition of done: a therapist creates a leave over 2 bookings -> the therapy team is alerted, the queue shows both, each is reassigned in one click and the patient is told
+    {
+      const [lt] = await q("INSERT INTO users(uid,email,name,phone,role,is_verified,city,state) VALUES ('th-leave','leave@x.com','Dr Leave','9000000500','therapist',true,'Vadodara','Gujarat') RETURNING *");
+      await q("INSERT INTO user_roles(user_id, role_id) SELECT $1, id FROM roles WHERE name = 'therapist'", [lt.id]);
+      await q("INSERT INTO therapist_profiles(user_id, hourly_rate, profile_status, specialty) VALUES ($1, 800, 'approved', '{1}')", [lt.id]);
+      const mkB = async (time) => (await q(`INSERT INTO appointments(patient_id, patient_name, therapist_id, therapist_name, service_type_id, therapy_type, service_amount, total_amount, date, time, status, payment_status, mode, created_at)
+        VALUES ($1,'Patient P2',$2,'Dr Leave',1,'Physio',1000,1000,$3,$4,'confirmed','Paid','home', now()) RETURNING id`, [U.p2.id, lt.id, tomorrowStr, time]))[0].id;
+      const b1 = await mkB("10:00"), b2 = await mkB("15:00");
+      const adminAlertsBefore = (await q("SELECT COUNT(*)::int AS n FROM notifications WHERE type = 'therapist_leave_conflict'"))[0].n;
+      r = await call("POST", "/api/therapists/leaves", token({ ...lt, roleName: "therapist" }), { start_date: tomorrowStr, end_date: tomorrowStr, reason: "Family emergency" });
+      check("P22 creating a leave over 2 bookings answers with affectedBookings = 2", r.s === 200 && r.j.data && r.j.data.affectedBookings === 2, "got " + r.s + " " + JSON.stringify(r.j));
+      check("P22 ... and the therapy admins get one alert about it", (await q("SELECT COUNT(*)::int AS n FROM notifications WHERE type = 'therapist_leave_conflict'"))[0].n > adminAlertsBefore);
+      r = await call("GET", "/api/therapy-admin/emergency-queue", T.therapy);
+      const rows = (r.j.data || []).filter((x) => [b1, b2].includes(x.booking.id));
+      check("P22 the banner list (emergency queue) shows both bookings, each with candidates", rows.length === 2 && rows.every((x) => x.candidates.length >= 1), JSON.stringify(rows.map((x) => [x.booking.id, x.candidates.length])));
+      const cand = rows[0].candidates[0].therapistId;
+      let oneClick = true;
+      for (const b of [b1, b2]) {
+        const rr = await call("POST", "/api/therapy-admin/reassign", T.therapy, { bookingId: b, newTherapistId: cand, reason: "Family emergency" });
+        oneClick = oneClick && rr.s === 200;
+      }
+      check("P22 both are reassigned in one click each; the patient is told on WhatsApp and in-app", oneClick && (await q("SELECT COUNT(*)::int AS n FROM appointments WHERE id IN ($1,$2) AND therapist_id = $3", [b1, b2, cand]))[0].n === 2 && (await q("SELECT 1 FROM notification_log WHERE event = 'booking_reassigned' AND user_id = $1 AND channel = 'whatsapp'", [U.p2.id])).length >= 1 && (await q("SELECT 1 FROM notification_log WHERE event = 'booking_reassigned' AND user_id = $1 AND channel = 'inapp'", [U.p2.id])).length >= 1);
+      r = await call("GET", "/api/therapy-admin/emergency-queue", T.therapy);
+      check("P22 afterwards the queue no longer lists them", !(r.j.data || []).some((x) => [b1, b2].includes(x.booking.id)));
+      r = await call("POST", "/api/therapists/leaves", token({ ...lt, roleName: "therapist" }), { start_date: day(40), end_date: day(40), reason: "Far away" });
+      check("P22 a leave far in the future raises no alert", r.s === 200 && r.j.data.affectedBookings === 0);
+    }
 
     // quality rule: last windowRatings ratings, only with at least minRatings
     const mkTh = async (tag) => {

@@ -40,6 +40,7 @@ exports.getInventoryForecast = async (req, res) => {
         COALESCE(SUM(i.reserved), 0)::int AS "reserved",
         GREATEST(0, COALESCE(SUM(i.on_hand), 0) - COALESCE(SUM(i.reserved), 0))::int AS "stock",
         COALESCE(MAX(i.reorder_point), 0)::int AS "reorderPoint",
+        MAX(i.updated_at) AS "updatedAt",
         COALESCE(MAX(s.sold_30d), 0)::int AS "sold30d"
       FROM products p
       LEFT JOIN inventory i ON i.product_id = p.id
@@ -76,6 +77,7 @@ exports.getInventoryForecast = async (req, res) => {
         reserved: Number(r.reserved),
         stock,
         reorderPoint,
+        updatedAt: r.updatedAt || null,
         sold30d,
         runRate,
         daysCover,
