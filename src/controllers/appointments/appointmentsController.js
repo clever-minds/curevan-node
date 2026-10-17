@@ -1062,6 +1062,7 @@ exports.updatePcr = async (req, res) => {
       catch (reportErr) { console.error("progress report failed:", reportErr.message); }
     }
 
+    let payoutInfo;   // set when this save locked the PCR
     // P15: access log, and on lock the content hash + the PDF summary
     const logAction = requestedStatus === "locked" ? "lock" : requestedStatus === "submitted" ? "submit" : reopening ? (requestedStatus === "returned" ? "return" : "unlock") : "edit";
     await pcrService.logAccess(existing.id, req.user.id, logAction, reopening ? String(data.reason).trim() : null);
@@ -1076,8 +1077,11 @@ exports.updatePcr = async (req, res) => {
         console.error("PCR lock: hash/PDF failed:", pdfErr.message);   // the lock itself stands; the PDF can be regenerated on download
       }
       // P18: a locked PCR makes the session payable (payment, start code and lock are all checked there)
-      try { await payoutService.createItemForAppointment(appointmentId); }
-      catch (payErr) { if (!(payErr instanceof payoutService.PayoutError)) console.error("payout line failed:", payErr.message); }
+      try { const made = await payoutService.createItemForAppointment(appointmentId); payoutInfo = { created: made.created !== false, reason: made.created === false ? "A payout line already exists for this booking" : undefined }; }
+      catch (payErr) {
+        if (payErr instanceof payoutService.PayoutError) payoutInfo = { created: false, reason: payErr.message };
+        else console.error("payout line failed:", payErr.message);
+      }
     }
 
     // 8️⃣ Send Status Update Email (if status changed)
@@ -1109,7 +1113,7 @@ exports.updatePcr = async (req, res) => {
       console.error("Failed to send appt status update email:", mailErr);
     }
 
-    return res.status(200).json({ success: true, message: "PCR updated successfully" });
+    return res.status(200).json({ success: true, message: "PCR updated successfully", payout: payoutInfo });
 
   } catch (error) {
     await t.rollback();

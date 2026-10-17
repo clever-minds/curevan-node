@@ -1183,7 +1183,7 @@ async function seed() {
     // locking the PCR through the API creates the line by itself
     const lockId = await mkPayable(U.t1.id, { pcr: "submitted" });
     r = await call("PATCH", "/api/appointments/pcr/" + lockId, T.therapy, { status: "locked" });
-    check("P18 an admin locking the PCR creates the payout line without any client call", r.s === 200 && (await q("SELECT COUNT(*)::int AS n FROM payout_items WHERE source_id = $1 AND type = 'service'", [lockId]))[0].n === 1, "got " + r.s + " " + (r.raw || "").slice(0, 120));
+    check("P18 an admin locking the PCR creates the payout line without any client call (and the reply says so)", r.s === 200 && r.j.payout && r.j.payout.created === true && (await q("SELECT COUNT(*)::int AS n FROM payout_items WHERE source_id = $1 AND type = 'service'", [lockId]))[0].n === 1, "got " + r.s + " " + (r.raw || "").slice(0, 120));
     r = await call("POST", "/api/general/payout-items/add", T.therapy, { type: "service", sourceId: 1, therapistId: U.t1.id, patientId: 1, grossAmount: 99999, platformFeePct: 0, platformFeeAmount: 0, netAmount: 99999, state: "Paid", weekStart: day(0), membershipPlanSnapshot: "premium" });
     check("P18 the old client-written payout endpoint is switched off (410)", r.s === 410, "got " + r.s);
     check("P18 cancellation charges became payout lines (type 'cancellation')", (await q("SELECT COUNT(*)::int AS n FROM payout_items WHERE type = 'cancellation'"))[0].n >= 1);
