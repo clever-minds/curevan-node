@@ -8,13 +8,13 @@ const pcrService = require("../../services/pcrService");
 const { generatePcrPdf } = require("../../services/pcrPdfService");
 const stateMachine = require("../../services/appointmentStateMachine");
 
-// GET /api/pcr/:id/pdf - the patient (own), the treating therapist, clinical admins
+// GET /api/pcr/:id/pdf (or /api/pcr/appointment/:appointmentId/pdf) - the patient (own), the treating therapist, clinical admins
 exports.downloadPdf = async (req, res) => {
   try {
     const [row] = await sequelize.query(
       `SELECT p.*, a.patient_id AS a_patient, a.therapist_id AS a_therapist, a.patient_name, a.therapist_name, a.date
-       FROM pcr p JOIN appointments a ON a.id = p.appointment_id WHERE p.id = :id`,
-      { replacements: { id: req.params.id }, type: QueryTypes.SELECT }
+       FROM pcr p JOIN appointments a ON a.id = p.appointment_id WHERE ${req.params.appointmentId ? "p.appointment_id" : "p.id"} = :id`,
+      { replacements: { id: req.params.appointmentId || req.params.id }, type: QueryTypes.SELECT }
     );
     if (!row) return res.status(404).json({ success: false, error: "PCR not found" });
     const allowed = access.isClinicalAdmin(req.user) || access.same(row.a_patient, req.user.id) || access.same(row.a_therapist, req.user.id);

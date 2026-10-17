@@ -731,6 +731,7 @@ async function seed() {
   const pdfText = pdfBytes.toString("latin1");
   check("P15 the PDF is private: other patient 403, other therapist 403, anonymous 401", (await fetch(base + "/api/pcr/" + locked.id + "/pdf", { headers: { authorization: "Bearer " + T.p2 } })).status === 403 && (await fetch(base + "/api/pcr/" + locked.id + "/pdf", { headers: { authorization: "Bearer " + T.t2 } })).status === 403 && [401, 403].includes((await fetch(base + "/api/pcr/" + locked.id + "/pdf")).status));
   check("P15 the therapist and a clinical admin can also download it", (await fetch(base + "/api/pcr/" + locked.id + "/pdf", { headers: { authorization: "Bearer " + T.t1 } })).status === 200 && (await fetch(base + "/api/pcr/" + locked.id + "/pdf", { headers: { authorization: "Bearer " + T.therapy } })).status === 200);
+  check("P15 the same PDF is reachable by booking id (what the health-records page uses)", (await fetch(base + "/api/pcr/appointment/" + v + "/pdf", { headers: { authorization: "Bearer " + T.p1 } })).status === 200);
   const nonLocked = await pcrOf(inProg);
   check("P15 an unlocked PCR has no PDF yet (409)", (await fetch(base + "/api/pcr/" + nonLocked.id + "/pdf", { headers: { authorization: "Bearer " + T.t1 } })).status === 409);
   const logs = (await q("SELECT action FROM pcr_access_log WHERE pcr_id = $1", [locked.id])).map((x) => x.action);
