@@ -1433,6 +1433,127 @@ async function seed() {
     check("P19 admin rejects a new request with a reason; the customer is told", r.s === 200 && (await q("SELECT status, rejection_reason FROM order_returns WHERE id = $1", [ret3]))[0].rejection_reason === "Not eligible: used product" && (await q("SELECT COUNT(*)::int AS n FROM notifications WHERE user_uid = $1 AND title = 'Your return request was not accepted'", [String(U.p1.id)]))[0].n === 1);
   }
 
+  // P20 therapist affiliate (DR code) commissions
+  {
+    const affiliate = require("../../src/services/affiliateService");
+    const payoutService = require("../../src/services/payoutService");
+    const payOrder = async (token, user, addr, code, items, tag) => {
+      await putCart(user.id, items);
+      const c = await call("POST", "/api/orders/create-order", token, { billing_address_id: addr, shipping_address_id: addr, coupon_code: code });
+      const rz = c.j && c.j.data && c.j.data.razorpayOrderId;
+      const v = rz ? await call("POST", "/api/payments/verify", token, { razorpay_order_id: rz, razorpay_payment_id: "pay_aff_" + tag, razorpay_signature: sign(rz, "pay_aff_" + tag) }) : { s: 0 };
+      return { id: c.j && c.j.data && c.j.data.orderId, create: c, verify: v };
+    };
+    const deliver = (id, daysAgo) => q("UPDATE orders SET status = 'delivered', delivered_at = now() - ($2 || ' days')::interval WHERE id = $1", [id, String(daysAgo)]);
+    const comm = (orderId) => q("SELECT * FROM affiliate_commissions WHERE order_id = $1 ORDER BY id", [orderId]);
+
+    check("P20 code names: surname in capitals, letters only, first name as fallback",
+      affiliate.baseCode("Anita Sharma") === "DRSHARMA" && affiliate.baseCode("Dr. Ravi O'Neil") === "DRONEIL" && affiliate.baseCode("Madonna") === "DRMADONNA" && affiliate.baseCode("Dr One") === "DRONE");
+
+    // --- approving a therapist creates the code
+    const mkT = async (uid, email, name, phone) => { const [u] = await q("INSERT INTO users(uid,email,name,phone,role,is_verified,city,state) VALUES ($1,$2,$3,$4,'therapist',true,'Vadodara','Gujarat') RETURNING *", [uid, email, name, phone]); await q("INSERT INTO user_roles(user_id, role_id) SELECT $1, id FROM roles WHERE name = 'therapist'", [u.id]); return u; };
+    const t3 = await mkT("therapist-03", "t3@x.com", "Dr Anita Sharma", "9000000013");
+    const t4 = await mkT("therapist-04", "t4@x.com", "Dr Meera Sharma", "9000000014");
+    const approveNew = async (user) => {
+      const tpId = (await q("INSERT INTO therapist_profiles(user_id, hourly_rate, profile_status, specialty) VALUES ($1, 900, 'pending', '{1}') RETURNING id", [user.id]))[0].id;
+      const crId = (await q("INSERT INTO change_requests(user_id, role, entity_id, section, changes, status) VALUES ($1,'therapist',$2,'profile',$3::jsonb,'pending') RETURNING id", [user.id, String(tpId), JSON.stringify({ membershipPlan: { old: "standard", new: "standard" } })]))[0].id;
+      const ap = await call("PUT", "/api/users/change-request/approve/" + crId, T.therapy);
+      return { tpId, ap };
+    };
+    const a3 = await approveNew(t3);
+    const code3 = (await q("SELECT * FROM coupons WHERE therapist_id = $1", [a3.tpId]))[0];
+    check("P20 approving a therapist creates DRSHARMA: percent, 10, Therapist, Active", a3.ap.s === 200 && code3 && code3.code === "DRSHARMA" && code3.type === "percent" && Number(code3.value) === 10 && code3.owner_type === "Therapist" && code3.status === "Active", "got " + a3.ap.s + " " + JSON.stringify(code3));
+    const a4 = await approveNew(t4);
+    const code4 = (await q("SELECT code FROM coupons WHERE therapist_id = $1", [a4.tpId]))[0];
+    check("P20 a taken name gets a number (DRSHARMA2)", code4 && code4.code === "DRSHARMA2", JSON.stringify(code4));
+    await call("PUT", "/api/users/change-request/approve/" + (await q("INSERT INTO change_requests(user_id, role, entity_id, section, changes, status) VALUES ($1,'therapist',$2,'profile',$3::jsonb,'pending') RETURNING id", [t3.id, String(a3.tpId), JSON.stringify({ membershipPlan: { old: "standard", new: "standard" } })]))[0].id, T.therapy);
+    check("P20 a later approval never makes a second code", (await q("SELECT COUNT(*)::int AS n FROM coupons WHERE therapist_id = $1", [a3.tpId]))[0].n === 1);
+
+    // --- generate-missing for therapists approved before this feature
+    r = await call("POST", "/api/coupons/generate-missing", T.p1);
+    check("P20 generate-missing is admin only (403)", r.s === 403);
+    r = await call("POST", "/api/coupons/generate-missing", T.ecom);
+    const made = (await q("SELECT id, code, therapist_id FROM coupons WHERE owner_type = 'Therapist' AND therapist_id = ANY($1) ORDER BY code", [[U.tp1, U.tp2]]));
+    check("P20 generate-missing creates DRONE and DRTWO for the existing approved therapists", r.s === 200 && made.map((x) => x.code).join() === "DRONE,DRTWO", "got " + r.s + " " + JSON.stringify(made));
+    const total1 = (await q("SELECT COUNT(*)::int AS n FROM coupons WHERE owner_type = 'Therapist'"))[0].n;
+    r = await call("POST", "/api/coupons/generate-missing", T.ecom);
+    check("P20 running it again creates nothing", r.s === 200 && (await q("SELECT COUNT(*)::int AS n FROM coupons WHERE owner_type = 'Therapist'"))[0].n === total1);
+
+    // --- the money: 2,000 taxable with the code -> patient pays 1,800 + GST, commission 90 pending
+    const [pAff] = await q("INSERT INTO products(title, selling_price, mrp, sku, category_id, hsn_code, gst_slab, is_tax_inclusive, weight_kg) VALUES ('Affiliate item', 2360, 2360, 'AFF1', 1, '9021', 18, true, 0.2) RETURNING id");
+    await q("INSERT INTO inventory(product_id, sku, on_hand, reserved) VALUES ($1,'AFF1',100,0)", [pAff.id]);
+    const O1 = await payOrder(T.p1, U.p1, U.a1, "DRONE", [[pAff.id, 1]], "o1");
+    const ord1 = (await q("SELECT total, taxable_value, coupon_only_discount FROM orders WHERE id = $1", [O1.id]))[0];
+    const c1 = O1.id ? await comm(O1.id) : [];
+    check("P20 the patient gets 10% off: taxable 2,000 -> 1,800, pays 2,124 with GST", O1.verify.s === 200 && Number(ord1.taxable_value) === 1800 && Number(ord1.total) === 2124, JSON.stringify(ord1) + " verify " + O1.verify.s);
+    check("P20 the commission is 5% of 1,800 = 90, pending, for the therapist user", c1.length === 1 && Number(c1[0].sale_amount) === 1800 && Number(c1[0].commission_pct) === 5 && Number(c1[0].commission_amount) === 90 && c1[0].status === "pending" && c1[0].therapist_id === U.t1.id && c1[0].coupon_id === made[0].id, JSON.stringify(c1));
+    r = await call("POST", "/api/payments/verify", T.p1, { razorpay_order_id: (await q("SELECT razorpay_order_id FROM orders WHERE id = $1", [O1.id]))[0].razorpay_order_id, razorpay_payment_id: "pay_aff_o1", razorpay_signature: sign((await q("SELECT razorpay_order_id FROM orders WHERE id = $1", [O1.id]))[0].razorpay_order_id, "pay_aff_o1") });
+    check("P20 verifying twice does not double the commission", (await comm(O1.id)).length === 1);
+
+    // two lines -> one row per line
+    const [pAff2] = await q("INSERT INTO products(title, selling_price, mrp, sku, category_id, hsn_code, gst_slab, is_tax_inclusive, weight_kg) VALUES ('Affiliate item 2', 1180, 1180, 'AFF2', 1, '9021', 18, true, 0.2) RETURNING id");
+    await q("INSERT INTO inventory(product_id, sku, on_hand, reserved) VALUES ($1,'AFF2',100,0)", [pAff2.id]);
+    const O2 = await payOrder(T.p2, U.p2, U.a2, "drtwo", [[pAff.id, 1], [pAff2.id, 2]], "o2");
+    const c2 = await comm(O2.id);
+    check("P20 one row per order line; code is not case sensitive; sum = 5% of taxable (lines 1,800 + 1,800 -> 180)", c2.length === 2 && c2.reduce((a, x) => a + Number(x.commission_amount), 0) === 180 && c2.every((x) => x.therapist_id === U.t2.id), JSON.stringify(c2));
+
+    // not for platform coupons, not on your own order, not on sessions
+    const O3 = await payOrder(T.p1, U.p1, U.a1, "OPEN10", [[pAff.id, 1]], "o3");
+    check("P20 a platform coupon earns no commission", O3.verify.s === 200 && (await comm(O3.id)).length === 0);
+    const selfOrder = (await q(`INSERT INTO orders(order_number, user_id, subtotal, total, status, payment_status, coupon_id) VALUES ('ORD-P20-SELF', $1, 1000, 1000, 'Placed', 'Paid', $2) RETURNING id`, [U.t1.id, made[0].id]))[0].id;
+    await q("INSERT INTO order_items(order_id, sku, name, qty, price, mrp, hsn_code, tax_rate_pct, taxable_value) VALUES ($1,'AFF1','Self',1,1000,1000,'9021',18,847.46)", [selfOrder]);
+    check("P20 a therapist earns nothing on their own order", (await affiliate.recordForOrder(selfOrder)) === 0 && (await comm(selfOrder)).length === 0);
+
+    // --- eligibility: 7 days after delivery, never with an open return
+    check("P20 nothing is eligible before delivery", (await affiliate.promoteEligible()) === 0 && (await comm(O1.id))[0].status === "pending");
+    await deliver(O1.id, 3);
+    check("P20 3 days after delivery it is still pending", (await affiliate.promoteEligible()) === 0 && (await comm(O1.id))[0].status === "pending");
+    await deliver(O1.id, 8);
+    await q("INSERT INTO order_returns(order_id, user_id, reason, status) VALUES ($1, $2, 'x', 'Requested')", [O1.id, U.p1.id]);
+    check("P20 an open return request holds the commission back", (await affiliate.promoteEligible()) === 0 && (await comm(O1.id))[0].status === "pending");
+    await q("DELETE FROM order_returns WHERE order_id = $1", [O1.id]);
+    const promoted = await affiliate.promoteEligible();
+    const e1 = (await comm(O1.id))[0];
+    const pi1 = (await q("SELECT * FROM payout_items WHERE type = 'affiliate' AND source_id = $1", [e1.id]))[0];
+    check("P20 8 days after delivery the commission is eligible (eligible_at = delivery + 7 days)", promoted === 1 && e1.status === "eligible" && Math.abs(new Date(e1.eligible_at) - (Date.now() - 1 * 86400e3)) < 120000, JSON.stringify(e1));
+    check("P20 ... and it is a payout line: gross 90, no platform fee, net 90, for the therapist", pi1 && Number(pi1.gross_amount) === 90 && Number(pi1.platform_fee_amount) === 0 && Number(pi1.net_amount) === 90 && pi1.therapist_id === U.t1.id && pi1.state === "Pending", JSON.stringify(pi1));
+    check("P20 the daily job twice makes no second payout line", (await affiliate.promoteEligible()) === 0 && (await q("SELECT COUNT(*)::int AS n FROM payout_items WHERE type = 'affiliate' AND source_id = $1", [e1.id]))[0].n === 1);
+
+    // --- cancelled order and approved return void the commission
+    const O4 = await payOrder(T.p1, U.p1, U.a1, "DRONE", [[pAff.id, 1]], "o4");
+    r = await call("POST", "/api/orders/" + O4.id + "/cancel", T.p1);
+    check("P20 cancelling the order cancels its commission", r.s === 200 && (await comm(O4.id))[0].status === "cancelled", "got " + r.s + " " + JSON.stringify(await comm(O4.id)));
+    const O5 = await payOrder(T.p1, U.p1, U.a1, "DRONE", [[pAff.id, 1]], "o5");
+    await deliver(O5.id, 1);
+    const it5 = (await q("SELECT id FROM order_items WHERE order_id = $1", [O5.id]))[0].id;
+    r = await call("POST", "/api/orders/" + O5.id + "/return", T.p1, { reason: "wrong_item", items: [{ order_item_id: it5, quantity: 1 }] });
+    const retId = r.j && r.j.returnId;
+    r = retId ? await call("PUT", "/api/orders/returns/" + retId + "/approve", T.ecom, {}) : { s: 0 };
+    check("P20 an approved return makes the commission cancelled_returned", r.s === 200 && (await comm(O5.id))[0].status === "cancelled_returned", "got " + r.s + " " + JSON.stringify(await comm(O5.id)));
+    check("P20 a cancelled commission is never promoted", (await (async () => { await deliver(O4.id, 20); await deliver(O5.id, 20); return affiliate.promoteEligible(); })()) === 0);
+
+    // --- the weekly batch picks it up; paying the batch marks the commission paid
+    const before = (await q("SELECT COUNT(*)::int AS n FROM payout_batches"))[0].n;
+    const later = Date.now() + 14 * 86400e3;
+    await payoutService.runWeeklyBatches(later);
+    const pi1b = (await q("SELECT * FROM payout_items WHERE id = $1", [pi1.id]))[0];
+    check("P20 the next weekly run puts the commission into a payout batch", pi1b.batch_id && (await comm(O1.id))[0].payout_batch_id === pi1b.batch_id, JSON.stringify(pi1b));
+    const bat = (await q("SELECT * FROM payout_batches WHERE id = $1", [pi1b.batch_id]))[0];
+    check("P20 the batch gross includes the 90", bat && Number(bat.gross) >= 90 && bat.therapist_id === U.t1.id, JSON.stringify(bat));
+    await payoutService.approve(bat.id, U.su.id);
+    await payoutService.markPaid(bat.id, { utr: "UTRAFF123456" });
+    check("P20 paying the batch marks the commission paid", (await comm(O1.id))[0].status === "paid");
+
+    // --- the therapist's own numbers
+    r = await call("GET", "/api/therapists/affiliate", T.t1);
+    const d = r.j && r.j.data;
+    check("P20 therapist affiliate stats: code, 5%, redemptions, gross sales, paid 90, top product", r.s === 200 && d.code === "DRONE" && d.commissionPct === 5 && d.patientDiscountPct === 10 && d.redemptions >= 1 && d.paid === 90 && d.grossSales >= 1800 && d.topProducts[0].name === "Affiliate item", JSON.stringify(d));
+    r = await call("GET", "/api/therapists/affiliate", T.p1);
+    check("P20 patients cannot open the affiliate stats (403)", r.s === 403);
+    r = await call("GET", "/api/therapists/affiliate");
+    check("P20 ... nor anonymous callers (401)", r.s === 401);
+  }
+
   // invoices
   r = await call("GET", "/api/invoices/list", T.su);
   const allInv = (await q("SELECT COUNT(*)::int AS n FROM invoices"))[0].n;

@@ -446,6 +446,17 @@ exports.deleteCoupon = async (req, res) => {
   }
 };
 
+// POST /api/coupons/generate-missing: a DR code for every approved therapist who has none (P20)
+exports.generateMissing = async (req, res) => {
+  try {
+    const made = await require('../../services/affiliateService').generateMissing();
+    return res.success(made, made.length ? `${made.length} code(s) created` : 'Every approved therapist already has a code');
+  } catch (err) {
+    console.error('generateMissing error:', err.message);
+    return res.error('Could not create the codes');
+  }
+};
+
 exports.getAllCoupons= async(req,res)=>{
 try {
     const result = await sequelize.query(

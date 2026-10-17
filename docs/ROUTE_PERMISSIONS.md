@@ -194,3 +194,34 @@ Total routes: 170
 | GET | /api/therapists/:therapistId/slots?date=YYYY-MM-DD | anyone (public) - bookable hourly slots, decided by the server |
 | GET | /api/appointments/:id/cancel-quote | patient (own), assigned therapist, clinical admin - what cancelling costs right now |
 | POST/PATCH | /api/appointments/:id/cancel | patient (own), assigned therapist (reason required), clinical admin (reason required) - applies the policy and refunds through Razorpay |
+
+## Added in P15 to P20
+
+"Own" means the controller checks the record belongs to the caller (patient, assigned therapist, an invited caregiver where noted) or the caller is a clinical admin.
+
+| Method | Path | Who |
+|---|---|---|
+| GET | /api/pcr/appointment/:appointmentId/pdf, /api/pcr/:id/pdf | party of the booking or clinical admin; the PDF is read from private storage |
+| GET | /api/patients/:patientId/progress | the patient, their therapist, an active caregiver, clinical admin |
+| POST | /api/clinical/plans | therapist, admin.therapy, admin.super |
+| GET/PATCH | /api/clinical/plans, /plans/:id | own (patient, plan therapist, caregiver read-only, clinical admin) |
+| POST/PATCH | /api/clinical/plans/:id/goals, /goals/:id | own therapist or clinical admin |
+| GET | /api/clinical/plans/:id/progress, /plans/:id/reports, /reports/:id/pdf | own |
+| GET | /api/clinical/measures | any logged-in user |
+| POST/PATCH | /api/clinical/measures, /measures/:id | admin.therapy, admin.super |
+| POST/GET/DELETE | /api/clinical/caregivers | the patient (own list) |
+| GET | /api/clinical/followups/mine | any logged-in user (own proposals) |
+| GET | /api/clinical/followups/overdue | clinical admin |
+| POST | /api/clinical/followups/:id/confirm, /change, /decline | the patient the proposal is for |
+| GET/PUT | /api/clinical/reminder-prefs | any logged-in user (own) |
+| GET | /api/calendar/token, POST /api/calendar/token/regenerate | any logged-in user (own feed link) |
+| GET | /api/calendar/appointments/:id.ics | party of the booking |
+| GET | /api/calendar/feed/:token.ics | no login; the secret token is the credential |
+| GET | /api/payout-batches/list, /:id, /:id/statement.pdf | therapist (own batches), admin.therapy, admin.super |
+| GET | /api/payout-batches/export.csv | admin.therapy, admin.super |
+| POST | /api/payout-batches/:id/approve, /mark-paid | admin.super only |
+| POST | /api/payout-batches/:id/hold, /release | admin.therapy, admin.super |
+| POST | /api/hooks/logistics | courier webhook; refused unless the `x-api-key` header equals `SHIPROCKET_WEBHOOK_TOKEN` |
+| PUT | /api/orders/returns/:id/reject, /receive, /inspect | admin.ecom |
+| POST | /api/coupons/generate-missing | admin.ecom, admin.therapy |
+| GET | /api/therapists/affiliate | therapist (own DR code and commission numbers) |

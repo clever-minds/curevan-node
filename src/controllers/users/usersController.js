@@ -996,7 +996,9 @@ exports.approveChangeRequest = async (req, res) => {
 
     await t.commit();
 
-    
+    // every approved therapist gets a DR affiliate code (P20)
+    if (profileId) await require('../../services/affiliateService').ensureCodeForTherapist(profileId).catch((e) => console.error('DR code failed:', e.message));
+
     /* ---------- SEND NOTIFICATION ---------- */
     try {
       console.log("SEND NOTIFICATION TRIGGERED for request:", request);

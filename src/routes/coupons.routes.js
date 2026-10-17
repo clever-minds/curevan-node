@@ -7,6 +7,7 @@ const { requireRole } = require("../middlewares/requireRole");
 const responseHandler = require("../middlewares/responseHandler");
 
 console.log(authMiddleware);
+router.post("/generate-missing", authMiddleware, requireRole("admin.ecom", "admin.therapy"), responseHandler, coupons.generateMissing);
 router.post("/add", authMiddleware, requireRole("admin.ecom", "admin.therapy"), coupons.addCoupon);
 
 router.get("/list", authMiddleware, requireRole("admin.ecom", "admin.therapy"), coupons.listCoupons);

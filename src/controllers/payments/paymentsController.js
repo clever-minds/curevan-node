@@ -4,6 +4,7 @@ const transporter = require("../../config/mailer");
 const razorpay = require("../../services/razorpayService");
 const stateMachine = require("../../services/appointmentStateMachine");
 const appointmentsController = require("../appointments/appointmentsController");
+const affiliateService = require("../../services/affiliateService");
 
 /**
  * Mark a shop order as paid. Shared by the browser verify call (P06) and the webhook (P08).
@@ -100,6 +101,9 @@ async function confirmOrderPayment({ razorpayOrderId, paymentId, signature = nul
         }
       );
     }
+
+    // a therapist (DR) code on the order earns the therapist a pending commission (P20)
+    await affiliateService.recordForOrder(order.id, { transaction });
 
     // Invoice is issued only once the money is confirmed.
     let invoiceId = existingInvoice ? existingInvoice.id : null;

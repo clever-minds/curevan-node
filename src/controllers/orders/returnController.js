@@ -4,6 +4,7 @@ const { createReturnOrder } = require('../../services/shiprocketService');
 const rules = require('../../config/businessRules');
 const refundService = require('../../services/refundService');
 const notificationStore = require('../../services/notificationStore');
+const affiliateService = require('../../services/affiliateService');
 
 const REASONS = ['damaged', 'defective', 'wrong_item', 'missing_part'];
 const PHOTO_REASONS = ['damaged', 'defective'];     // a photo is required for these
@@ -217,6 +218,9 @@ exports.approveReturn = async (req, res) => {
       `UPDATE orders SET status = 'Return Approved' WHERE id = :orderId`,
       { replacements: { orderId: returnData.order_id }, type: QueryTypes.UPDATE, transaction: t }
     );
+    // the commission on the returned lines is void
+    const returnedLines = await sequelize.query(`SELECT order_item_id FROM order_return_items WHERE return_id = :returnId`, { replacements: { returnId }, type: QueryTypes.SELECT, transaction: t });
+    await affiliateService.cancelFor(returnData.order_id, 'cancelled_returned', { itemIds: returnedLines.map((x) => x.order_item_id), transaction: t });
 
     await t.commit();
     res.json({

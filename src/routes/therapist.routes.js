@@ -13,6 +13,7 @@ router.get(
   therapistController.listUsersWithProfiles
 );
 router.post("/register", upload.any(), responseHandler, therapistController.registerTherapist);
+router.get("/affiliate", authMiddleware, requireRole("therapist"), responseHandler, therapistController.getAffiliate);
 router.get("/profile/:userId",authMiddleware,responseHandler, therapistController.getProfile);
 router.put("/profile/:userId", authMiddleware, therapistController.updateProfile);
 

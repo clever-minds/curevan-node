@@ -55,11 +55,11 @@ async function ytdGross(therapistId, ymd, transaction) {
   return Number(row.g);
 }
 
-async function insertItem({ type, sourceId, therapistId, patientId, serviceTypeId, gross, weekStart, cancellationShare = 0, transaction }) {
+async function insertItem({ type, sourceId, therapistId, patientId, serviceTypeId, gross, weekStart, cancellationShare = 0, planOverride, transaction }) {
   const [existing] = await q(`SELECT id FROM payout_items WHERE type = :type AND source_id = :sourceId`, { type, sourceId }, transaction);
   if (existing) return null;
   const [tp] = await q(`SELECT membership_plan FROM therapist_profiles WHERE user_id = :id`, { id: therapistId }, transaction);
-  const plan = tp && tp.membership_plan === "premium" ? "premium" : "standard";
+  const plan = planOverride || (tp && tp.membership_plan === "premium" ? "premium" : "standard");
   const line = computeLine({ gross, plan, ytdGrossBefore: await ytdGross(therapistId, weekStart, transaction) });
   const rows = await q(
     `INSERT INTO payout_items (type, source_id, therapist_id, patient_id, service_type_id, gross_amount, platform_fee_pct, platform_fee_amount, gst_on_platform_fee,
@@ -99,6 +99,13 @@ async function createItemForCancellation(appointmentId, { transaction } = {}) {
   const [a] = await q(`SELECT a.id, a.therapist_id, a.patient_id, a.service_type_id, a.cancellation_charge, a.cancellation_therapist_share, to_char(COALESCE(a.cancelled_at, NOW()) AT TIME ZONE 'Asia/Kolkata', 'YYYY-MM-DD') AS ymd FROM appointments a WHERE a.id = :id`, { id: appointmentId }, transaction);
   if (!a || !a.therapist_id || !(Number(a.cancellation_charge) > 0)) return { created: false };
   const item = await insertItem({ type: "cancellation", sourceId: a.id, therapistId: a.therapist_id, patientId: a.patient_id, serviceTypeId: a.service_type_id, gross: Number(a.cancellation_charge), weekStart: mondayOf(a.ymd), cancellationShare: Number(a.cancellation_therapist_share || 0), transaction });
+  return item ? { created: true, item } : { created: false };
+}
+
+/** An eligible product commission (P20) becomes a payout line: no platform fee (the fee tier is for sessions), TDS rules as for any other line. */
+async function createItemForCommission(commission, { transaction } = {}) {
+  const todayIst = ymdOf(new Date(Date.now() + IST_MS));
+  const item = await insertItem({ type: "affiliate", sourceId: commission.id, therapistId: commission.therapist_id, gross: Number(commission.commission_amount), weekStart: mondayOf(todayIst), planOverride: "standard", transaction });
   return item ? { created: true, item } : { created: false };
 }
 
@@ -143,6 +150,7 @@ async function runWeeklyBatches(now = Date.now()) {
         if (!ok) result.onHold += 1;
       } else result.attached += 1;
       await q(`UPDATE payout_items SET batch_id = :b, state = :state WHERE therapist_id = :t AND week_start = :w::date AND batch_id IS NULL AND state = 'Pending'`, { b: batch.id, state: batch.status === "on_hold" || !ok ? "onHold" : "Scheduled", t: g.therapist_id, w: g.week_start }, t);
+      await q(`UPDATE affiliate_commissions SET payout_batch_id = :b, updated_at = NOW() WHERE id IN (SELECT source_id FROM payout_items WHERE batch_id = :b AND type = 'affiliate')`, { b: batch.id }, t);
       await recompute(batch.id, t);
       await t.commit();
     } catch (err) { await t.rollback(); throw err; }
@@ -209,10 +217,11 @@ async function markPaid(id, { utr, paidAt }) {
     if (dup) throw new PayoutError(409, "That UTR was already used for another batch");
     await q(`UPDATE payout_batches SET status = 'paid', utr = :utr, paid_at = :at WHERE id = :id`, { id, utr: ref, at: when.toISOString() }, t);
     await q(`UPDATE payout_items SET state = 'Paid' WHERE batch_id = :id`, { id }, t);
+    await q(`UPDATE affiliate_commissions SET status = 'paid', updated_at = NOW() WHERE id IN (SELECT source_id FROM payout_items WHERE batch_id = :id AND type = 'affiliate')`, { id }, t);
     await t.commit();
   } catch (err) { await t.rollback(); throw err; }
   await notificationStore.notify(batch.therapist_id, { type: "payout_paid", title: "Your payout was sent", message: `Your payout of INR ${batch.net} for the week of ${String(batch.week_start).slice(0, 10)} was sent. Bank reference: ${ref}.`, link: "/dashboard/earnings" }).catch(() => {});
   return { id, status: "paid" };
 }
 
-module.exports = { PayoutError, computeLine, financialYear, mondayOf, createItemForAppointment, createItemForCancellation, runWeeklyBatches, approve, hold, release, markPaid, hasBankDetails };
+module.exports = { PayoutError, computeLine, financialYear, mondayOf, createItemForAppointment, createItemForCancellation, createItemForCommission, runWeeklyBatches, approve, hold, release, markPaid, hasBankDetails };

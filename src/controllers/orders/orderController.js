@@ -6,6 +6,7 @@ const access = require("../../utils/access");
 const rules = require("../../config/businessRules");
 const razorpay = require("../../services/razorpayService");
 const refundService = require("../../services/refundService");
+const affiliateService = require("../../services/affiliateService");
 const { calculateCouponDiscount } = require("../coupons/CouponsController");
 
 // exports.createOrderFromCart = async (req, res) => {
@@ -1181,6 +1182,7 @@ exports.createOrderFromCart = async (req, res) => {
         if (l.item.offer && l.item.offer.name && !appliedOffers.includes(l.item.offer.name)) appliedOffers.push(l.item.offer.name);
       }
 
+      l.itemTaxable = itemTaxable;          // kept on the order line (affiliate commission, P20)
       taxableValue += itemTaxable;
       totalTax += itemTax;
       if (isIntraState) {
@@ -1287,9 +1289,9 @@ exports.createOrderFromCart = async (req, res) => {
 
       await sequelize.query(
         `INSERT INTO order_items (
-           order_id, sku, name, qty, price, mrp, hsn_code, tax_rate_pct, offer_name, discount_amount, variant_id
+           order_id, sku, name, qty, price, mrp, hsn_code, tax_rate_pct, offer_name, discount_amount, variant_id, taxable_value
          ) VALUES (
-           :orderId, :sku, :name, :qty, :price, :mrp, :hsnCode, :taxRate, :offerName, :discountAmount, :variantId
+           :orderId, :sku, :name, :qty, :price, :mrp, :hsnCode, :taxRate, :offerName, :discountAmount, :variantId, :taxableValue
          )`,
         {
           replacements: {
@@ -1303,7 +1305,8 @@ exports.createOrderFromCart = async (req, res) => {
             taxRate: item.gst_slab,
             offerName: itemOfferName,
             discountAmount: itemDiscountAmount,
-            variantId: item.variant_id || null
+            variantId: item.variant_id || null,
+            taxableValue: l.itemTaxable
           },
           type: QueryTypes.INSERT,
           transaction
@@ -1484,6 +1487,7 @@ exports.cancelOrder = async (req, res) => {
       `UPDATE orders SET status = 'Cancelled' WHERE id = :orderId`,
       { replacements: { orderId }, transaction }
     );
+    await affiliateService.cancelFor(Number(orderId), 'cancelled', { transaction });
     if (unpaid) {
       await sequelize.query(
         `UPDATE payment_transactions SET status = 'failed' WHERE order_id = :orderId AND status = 'pending'`,

@@ -1608,6 +1608,18 @@ exports.getDashboardStats = async (req, res) => {
 /* =========================
    GET EARNINGS
 ========================= */
+// GET /api/therapists/affiliate: the signed-in therapist's DR code and commission numbers (P20)
+exports.getAffiliate = async (req, res) => {
+  try {
+    const data = await require('../../services/affiliateService').statsFor(req.user.id);
+    if (!data) return res.error('Therapist profile not found', 404);
+    return res.success(data, 'Affiliate stats fetched');
+  } catch (err) {
+    console.error('getAffiliate error:', err.message);
+    return res.error('Failed to load affiliate stats');
+  }
+};
+
 exports.getEarnings = async (req, res) => {
   try {
     const { therapistId } = req.params;

@@ -51,3 +51,6 @@ require('./jobs/reminderJob').start();
 
 // P18: weekly payout batches
 require('./jobs/weeklyPayoutJob').start();
+
+// P20: affiliate commissions become eligible after the return window
+require('./jobs/affiliateJob').start();
