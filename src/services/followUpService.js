@@ -6,6 +6,7 @@ const access = require("../utils/access");
 const stateMachine = require("./appointmentStateMachine");
 const slotService = require("./slotService");
 const notificationStore = require("./notificationStore");
+const notifications = require("./notifications");
 
 const { STATUS } = stateMachine;
 const q = (sql, replacements, transaction) => sequelize.query(sql, { replacements, type: QueryTypes.SELECT, transaction });
@@ -92,17 +93,15 @@ async function createProposals({ pcrId, appointmentId, plan, now = Date.now() })
   }
   if (created.length) {
     const first = slots.find((s, i) => i >= 0);
-    await notificationStore.notify(src.patient_id, {
-      type: "followup_proposed", title: "Your next session",
-      message: created.length > 1 ? `Your therapist recommends ${created.length} sessions starting ${dayLabel(first.date, first.time.padStart(5, "0"))}. Confirm to keep these slots.` : `Your therapist recommends your next session on ${dayLabel(first.date, first.time.padStart(5, "0"))}. Confirm to keep this slot.`,
-      link: "/dashboard/bookings",
-    });
+    await notifications.notify("followup_proposed", {
+      patientId: src.patient_id, therapistId: src.therapist_id, therapistName: src.therapist_name,
+      date: first.date, time: first.time.padStart(5, "0"), count: created.length, link: "https://curevan.com/dashboard/patient/my-dashboard",
+    }).catch((e) => console.error("followup_proposed notify failed:", e.message));
   }
   if (noSlot) {
-    await notificationStore.notify(src.therapist_id, {
-      type: "followup_no_slot", title: "A recommended time is no longer free",
-      message: `${noSlot} of the recommended times could not be held. Please pick another time for the patient.`, link: "/dashboard/therapist/schedule",
-    });
+    await notifications.notify("followup_no_slot", {
+      patientId: src.patient_id, therapistId: src.therapist_id, therapistName: src.therapist_name, count: noSlot, link: "https://curevan.com/dashboard/therapist/schedule",
+    }).catch((e) => console.error("followup_no_slot notify failed:", e.message));
   }
   return { created, noSlot };
 }
@@ -173,7 +172,7 @@ async function expireHolds(now = Date.now()) {
   for (const w of waiting) {
     const claimed = await q(`INSERT INTO reminder_log (appointment_id, user_id, type) VALUES (:a, :u, 'followup_nudge') ON CONFLICT DO NOTHING RETURNING id`, { a: w.appointment_id, u: w.patient_id });
     if (claimed.length) {
-      await notificationStore.notify(w.patient_id, { type: "followup_nudge", title: "Keep your next session", message: "Your recommended session is still waiting for you. Confirm soon to keep the slot.", link: "/dashboard/bookings" });
+      await notifications.notify("followup_nudge", { patientId: w.patient_id, link: "https://curevan.com/dashboard/patient/my-dashboard" }).catch((e) => console.error("followup_nudge notify failed:", e.message));
       nudged += 1;
     }
   }
@@ -187,8 +186,7 @@ async function expireHolds(now = Date.now()) {
       await stateMachine.transition(d.appointment_id, STATUS.PROPOSAL_EXPIRED, { system: true }, { note: "hold expired" });
     } catch (err) { if (err instanceof stateMachine.TransitionError) continue; throw err; }
     await q(`UPDATE followup_proposals SET status = 'expired' WHERE id = :id`, { id: d.id });
-    await notificationStore.notify(d.patient_id, { type: "followup_expired", title: "A recommended session was released", message: "The slot we held for your next session was released because it was not confirmed in time. You can book again anytime.", link: "/dashboard/bookings" });
-    await notificationStore.notify(d.therapist_id, { type: "followup_expired", title: "A recommended session was released", message: "A recommended session was not confirmed in time and the slot is free again.", link: "/dashboard/therapist/schedule" });
+    await notifications.notify("followup_expired", { patientId: d.patient_id, therapistId: d.therapist_id, link: "https://curevan.com/dashboard/patient/my-dashboard" }).catch((e) => console.error("followup_expired notify failed:", e.message));
     expired += 1;
   }
   return { expired, nudged };
@@ -210,8 +208,7 @@ async function markOverdue(now = Date.now()) {
     const overdue = !future && lastMs !== null && (new Date(`${today}T00:00:00Z`).getTime() - lastMs) / 86400000 > gapDays;
     if (overdue && !plan.follow_up_overdue) {
       await q(`UPDATE treatment_plans SET follow_up_overdue = true WHERE id = :id`, { id: plan.id });
-      await notificationStore.notify(plan.patient_id, { type: "followup_overdue", title: "Time to book your next session", message: "It has been a while since your last session. Book your next one to keep your recovery on track.", link: "/dashboard/bookings" });
-      if (plan.primary_therapist_id) await notificationStore.notify(plan.primary_therapist_id, { type: "followup_overdue", title: "A patient has no next session booked", message: "One of your patients has no upcoming session booked.", link: "/dashboard/therapist/my-dashboard" });
+      await notifications.notify("followup_overdue", { patientId: plan.patient_id, therapistId: plan.primary_therapist_id || null, link: "https://curevan.com/dashboard/patient/my-dashboard" }).catch((e) => console.error("followup_overdue notify failed:", e.message));
       flagged += 1;
     } else if (!overdue && plan.follow_up_overdue) {
       await q(`UPDATE treatment_plans SET follow_up_overdue = false WHERE id = :id`, { id: plan.id });

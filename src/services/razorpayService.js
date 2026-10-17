@@ -65,8 +65,9 @@ async function refund(paymentId, amountPaise, notes = {}) {
 }
 
 // Fetch captured payments for a timestamp window (timestamps in seconds)
-async function fetchPayments({ from, to, count = 100 } = {}) {
+async function fetchPayments({ from, to, count = 100, skip = 0 } = {}) {
   const params = { count };
+  if (skip) params.skip = skip;
   if (from) params.from = from;
   if (to) params.to = to;
   return getClient().payments.all(params);

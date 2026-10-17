@@ -6,6 +6,8 @@ const progressService = require("../../services/progressService");
 const notificationStore = require("../../services/notificationStore");
 const notifications = require("../../services/notifications");
 const rules = require("../../config/businessRules");
+const slotService = require("../../services/slotService");
+const emergencyService = require("../../services/emergencyService");
 
 // Helper: Haversine distance in km
 function haversineDistance(lat1, lon1, lat2, lon2) {
@@ -45,15 +47,7 @@ exports.getDashboardOverview = async (req, res) => {
     );
 
     // Emergency leaves overlapping active bookings for today or tomorrow
-    const [[reassignRow]] = await sequelize.query(
-      `SELECT COUNT(DISTINCT a.id)::int as count
-       FROM appointments a
-       JOIN therapist_profiles tp ON tp.user_id = a.therapist_id
-       JOIN therapist_leaves tl ON (tl.therapist_id = tp.id OR tl.therapist_id = tp.user_id OR tl.therapist_id = a.therapist_id)
-       WHERE a.status IN ('confirmed', 'accepted_unpaid', 'paid', 'searching_therapist')
-         AND a.date IN (CURRENT_DATE, (CURRENT_DATE + INTERVAL '1 day')::date)
-         AND a.date >= tl.start_date AND a.date <= tl.end_date`
-    );
+    const reassignRow = { count: (await emergencyService.listImpacted()).length };
 
     res.json({
       success: true,
@@ -78,130 +72,25 @@ exports.getDashboardOverview = async (req, res) => {
 // 2. Emergency reassignment queue & candidate matching
 exports.getEmergencyReassignQueue = async (req, res) => {
   try {
-    // Find active appointments for today or tomorrow where therapist is on leave
-    const impactedBookings = await sequelize.query(
-      `SELECT DISTINCT a.id, a.patient_id, a.patient_name, a.patient_phone, a.therapist_id, a.therapist_name,
-              a.service_type_id, a.therapy_type, a.date, a.time, a.mode, a.total_amount, a.status,
-              oa.full_address, oa.city, oa.state, oa.pincode,
-              COALESCE(u.latitude, oa_u.latitude) as patient_lat,
-              COALESCE(u.longitude, oa_u.longitude) as patient_lng,
-              tl.reason as leave_reason, tl.start_date as leave_start, tl.end_date as leave_end
-       FROM appointments a
-       JOIN therapist_profiles tp ON tp.user_id = a.therapist_id
-       JOIN therapist_leaves tl ON (tl.therapist_id = tp.id OR tl.therapist_id = tp.user_id OR tl.therapist_id = a.therapist_id)
-       LEFT JOIN users u ON u.id = a.patient_id
-       LEFT JOIN order_addresses oa ON oa.id = a.service_address_id
-       LEFT JOIN users oa_u ON oa_u.id = oa.user_id
-       WHERE a.status IN ('confirmed', 'accepted_unpaid', 'paid', 'searching_therapist')
-         AND a.date IN (CURRENT_DATE, (CURRENT_DATE + INTERVAL '1 day')::date)
-         AND a.date >= tl.start_date AND a.date <= tl.end_date
-       ORDER BY a.date ASC, a.time ASC`,
-      { type: QueryTypes.SELECT }
-    );
-
-    const enriched = [];
-    for (const appt of impactedBookings) {
-      const apptDateStr = new Date(appt.date).toISOString().slice(0, 10);
-      const patientLat = appt.patient_lat ? Number(appt.patient_lat) : null;
-      const patientLng = appt.patient_lng ? Number(appt.patient_lng) : null;
-
-      // Find candidates:
-      // - approved therapist
-      // - not the current therapist
-      // - quality ok
-      // - registration not expired
-      // - same service type
-      // - not on leave on appt date
-      // - no clash at appt date and time
-      const candidatesRaw = await sequelize.query(
-        `SELECT u.id as user_id, u.name, u.phone, u.city, u.latitude, u.longitude,
-                tp.id as profile_id, tp.hourly_rate, tp.quality_status, tp.registration_valid_until,
-                COALESCE(AVG(tr.rating), 0)::numeric(3,1) as avg_rating,
-                COUNT(tr.id)::int as rating_count
-         FROM users u
-         JOIN therapist_profiles tp ON tp.user_id = u.id
-         LEFT JOIN therapist_reviews tr ON (tr.therapist_id = tp.id OR tr.therapist_id = u.id)
-         WHERE u.role = 'therapist'
-           AND tp.profile_status = 'approved'
-           AND u.id != :currentTherapistId
-           AND (tp.quality_status IS NULL OR tp.quality_status = 'ok')
-           AND (tp.registration_valid_until IS NULL OR tp.registration_valid_until >= CURRENT_DATE)
-           AND (:serviceTypeId::int = ANY(tp.specialty) OR tp.specialty IS NULL OR array_length(tp.specialty, 1) IS NULL)
-           AND NOT EXISTS (
-             SELECT 1 FROM therapist_leaves tl
-             WHERE tl.therapist_id = tp.id AND :apptDate >= tl.start_date AND :apptDate <= tl.end_date
-           )
-           AND NOT EXISTS (
-             SELECT 1 FROM appointments a2
-             WHERE a2.therapist_id = u.id AND a2.date = :apptDate AND a2.time = :apptTime
-               AND a2.status IN ('confirmed', 'in_progress', 'therapist_on_the_way', 'arrived', 'paid', 'accepted_unpaid')
-           )
-         GROUP BY u.id, u.name, u.phone, u.city, u.latitude, u.longitude, tp.id, tp.hourly_rate, tp.quality_status, tp.registration_valid_until`,
-        {
-          replacements: {
-            currentTherapistId: appt.therapist_id,
-            serviceTypeId: appt.service_type_id || 1,
-            apptDate: apptDateStr,
-            apptTime: appt.time,
-          },
-          type: QueryTypes.SELECT
-        }
-      );
-
-      const candidates = candidatesRaw.map(c => {
-        const cLat = c.latitude ? Number(c.latitude) : null;
-        const cLng = c.longitude ? Number(c.longitude) : null;
-        const dist = haversineDistance(patientLat, patientLng, cLat, cLng);
-        return {
-          therapistId: c.user_id,
-          profileId: c.profile_id,
-          name: c.name,
-          phone: c.phone,
-          city: c.city,
-          distanceKm: dist,
-          avgRating: parseFloat(c.avg_rating || 0),
-          ratingCount: c.rating_count,
-        };
-      })
-      // within 8 km if coordinates exist, or same city fallback
-      .filter(c => {
-        if (c.distanceKm !== null) return c.distanceKm <= 8;
-        return !appt.city || !c.city || c.city.toLowerCase() === appt.city.toLowerCase();
-      })
-      // sorted by distance ASC, then rating DESC
-      .sort((a, b) => {
-        if (a.distanceKm !== null && b.distanceKm !== null && a.distanceKm !== b.distanceKm) {
-          return a.distanceKm - b.distanceKm;
-        }
-        return b.avgRating - a.avgRating;
-      });
-
-      enriched.push({
+    const out = [];
+    for (const appt of await emergencyService.listImpacted()) {
+      out.push({
         booking: {
-          id: appt.id,
-          patientId: appt.patient_id,
-          patientName: appt.patient_name,
-          patientPhone: appt.patient_phone,
-          currentTherapistId: appt.therapist_id,
-          currentTherapistName: appt.therapist_name,
-          serviceType: appt.therapy_type,
-          date: apptDateStr,
-          time: appt.time,
-          address: appt.full_address || `${appt.city || ''}, ${appt.state || ''}`,
-          leaveReason: appt.leave_reason,
+          id: appt.id, patientId: appt.patient_id, patientName: appt.patient_name, patientPhone: appt.patient_phone,
+          currentTherapistId: appt.therapist_id, currentTherapistName: appt.therapist_name, serviceType: appt.therapy_type,
+          date: appt.date, time: appt.time, address: appt.full_address || `${appt.city || ""}, ${appt.state || ""}`, leaveReason: appt.leave_reason,
         },
-        candidates
+        candidates: await emergencyService.candidatesFor(appt),
       });
     }
-
-    res.json({ success: true, data: enriched });
+    res.json({ success: true, data: out });
   } catch (err) {
     console.error("getEmergencyReassignQueue error:", err);
     res.status(500).json({ success: false, error: err.message });
   }
 };
 
-// 3. Reassign booking
+// 3. Reassign booking (one click): same checks as the candidate list, status history + audit log, patient and both therapists told
 exports.reassignBooking = async (req, res) => {
   const { bookingId, newTherapistId, reason } = req.body;
   if (!bookingId || !newTherapistId) {
@@ -210,112 +99,59 @@ exports.reassignBooking = async (req, res) => {
 
   const t = await sequelize.transaction();
   try {
-    const [appt] = await sequelize.query(
-      `SELECT * FROM appointments WHERE id = :id FOR UPDATE`,
-      { replacements: { id: bookingId }, type: QueryTypes.SELECT, transaction: t }
-    );
-    if (!appt) {
-      await t.rollback();
-      return res.status(404).json({ success: false, error: "Booking not found" });
-    }
+    const [appt] = await sequelize.query(`SELECT * FROM appointments WHERE id = :id FOR UPDATE`, { replacements: { id: bookingId }, type: QueryTypes.SELECT, transaction: t });
+    if (!appt) { await t.rollback(); return res.status(404).json({ success: false, error: "Booking not found" }); }
+    if (!emergencyService.ACTIVE_FOR_REASSIGN.includes(appt.status)) { await t.rollback(); return res.status(409).json({ success: false, error: `A booking that is ${appt.status} cannot be reassigned` }); }
+    if (Number(appt.therapist_id) === Number(newTherapistId)) { await t.rollback(); return res.status(400).json({ success: false, error: "The booking already belongs to this therapist" }); }
 
     const [newTherapist] = await sequelize.query(
-      `SELECT u.id, u.name, u.phone, tp.id as profile_id, tp.quality_status, tp.registration_valid_until
-       FROM users u
-       JOIN therapist_profiles tp ON tp.user_id = u.id
+      `SELECT u.id, u.name, u.phone, tp.id AS profile_id, tp.specialty
+       FROM users u JOIN therapist_profiles tp ON tp.user_id = u.id
        WHERE u.id = :id AND tp.profile_status = 'approved'`,
       { replacements: { id: newTherapistId }, type: QueryTypes.SELECT, transaction: t }
     );
-    if (!newTherapist) {
+    if (!newTherapist) { await t.rollback(); return res.status(400).json({ success: false, error: "Target therapist is not approved" }); }
+    if (appt.service_type_id && !(newTherapist.specialty || []).map(Number).includes(Number(appt.service_type_id))) {
       await t.rollback();
-      return res.status(400).json({ success: false, error: "Target therapist is not approved" });
+      return res.status(400).json({ success: false, error: "Target therapist does not offer this service" });
     }
-    if (newTherapist.quality_status === 'frozen') {
+    const dateText = emergencyService.ymdText(appt.date);
+    try {
+      // frozen, expired registration, working hours, leave and clashes: the same rules as a new booking
+      await slotService.assertSlotBookable(newTherapist.id, dateText, appt.time, { transaction: t, skipLead: true, ignoreAppointmentId: appt.id });
+    } catch (err) {
       await t.rollback();
-      return res.status(400).json({ success: false, error: "Target therapist is frozen" });
+      if (err instanceof slotService.SlotError) return res.status(err.httpStatus || 400).json({ success: false, error: err.message });
+      throw err;
     }
 
     const oldTherapistId = appt.therapist_id;
     const oldTherapistName = appt.therapist_name;
-
-    // Update appointment
     await sequelize.query(
-      `UPDATE appointments
-       SET therapist_id = :newId, therapist_name = :newName, therapist_phone = :newPhone
-       WHERE id = :id`,
-      {
-        replacements: { newId: newTherapist.id, newName: newTherapist.name, newPhone: newTherapist.phone, id: bookingId },
-        type: QueryTypes.UPDATE,
-        transaction: t,
-      }
+      `UPDATE appointments SET therapist_id = :newId, therapist_name = :newName, therapist_phone = :newPhone WHERE id = :id`,
+      { replacements: { newId: newTherapist.id, newName: newTherapist.name, newPhone: newTherapist.phone, id: bookingId }, type: QueryTypes.UPDATE, transaction: t }
     );
-
-    // Audit log / quality action
+    const note = `Reassigned from ${oldTherapistName || "therapist #" + oldTherapistId} to ${newTherapist.name}. ${reason || "Therapist on leave"}`.slice(0, 500);
     await sequelize.query(
-      `INSERT INTO therapist_quality_actions (therapist_id, action, note, actor_id, created_at)
-       VALUES (:pid, 'reassignment', :note, :actorId, NOW())`,
-      {
-        replacements: {
-          pid: newTherapist.profile_id,
-          note: `Reassigned booking #${bookingId} from Dr. ${oldTherapistName}. Reason: ${reason || 'Emergency leave'}`,
-          actorId: req.user.id
-        },
-        type: QueryTypes.INSERT,
-        transaction: t,
-      }
+      `INSERT INTO appointment_status_history (appointment_id, from_status, to_status, actor_id, note) VALUES (:id, :status, :status, :actor, :note)`,
+      { replacements: { id: bookingId, status: appt.status, actor: req.user.id, note }, type: QueryTypes.INSERT, transaction: t }
     );
-
+    await sequelize.query(
+      `INSERT INTO audit_logs (actor_id, action, entity_type, entity_id, details) VALUES (:actor, 'reassign_booking', 'appointment', :id, :details)`,
+      { replacements: { actor: String(req.user.id), id: String(bookingId), details: JSON.stringify({ from: oldTherapistId, to: newTherapist.id, reason: reason || "Therapist on leave" }) }, type: QueryTypes.INSERT, transaction: t }
+    );
     await t.commit();
 
-    // Notifications
-    const dateText = appt.date instanceof Date ? appt.date.toISOString().slice(0, 10) : appt.date;
-    // Patient
-    if (appt.patient_id) {
-      await notificationStore.notify(appt.patient_id, {
-        type: "booking_reassigned",
-        title: "Therapist Reassigned",
-        message: `Your appointment on ${dateText} at ${appt.time} has been reassigned to Dr. ${newTherapist.name}.`,
-        link: "/dashboard/patient/my-dashboard",
-        data: { appointmentId: bookingId, newTherapistId: newTherapist.id },
-      }).catch(() => {});
-    }
-    // New therapist
-    await notificationStore.notify(newTherapist.id, {
-      type: "booking_assigned",
-      title: "New Appointment Assigned",
-      message: `You have been assigned booking #${bookingId} for ${appt.patient_name} on ${dateText} at ${appt.time}.`,
-      link: "/dashboard/therapist/my-dashboard",
-      data: { appointmentId: bookingId },
-    }).catch(() => {});
-    // Old therapist
-    if (oldTherapistId) {
-      await notificationStore.notify(oldTherapistId, {
-        type: "booking_reassigned_away",
-        title: "Booking Reassigned",
-        message: `Your booking #${bookingId} on ${dateText} at ${appt.time} was reassigned to Dr. ${newTherapist.name} due to your leave.`,
-        link: "/dashboard/therapist/my-dashboard",
-        data: { appointmentId: bookingId },
-      }).catch(() => {});
-    }
-
-    // P24: Dispatch booking_reassigned (WhatsApp to patient + Push to new therapist + InApp to Admin)
+    // patient (WhatsApp + in-app), new and old therapist (push + in-app), therapy admin (in-app)
     await notifications.notify("booking_reassigned", {
-      patientId: appt.patient_id,
-      therapistId: newTherapist.id,
-      oldTherapistId,
-      newTherapistName: newTherapist.name,
-      date: dateText,
-      time: appt.time,
-      link: "https://curevan.com/dashboard/bookings",
-    }).catch(() => {});
+      patientId: appt.patient_id, therapistId: newTherapist.id, oldTherapistId, newTherapistName: newTherapist.name,
+      date: dateText, time: appt.time, link: "https://curevan.com/dashboard/bookings",
+    }).catch((e) => console.error("booking_reassigned notify failed:", e.message));
 
-    res.json({
-      success: true,
-      message: `Booking #${bookingId} reassigned to Dr. ${newTherapist.name}`,
-      data: { bookingId, therapistId: newTherapist.id, therapistName: newTherapist.name }
-    });
+    res.json({ success: true, message: `Booking #${bookingId} reassigned to ${newTherapist.name}`, data: { bookingId, therapistId: newTherapist.id, therapistName: newTherapist.name } });
   } catch (err) {
-    await t.rollback();
+    await t.rollback().catch(() => {});
+    if (slotService.isSlotConflict(err)) return res.status(409).json({ success: false, error: "Slot no longer available" });
     console.error("reassignBooking error:", err);
     res.status(500).json({ success: false, error: err.message });
   }
@@ -324,24 +160,19 @@ exports.reassignBooking = async (req, res) => {
 // 4. Quality queue list & actions
 exports.getQualityQueue = async (req, res) => {
   try {
-    const windowSize = rules.quality?.windowRatings || 20;
-    const minRatings = rules.quality?.minRatings || 10;
-    const coachingBelow = rules.quality?.coachingBelow || 4.5;
-    const reviewBelow = rules.quality?.reviewBelow || 4.0;
+    const minRatings = rules.quality.minRatings;
+    const coachingBelow = rules.quality.coachingBelow;
+    const reviewBelow = rules.quality.reviewBelow;
 
     const therapists = await sequelize.query(
       `SELECT u.id as user_id, u.name, u.email, u.phone, u.city,
-              tp.id as profile_id, tp.quality_status, tp.quality_note, tp.registration_valid_until,
-              tp.specialty, tp.qualification,
-              COALESCE(AVG(tr.rating), 0)::numeric(3,1) as avg_rating,
-              COUNT(tr.id)::int as total_ratings
-       FROM users u
-       JOIN therapist_profiles tp ON tp.user_id = u.id
-       LEFT JOIN therapist_reviews tr ON (tr.therapist_id = tp.id OR tr.therapist_id = u.id)
-       WHERE u.role = 'therapist' AND tp.profile_status = 'approved'
-       GROUP BY u.id, u.name, u.email, u.phone, u.city, tp.id, tp.quality_status, tp.quality_note, tp.registration_valid_until, tp.specialty, tp.qualification
+              tp.id as profile_id, tp.quality_status, tp.quality_note, tp.registration_valid_until, tp.specialty, tp.qualification,
+              (SELECT COALESCE(AVG(r.rating), 0)::numeric(3,2) FROM (SELECT rating FROM therapist_reviews WHERE therapist_id = u.id AND rating IS NOT NULL ORDER BY created_at DESC LIMIT :win) r) AS avg_rating,
+              (SELECT COUNT(*)::int FROM (SELECT rating FROM therapist_reviews WHERE therapist_id = u.id AND rating IS NOT NULL ORDER BY created_at DESC LIMIT :win) r) AS total_ratings
+       FROM users u JOIN therapist_profiles tp ON tp.user_id = u.id
+       WHERE u.role = 'therapist' AND tp.profile_status = 'approved' AND COALESCE(tp.quality_status, 'ok') <> 'ok'
        ORDER BY tp.quality_status = 'frozen' DESC, tp.quality_status = 'under_review' DESC, tp.quality_status = 'coaching' DESC, avg_rating ASC`,
-      { type: QueryTypes.SELECT }
+      { replacements: { win: rules.quality.windowRatings }, type: QueryTypes.SELECT }
     );
 
     const enriched = [];
@@ -575,24 +406,29 @@ exports.getOutcomeSummary = async (req, res) => {
     // Average change per measure grouped by condition (min 5 plans per group, hide if < 5)
     let conditionGroups = [];
     if (planIds.length > 0) {
+      // one baseline and one latest (review or discharge) value per plan, measure, side and item: a plan counts once however many reviews it had
       const measureChanges = await sequelize.query(
-        `SELECT COALESCE(tp.condition, 'General Rehab') as condition,
-                m.code as measure_code, m.name as measure_name, m.unit, m.higher_is_better,
-                COUNT(DISTINCT tp.id)::int as plan_count,
-                AVG(
-                  CASE WHEN m.higher_is_better THEN (r_last.value::numeric - r_base.value::numeric)
-                       ELSE (r_base.value::numeric - r_last.value::numeric) END
-                )::numeric(5,2) as avg_change
+        `WITH base AS (
+           SELECT DISTINCT ON (plan_id, measure_id, side, item) plan_id, measure_id, side, item, value
+           FROM outcome_results WHERE assessment_point = 'baseline' AND value IS NOT NULL AND plan_id IN (:planIds)
+           ORDER BY plan_id, measure_id, side, item, recorded_at, id
+         ), latest AS (
+           SELECT DISTINCT ON (plan_id, measure_id, side, item) plan_id, measure_id, side, item, value
+           FROM outcome_results WHERE assessment_point IN ('review', 'discharge') AND value IS NOT NULL AND plan_id IN (:planIds)
+           ORDER BY plan_id, measure_id, side, item, recorded_at DESC, id DESC
+         )
+         SELECT COALESCE(tp.condition, 'General Rehab') AS condition,
+                m.code AS measure_code, m.name AS measure_name, m.unit, m.higher_is_better,
+                COUNT(DISTINCT tp.id)::int AS plan_count,
+                AVG(CASE WHEN m.higher_is_better THEN l.value - b.value ELSE b.value - l.value END)::numeric(8,2) AS avg_change
          FROM treatment_plans tp
-         JOIN plan_measures pm ON pm.plan_id = tp.id
-         JOIN outcome_measures m ON m.id = pm.measure_id
-         JOIN outcome_results r_base ON r_base.plan_id = tp.id AND r_base.measure_id = m.id AND r_base.assessment_point = 'baseline' AND r_base.value IS NOT NULL
-         JOIN outcome_results r_last ON r_last.plan_id = tp.id AND r_last.measure_id = m.id AND r_last.assessment_point IN ('review', 'discharge') AND r_last.value IS NOT NULL
-         WHERE tp.id IN (:planIds)
+         JOIN base b ON b.plan_id = tp.id
+         JOIN latest l ON l.plan_id = b.plan_id AND l.measure_id = b.measure_id AND l.side IS NOT DISTINCT FROM b.side AND l.item IS NOT DISTINCT FROM b.item
+         JOIN outcome_measures m ON m.id = b.measure_id
          GROUP BY condition, m.code, m.name, m.unit, m.higher_is_better
-         HAVING COUNT(DISTINCT tp.id) >= 5
+         HAVING COUNT(DISTINCT tp.id) >= :minPlans
          ORDER BY plan_count DESC, condition ASC`,
-        { replacements: { planIds }, type: QueryTypes.SELECT }
+        { replacements: { planIds, minPlans: rules.outcomeSummary.minPlansPerGroup }, type: QueryTypes.SELECT }
       );
       conditionGroups = measureChanges.map(row => ({
         condition: row.condition,

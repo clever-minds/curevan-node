@@ -25,12 +25,19 @@ exports.getReconciliation = async (req, res) => {
     const toSec = Math.floor(new Date(`${targetDate}T23:59:59+05:30`).getTime() / 1000);
 
     // 1. Fetch payments from Razorpay
-    let rzpPayments = [];
+    // every page of the day (100 per call); if Razorpay cannot be reached we say so instead of calling every payment a mismatch
+    const rzpPayments = [];
     try {
-      const rzpRes = await razorpayService.fetchPayments({ from: fromSec, to: toSec, count: 100 });
-      rzpPayments = (rzpRes && rzpRes.items) || [];
+      const PAGE = 100;
+      for (let skip = 0, page = 0; page < 100; page += 1, skip += PAGE) {
+        const rzpRes = await razorpayService.fetchPayments({ from: fromSec, to: toSec, count: PAGE, skip });
+        const items = (rzpRes && rzpRes.items) || [];
+        rzpPayments.push(...items);
+        if (items.length < PAGE) break;
+      }
     } catch (err) {
-      console.warn("Reconciliation: Razorpay fetch returned error:", err.message);
+      console.error("Reconciliation: Razorpay fetch failed:", err.message);
+      return res.status(502).json({ success: false, message: "Could not fetch the payments from Razorpay. Please try again." });
     }
     const capturedPayments = rzpPayments.filter((p) => p.status === "captured");
 
@@ -49,7 +56,7 @@ exports.getReconciliation = async (req, res) => {
         o.paid_at AS "paidAt",
         o.created_at AS "createdAt"
       FROM orders o
-      WHERE o.payment_status = 'Paid'
+      WHERE o.payment_status IN ('Paid', 'Partially Refunded')
         AND (
           (o.paid_at IS NOT NULL AND (o.paid_at AT TIME ZONE 'Asia/Kolkata')::date = :targetDate::date)
           OR (o.paid_at IS NULL AND (o.created_at AT TIME ZONE 'Asia/Kolkata')::date = :targetDate::date)
@@ -73,7 +80,7 @@ exports.getReconciliation = async (req, res) => {
         a.paid_at AS "paidAt",
         a.created_at AS "createdAt"
       FROM appointments a
-      WHERE a.payment_status = 'Paid'
+      WHERE a.payment_status IN ('Paid', 'Partially Refunded')
         AND COALESCE(a.payment_method, 'razorpay') NOT LIKE 'manual_%'
         AND (
           (a.paid_at IS NOT NULL AND (a.paid_at AT TIME ZONE 'Asia/Kolkata')::date = :targetDate::date)

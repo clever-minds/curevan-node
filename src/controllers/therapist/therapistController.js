@@ -1527,14 +1527,14 @@ exports.getDashboardStats = async (req, res) => {
 
     // Avg Rating
     const [[avgRatingRow]] = await sequelize.query(
-      `SELECT AVG(rating) as avg_rating FROM therapist_reviews WHERE (therapist_id = :id OR therapist_id IN (SELECT id FROM therapist_profiles WHERE user_id = :id)) AND rating IS NOT NULL`,
+      `SELECT AVG(rating) as avg_rating FROM therapist_reviews WHERE therapist_id = :id AND rating IS NOT NULL AND created_at >= current_date - interval '90 days'`,
       { replacements: { id: therapistId } }
     );
     const avgRating = avgRatingRow?.avg_rating ? parseFloat(avgRatingRow.avg_rating).toFixed(1) : "0.0";
 
     // Net payout (last 90 days from payout_items)
     const [[netPayoutRow]] = await sequelize.query(
-      `SELECT COALESCE(SUM(net_amount), 0) as total FROM payout_items WHERE therapist_id = :id AND created_at >= current_date - interval '90 days'`,
+      `SELECT COALESCE(SUM(net_amount), 0) as total FROM payout_items WHERE therapist_id = :id AND COALESCE(type, 'service') <> 'affiliate' AND created_at >= current_date - interval '90 days'`,
       { replacements: { id: therapistId } }
     );
     const netPayout = parseFloat(netPayoutRow.total || 0);

@@ -424,10 +424,11 @@ async function notify(event, payload = {}) {
               therapistName: payload.therapistName || therapist?.name,
               date: payload.date,
               time: payload.time,
+              count: payload.count,
               link: payload.link,
             });
             try {
-              const res = await sendInApp({ userId: patient.id, type: "followup", title: inApp.title, message: inApp.message, link: inApp.link });
+              const res = await sendInApp({ userId: patient.id, type: event, title: inApp.title, message: inApp.message, link: inApp.link });
               await logAttempt({ userId: patient.id, event, channel: "inapp", template: event, status: "sent", providerMessageId: res.notificationId });
             } catch (err) {
               await logAttempt({ userId: patient.id, event, channel: "inapp", status: "failed", error: err.message });
@@ -451,7 +452,7 @@ async function notify(event, payload = {}) {
           try {
             const iRes = await sendInApp({
               userId: therapist.id,
-              type: "followup",
+              type: event,
               title: event === "followup_no_slot" ? "Slot unavailable" : "Slot released",
               message: event === "followup_no_slot" ? "A recommended slot was not held." : "A held slot has expired.",
               link: "/dashboard/therapist/schedule",

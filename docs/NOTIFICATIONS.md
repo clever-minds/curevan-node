@@ -10,10 +10,10 @@ This document specifies the exact approved templates, variables, DLT entity IDs,
 |---|---|
 | **Operating Entity** | Himaya Care Pvt. Ltd. |
 | **Brand / Sender ID (DLT Header)** | `CURVAN` |
-| **TRAI Principal Entity ID (DLT)** | `1401168900000012345` (set via `DLT_ENTITY_ID`) |
+| **TRAI Principal Entity ID (DLT)** | set via `DLT_ENTITY_ID` (from the TRAI DLT portal; no default) |
 | **Supported WhatsApp Provider** | Meta WhatsApp Cloud API (`WHATSAPP_PROVIDER=meta`), console dev fallback |
 | **Supported SMS Provider** | MSG91 (`SMS_PROVIDER=msg91`), console dev fallback |
-| **Transactional Email Provider** | SMTP / SendGrid / SES (`MAIL_PROVIDER=smtp`), console dev fallback |
+| **Transactional Email Provider** | `MAIL_PROVIDER=sendgrid` (HTTP API, needs `SENDGRID_API_KEY`, `MAIL_FROM` on curevan.com) in production; `smtp` = old Gmail/SMTP transporter, development fallback only; `console` (default) prints only |
 | **Sender Email** | `notifications@curevan.com` (set via `MAIL_FROM`) |
 | **Timezone** | Asia/Kolkata (IST, UTC+5:30) |
 
@@ -270,33 +270,33 @@ All templates below are classified strictly under the **UTILITY** category.
 
 ## 4. TRAI DLT SMS Templates (India Registration)
 
-- **Principal Entity ID**: `1401168900000012345`
+- **Principal Entity ID**: set `DLT_ENTITY_ID` (from the TRAI DLT portal; no default)
 - **Header**: `CURVAN`
 - **Category**: Service Implicit
 
 ### 1. Booking Confirmed Fallback
-- **Template ID**: `1407169000000001` (env: `DLT_TID_BOOKING_CONFIRMED`)
+- **Template ID**: assigned by the DLT portal after approval (env: `DLT_TID_BOOKING_CONFIRMED`)
 - **Approved Text**:
   ```
   Your Curevan home session with {#var#} is confirmed for {#var#} at {#var#}. Share Start Code {#var#} only when therapist arrives. - Curevan
   ```
 
 ### 2. Reminder 24 Hours Before
-- **Template ID**: `1407169000000002` (env: `DLT_TID_REMINDER_24H`)
+- **Template ID**: assigned by the DLT portal after approval (env: `DLT_TID_REMINDER_24H`)
 - **Approved Text**:
   ```
   Reminder: Your Curevan home therapy session with {#var#} is tomorrow at {#var#}. Details: {#var#} - Curevan
   ```
 
 ### 3. Reminder 2 Hours Before
-- **Template ID**: `1407169000000003` (env: `DLT_TID_REMINDER_2H`)
+- **Template ID**: assigned by the DLT portal after approval (env: `DLT_TID_REMINDER_2H`)
 - **Approved Text**:
   ```
   Your Curevan home therapy session with {#var#} starts in 2 hours at {#var#}. Check your app for details. - Curevan
   ```
 
 ### 4. SOS Emergency Alert (On-Call Staff)
-- **Template ID**: `1407169000000004` (env: `DLT_TID_SOS`)
+- **Template ID**: assigned by the DLT portal after approval (env: `DLT_TID_SOS`)
 - **Approved Text**:
   ```
   EMERGENCY ALERT: SOS raised by therapist Dr {#var#} (Phone: {#var#}) for Booking #{#var#} at {#var#}. Lat/Lng: {#var#},{#var#}. Action required immediately. - Curevan

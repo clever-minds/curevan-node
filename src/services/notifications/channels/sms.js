@@ -30,6 +30,7 @@ async function sendSms({ to, text, dltTemplateId, dltEntityId, dltSenderId }) {
 
   // MSG91 / Licensed SMS Provider
   if (provider === "msg91" && authKey) {
+    if (!dltTemplateId) throw new Error("No DLT template id configured for this message (set its DLT_TID_* variable)");
     let lastErr;
     for (let attempt = 1; attempt <= 2; attempt++) {
       try {

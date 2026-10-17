@@ -22,16 +22,16 @@ async function evaluateTherapistQuality(therapistId, transaction) {
   const reviewBelow = qRules.reviewBelow || 4.0;
 
   const [profile] = await sequelize.query(
-    `SELECT id, user_id, quality_status, quality_note FROM therapist_profiles WHERE user_id = :id OR id = :id`,
+    `SELECT id, user_id, quality_status, quality_note FROM therapist_profiles WHERE user_id = :id`,
     { replacements: { id: therapistId }, type: QueryTypes.SELECT, transaction }
   );
   if (!profile) return null;
 
   const reviews = await sequelize.query(
     `SELECT rating FROM therapist_reviews 
-     WHERE (therapist_id = :pid OR therapist_id = :uid) AND rating IS NOT NULL
+     WHERE therapist_id = :uid AND rating IS NOT NULL
      ORDER BY created_at DESC LIMIT :limit`,
-    { replacements: { pid: profile.id, uid: profile.user_id, limit: windowRatings }, type: QueryTypes.SELECT, transaction }
+    { replacements: { uid: profile.user_id, limit: windowRatings }, type: QueryTypes.SELECT, transaction }
   );
 
   if (reviews.length < minRatings) {
@@ -87,7 +87,7 @@ async function evaluateAllTherapistsQuality() {
   );
   const results = [];
   for (const p of profiles) {
-    const res = await evaluateTherapistQuality(p.id);
+    const res = await evaluateTherapistQuality(p.user_id);
     if (res) results.push(res);
   }
   return results;
@@ -111,6 +111,8 @@ async function checkCredentialExpiryAll() {
 
   for (const t of expiringSoon) {
     const validUntilStr = new Date(t.registration_valid_until).toISOString().slice(0, 10);
+    const [recent] = await sequelize.query(`SELECT 1 FROM notifications WHERE user_uid = :uid AND type = 'credential_expiry' AND created_at > NOW() - INTERVAL '7 days' LIMIT 1`, { replacements: { uid: String(t.user_id) }, type: QueryTypes.SELECT });
+    if (recent) continue;       // reminded this week already
     // Notify therapist
     await notificationStore.notify(t.user_id, {
       type: "credential_expiry",
@@ -147,7 +149,7 @@ async function checkCredentialExpiryAll() {
  */
 async function recordQualityAction({ therapistId, action, note, actorId }) {
   const [profile] = await sequelize.query(
-    `SELECT id, user_id, quality_status FROM therapist_profiles WHERE user_id = :id OR id = :id`,
+    `SELECT id, user_id, quality_status FROM therapist_profiles WHERE user_id = :id`,
     { replacements: { id: therapistId }, type: QueryTypes.SELECT }
   );
   if (!profile) throw new Error("Therapist profile not found");

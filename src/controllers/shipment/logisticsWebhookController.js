@@ -3,6 +3,7 @@ const crypto = require("crypto");
 const { QueryTypes } = require("sequelize");
 const { sequelize } = require("../../config/db");
 const notificationStore = require("../../services/notificationStore");
+const notifications = require("../../services/notifications");
 
 const q = (sql, replacements, transaction) => sequelize.query(sql, { replacements, type: QueryTypes.SELECT, transaction });
 
@@ -91,8 +92,16 @@ async function applyEvent(ev) {
           { s: stored, delivered: mapped === "delivered", when: when ? when.toISOString() : null, id: order.id }, t);
       }
       await t.commit();
+      const track = shipment.awb ? `https://shiprocket.co/tracking/${encodeURIComponent(shipment.awb)}` : "https://curevan.com/dashboard/patient/orders";
+      const [onum] = await q(`SELECT order_number FROM orders WHERE id = :id`, { id: order.id });
+      const base = { userId: order.user_id, orderNumber: onum && onum.order_number, courier: shipment.carrier, awb: shipment.awb };
+      // shipped = the courier has picked the parcel up (first time only); delivered once
+      if (apply && (mapped === "picked_up" || (mapped === "in_transit" && (RANK[current] ?? -1) < RANK.picked_up))) {
+        await notifications.notify("order_shipped", { ...base, link: track }).catch((e) => console.error("order_shipped notify failed:", e.message));
+      }
       if (apply && mapped === "delivered") {
         await notificationStore.notify(order.user_id, { type: "order", title: "Your order was delivered", message: "Your order has been delivered. You can request a return within the return window if something is wrong.", link: "/dashboard/patient/orders" }).catch(() => {});
+        await notifications.notify("order_delivered", { ...base, link: "https://curevan.com/dashboard/patient/orders" }).catch((e) => console.error("order_delivered notify failed:", e.message));
       }
       return { stored: true, orderStatus: apply ? mapped : current };
     }

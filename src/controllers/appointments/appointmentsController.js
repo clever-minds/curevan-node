@@ -1068,6 +1068,7 @@ exports.updatePcr = async (req, res) => {
         const [therapist] = await sequelize.query(`SELECT u.name, tp.registration_no FROM users u LEFT JOIN therapist_profiles tp ON tp.user_id = u.id WHERE u.id = :id`, { replacements: { id: owner.therapist_id }, type: QueryTypes.SELECT });
         const pdfPath = await generatePcrPdf({ pcr: fresh, appointment: appt, therapist });
         await sequelize.query(`UPDATE pcr SET content_hash = :hash, pdf_path = :pdf WHERE id = :id`, { replacements: { hash: pcrService.contentHash(fresh), pdf: pdfPath, id: existing.id }, type: QueryTypes.UPDATE });
+        notifications.notify("pcr_pdf_ready", { patientId: owner.patient_id, therapistId: owner.therapist_id, sessionNumber: fresh.session_number, date: appt.date instanceof Date ? appt.date.toISOString().slice(0, 10) : appt.date, link: "https://curevan.com/dashboard/patient/health-records" }).catch((e) => console.error("pcr_pdf_ready notify failed:", e.message));
       } catch (pdfErr) {
         console.error("PCR lock: hash/PDF failed:", pdfErr.message);   // the lock itself stands; the PDF can be regenerated on download
       }
@@ -1546,18 +1547,10 @@ exports.cancelAppointment = async (req, res) => {
     // tell the other side (and the therapy team when a therapist drops out)
     const who = { patient: appt.patient_name || "The patient", therapist: appt.therapist_name || "The therapist", admin: "Curevan support" }[role];
     const dateText = appt.date instanceof Date ? appt.date.toISOString().slice(0, 10) : appt.date;
-    const recipients = [];
-    if (role !== "patient" && appt.patient_id) recipients.push(appt.patient_id);
-    if (role !== "therapist" && appt.therapist_id) recipients.push(appt.therapist_id);
-    for (const rid of recipients) {
-      await notificationStore.notify(rid, {
-        type: "booking",
-        title: "Appointment cancelled",
-        message: `${who} cancelled the appointment on ${dateText}.${rid === appt.patient_id && q.refundInr > 0 ? ` A refund of INR ${q.refundInr} is on its way.` : ""}`,
-        link: "/dashboard/bookings",
-        data: { appointmentId: appt.id },
-      });
-    }
+    await notifications.notify("booking_cancelled", {
+      appointmentId: appt.id, patientId: appt.patient_id, therapistId: appt.therapist_id, date: dateText, time: appt.time,
+      reason: role === "patient" ? undefined : reason, cancelledBy: role, cancelledByName: who, refundInr: q.refundInr, link: "https://curevan.com/dashboard/bookings",
+    }).catch((e) => console.error("booking_cancelled notify failed:", e.message));
     if (role === "therapist") {
       await notificationStore.notifyRoles(["admin.therapy"], {
         type: "therapist_cancelled",

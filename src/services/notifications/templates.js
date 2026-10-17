@@ -4,7 +4,7 @@
  * Marketing text is strictly forbidden inside utility templates.
  */
 
-const DLT_ENTITY_ID = process.env.DLT_ENTITY_ID || "1401168900000012345";
+const DLT_ENTITY_ID = process.env.DLT_ENTITY_ID || "";
 const DLT_SENDER_ID = process.env.DLT_SENDER_ID || "CURVAN";
 
 const TEMPLATES = {
@@ -14,7 +14,7 @@ const TEMPLATES = {
     metaTemplateName: "curevan_booking_confirmed_v1",
     metaApprovedText: "Namaste {{1}}, your Curevan home session with {{2}} is confirmed for {{3}} at {{4}} in {{5}}. Please share your Start Code {{6}} with the therapist only when they arrive at your home. View session details: {{7}}",
     variables: ["patient_name", "therapist_name", "date", "time", "locality", "start_code", "link"],
-    dltTemplateId: process.env.DLT_TID_BOOKING_CONFIRMED || "1407169000000001",
+    dltTemplateId: process.env.DLT_TID_BOOKING_CONFIRMED || "",
     dltEntityId: DLT_ENTITY_ID,
     dltSenderId: DLT_SENDER_ID,
     dltApprovedText: "Your Curevan home session with {#var#} is confirmed for {#var#} at {#var#}. Share Start Code {#var#} only when therapist arrives. - Curevan",
@@ -38,9 +38,11 @@ const TEMPLATES = {
     variables: ["patient_name", "therapist_name", "date", "time", "link"],
     formatWhatsApp: ({ patientName, therapistName, date, time, link }) =>
       `Namaste ${patientName || "there"}, ${therapistName || "your therapist"} has recommended your next session for ${date} at ${time}. We have reserved this slot for you. Confirm your slot here: ${link || "https://curevan.com/dashboard/bookings"}`,
-    formatInApp: ({ therapistName, date, time, link }) => ({
+    formatInApp: ({ therapistName, date, time, count, link }) => ({
       title: "Recommended session reserved",
-      message: `${therapistName || "Your therapist"} recommended your next session for ${date} at ${time}. Confirm to keep the slot.`,
+      message: count > 1
+        ? `${therapistName || "Your therapist"} recommends ${count} sessions starting ${date} at ${time}. Confirm to keep these slots.`
+        : `${therapistName || "Your therapist"} recommended your next session for ${date} at ${time}. Confirm to keep the slot.`,
       link: link || "/dashboard/bookings",
     }),
   },
@@ -96,7 +98,7 @@ const TEMPLATES = {
     metaTemplateName: "curevan_reminder_24h_v1",
     metaApprovedText: "Namaste {{1}}, reminder: your Curevan home therapy session with {{2}} is tomorrow at {{3}}. View booking: {{4}}",
     variables: ["patient_name", "therapist_name", "time", "link"],
-    dltTemplateId: process.env.DLT_TID_REMINDER_24H || "1407169000000002",
+    dltTemplateId: process.env.DLT_TID_REMINDER_24H || "",
     dltEntityId: DLT_ENTITY_ID,
     dltSenderId: DLT_SENDER_ID,
     dltApprovedText: "Reminder: Your Curevan home therapy session with {#var#} is tomorrow at {#var#}. Details: {#var#} - Curevan",
@@ -112,7 +114,7 @@ const TEMPLATES = {
     metaTemplateName: "curevan_reminder_2h_v1",
     metaApprovedText: "Namaste {{1}}, your Curevan home therapy session with {{2}} starts in 2 hours at {{3}}. Your start code is available in the app: {{4}}",
     variables: ["patient_name", "therapist_name", "time", "link"],
-    dltTemplateId: process.env.DLT_TID_REMINDER_2H || "1407169000000003",
+    dltTemplateId: process.env.DLT_TID_REMINDER_2H || "",
     dltEntityId: DLT_ENTITY_ID,
     dltSenderId: DLT_SENDER_ID,
     dltApprovedText: "Your Curevan home therapy session with {#var#} starts in 2 hours at {#var#}. Check your app for details. - Curevan",
@@ -365,7 +367,7 @@ const TEMPLATES = {
   sos_raised: {
     name: "sos_raised",
     category: "utility",
-    dltTemplateId: process.env.DLT_TID_SOS || "1407169000000004",
+    dltTemplateId: process.env.DLT_TID_SOS || "",
     dltEntityId: DLT_ENTITY_ID,
     dltSenderId: DLT_SENDER_ID,
     dltApprovedText: "EMERGENCY ALERT: SOS raised by therapist Dr {#var#} (Phone: {#var#}) for Booking #{#var#} at {#var#}. Lat/Lng: {#var#},{#var#}. Action required immediately. - Curevan",

@@ -1,9 +1,13 @@
 /**
  * Transactional Email channel adapter (P24).
- * Supports API providers (SendGrid/SES/SMTP) and Console/Nodemailer dev fallback.
+ * MAIL_PROVIDER: sendgrid (HTTP API, production), smtp (the old Gmail/SMTP transporter, dev fallback only) or console (default).
  * Strictly adheres to rule: NEVER SEND OTP VIA EMAIL.
  */
+const axios = require("axios");
 const transporter = require("../../../config/mailer");
+
+// "Name <a@b.c>" or "a@b.c" -> { email, name }
+const parseFrom = (v) => { const m = /^\s*"?([^"<]*?)"?\s*<([^>]+)>\s*$/.exec(v); return m ? { email: m[2].trim(), name: m[1].trim() || undefined } : { email: String(v).trim() }; };
 
 async function sendEmail({ to, subject, text, html, attachments = [] }) {
   if (!to || !to.includes("@")) {
@@ -20,8 +24,32 @@ async function sendEmail({ to, subject, text, html, attachments = [] }) {
   const from = process.env.MAIL_FROM || '"Curevan Care" <notifications@curevan.com>';
   const provider = (process.env.MAIL_PROVIDER || "console").toLowerCase();
 
+  // MAIL_PROVIDER=sendgrid: transactional e-mail through the SendGrid HTTP API (sender domain curevan.com via MAIL_FROM); one retry
+  if (provider === "sendgrid" && process.env.SENDGRID_API_KEY) {
+    let lastErr;
+    for (let attempt = 1; attempt <= 2; attempt += 1) {
+      try {
+        const resp = await axios.post(
+          "https://api.sendgrid.com/v3/mail/send",
+          {
+            personalizations: [{ to: [{ email: to }] }],
+            from: parseFrom(from),
+            subject,
+            content: [{ type: "text/plain", value: text || " " }, ...(html ? [{ type: "text/html", value: html }] : [])],
+          },
+          { headers: { Authorization: `Bearer ${process.env.SENDGRID_API_KEY}`, "content-type": "application/json" }, timeout: 8000 }
+        );
+        return { success: true, messageId: resp.headers?.["x-message-id"] || "mail_sendgrid_ok", provider: "sendgrid" };
+      } catch (err) {
+        lastErr = err;
+        if (attempt === 1) await new Promise((r) => setTimeout(r, 200));
+      }
+    }
+    throw new Error(`SendGrid failed: ${lastErr?.response?.data?.errors?.[0]?.message || lastErr.message}`);
+  }
+
   // If real SMTP or nodemailer configured and provider not explicitly console
-  if (provider !== "console" && transporter) {
+  if (provider === "smtp" && transporter) {
     try {
       const info = await transporter.sendMail({
         from,

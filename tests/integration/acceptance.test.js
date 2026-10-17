@@ -40,7 +40,8 @@ class FakeRazorpay {
     this.payments = {
       refund: async (pid, o) => { rzpRefunds.push({ pid, amount: o.amount }); return { id: "rfnd_I" + ++refundSeq }; },
       all: async (params) => {
-        if (FakeRazorpay.mockPayments) return { entity: "collection", count: FakeRazorpay.mockPayments.length, items: FakeRazorpay.mockPayments };
+        if (FakeRazorpay.failPayments) throw new Error("Razorpay unreachable");
+        if (FakeRazorpay.mockPayments) { const items = FakeRazorpay.mockPayments.slice(Number(params.skip || 0), Number(params.skip || 0) + Number(params.count || 10)); return { entity: "collection", count: items.length, items }; }
         return { entity: "collection", count: 0, items: [] };
       }
     };
@@ -455,7 +456,7 @@ async function seed() {
   r = await call("POST", "/api/appointments/" + unpaid + "/cancel", T.p2); check("P10 another patient cannot cancel -> " + r.s, r.s === 403);
   const tNotifBefore = (await q("SELECT COUNT(*)::int AS n FROM notifications WHERE user_uid = $1 AND title = 'Appointment cancelled'", [String(U.t1.id)]))[0].n;
   r = await call("POST", "/api/appointments/" + unpaid + "/cancel", T.p1);
-  check("P10 patient cancels an UNPAID booking (even hours before) -> Cancelled, therapist notified", r.s === 200 && (await q("SELECT status FROM appointments WHERE id = $1", [unpaid]))[0].status === "cancelled_by_patient" && (await q("SELECT COUNT(*)::int AS n FROM notifications WHERE user_uid = $1 AND title = 'Appointment cancelled'", [String(U.t1.id)]))[0].n === tNotifBefore + 1, "got " + r.s + " " + (r.raw || "").slice(0, 150));
+  check("P10 patient cancels an UNPAID booking (even hours before) -> Cancelled, therapist notified", r.s === 200 && (await q("SELECT status FROM appointments WHERE id = $1", [unpaid]))[0].status === "cancelled_by_patient" && (await q("SELECT COUNT(*)::int AS n FROM notifications WHERE user_uid = $1 AND type = 'booking' AND title = 'Booking Cancelled'", [String(U.t1.id)]))[0].n === tNotifBefore + 1, "got " + r.s + " " + (r.raw || "").slice(0, 150));
   r = await call("PATCH", "/api/appointments/" + unpaid + "/cancel", T.p1); check("P10 cancelling again is refused -> " + r.s, r.s === 400);
   const rfBefore = rzpRefunds.length;
   const paidFar = await mkA("Paid", 3, { rzp: "pay_cancel1", method: "razorpay" });
@@ -469,7 +470,7 @@ async function seed() {
   check("P10 a booking paid in cash (no online payment to refund) -> 400 contact support", r.s === 400 && (await q("SELECT status FROM appointments WHERE id = $1", [paidManual]))[0].status === "confirmed");
   const paidByTherapist = await mkA("Paid", 0, { rzp: "pay_cancel3", method: "razorpay", time: "23:30" });
   r = await call("POST", "/api/appointments/" + paidByTherapist + "/cancel", T.t1, { reason: "Family emergency" });
-  check("P10 therapist cancels their own paid booking -> full refund; patient notified", r.s === 200 && rzpRefunds.some((x) => x.pid === "pay_cancel3") && (await q("SELECT COUNT(*)::int AS n FROM notifications WHERE user_uid = $1 AND title = 'Appointment cancelled'", [String(U.p1.id)]))[0].n >= 1, "got " + r.s + " " + (r.raw || "").slice(0, 150));
+  check("P10 therapist cancels their own paid booking -> full refund; patient notified", r.s === 200 && rzpRefunds.some((x) => x.pid === "pay_cancel3") && (await q("SELECT COUNT(*)::int AS n FROM notifications WHERE user_uid = $1 AND title = 'Booking cancelled'", [String(U.p1.id)]))[0].n >= 1, "got " + r.s + " " + (r.raw || "").slice(0, 150));
 
   // ---- P12: visit flow, state machine, start OTP
   const istParts = (minFromNow) => { const d = new Date(Date.now() + 5.5 * 3600e3 + minFromNow * 60000); return { date: `${d.getUTCFullYear()}-${pad(d.getUTCMonth() + 1)}-${pad(d.getUTCDate())}`, time: `${pad(d.getUTCHours())}:${pad(d.getUTCMinutes())}` }; };
@@ -1003,14 +1004,14 @@ async function seed() {
 
     // series: Mon/Wed/Fri 16:00 x 6
     const seriesPlan = { mode: "series", weekdays: [1, 3, 5], time: "16:00", occurrences: 6, startDate: day(2) };
-    const notifBefore = (await q("SELECT COUNT(*)::int AS n FROM notifications WHERE user_uid = $1 AND title = 'Your next session'", [String(fuPatient.id)]))[0].n;
+    const notifBefore = (await q("SELECT COUNT(*)::int AS n FROM notifications WHERE user_uid = $1 AND title = 'Recommended session reserved'", [String(fuPatient.id)]))[0].n;
     r = await send(src1, { nextSessionPlan: seriesPlan });
     check("P17 PCR submitted with a 6-session series", r.s === 200, "got " + r.s + " " + (r.raw || "").slice(0, 150));
     const props = await q("SELECT fp.*, a.status AS astatus, to_char(a.date,'YYYY-MM-DD') AS d, a.time FROM followup_proposals fp JOIN appointments a ON a.id = fp.appointment_id WHERE fp.patient_id = $1 AND fp.status = 'proposed' ORDER BY a.date", [fuPatient.id]);
     check("P17 6 'proposed' appointments hold the slots (one series row, hold expiry set)", props.length === 6 && props.every((x) => x.astatus === "proposed" && x.time === "16:00" && x.hold_expires_at) && new Set(props.map((x) => x.series_id)).size === 1 && (await q("SELECT 1 FROM followup_series WHERE id = $1", [props[0].series_id])).length === 1, JSON.stringify(props.map((x) => x.d + " " + x.astatus)));
     check("P17 they fall on Mon/Wed/Fri", props.every((x) => [1, 3, 5].includes(new Date(x.d + "T00:00:00Z").getUTCDay())));
     check("P17 the old next_treatment_date is filled from the plan", (await q("SELECT left(next_treatment_date::text, 10) AS d FROM pcr WHERE appointment_id = $1", [src1]))[0].d === props[0].d, "");
-    const pn = await q("SELECT message FROM notifications WHERE user_uid = $1 AND title = 'Your next session' ORDER BY id DESC", [String(fuPatient.id)]);
+    const pn = await q("SELECT message FROM notifications WHERE user_uid = $1 AND title = 'Recommended session reserved' ORDER BY id DESC", [String(fuPatient.id)]);
     check("P17 the patient is told once, with no clinical text", pn.length === notifBefore + 1 && /recommends 6 sessions/.test(pn[0].message) && !/hemipleg|stroke|aphasia|knee|diagnos/i.test(pn[0].message), pn[0] && pn[0].message);
 
     // another patient cannot take those slots
@@ -1066,17 +1067,17 @@ async function seed() {
     jr = await followUpService.expireHolds();
     check("P17 an unanswered proposal gets exactly one nudge after 12 h", (await q("SELECT COUNT(*)::int AS n FROM reminder_log WHERE appointment_id = $1 AND type = 'followup_nudge'", [exp.appointment_id]))[0].n === 1 && (await q("SELECT COUNT(*)::int AS n FROM notifications WHERE user_uid = $1 AND title = 'Keep your next session'", [String(fuPatient.id)]))[0].n === 1);
     await q("UPDATE followup_proposals SET hold_expires_at = now() - interval '1 minute' WHERE id = $1", [exp.id]);
-    const notesBefore = (await q("SELECT COUNT(*)::int AS n FROM notifications WHERE title = 'A recommended session was released'"))[0].n;
+    const notesBefore = (await q("SELECT COUNT(*)::int AS n FROM notifications WHERE type = 'followup_expired'"))[0].n;
     jr = await followUpService.expireHolds();
-    check("P17 at hold expiry the booking is released (proposal_expired) and both sides are told", jr.expired >= 1 && (await q("SELECT status FROM appointments WHERE id = $1", [exp.appointment_id]))[0].status === "proposal_expired" && (await q("SELECT status FROM followup_proposals WHERE id = $1", [exp.id]))[0].status === "expired" && (await q("SELECT COUNT(*)::int AS n FROM notifications WHERE title = 'A recommended session was released'"))[0].n === notesBefore + 2);
+    check("P17 at hold expiry the booking is released (proposal_expired) and both sides are told", jr.expired >= 1 && (await q("SELECT status FROM appointments WHERE id = $1", [exp.appointment_id]))[0].status === "proposal_expired" && (await q("SELECT status FROM followup_proposals WHERE id = $1", [exp.id]))[0].status === "expired" && (await q("SELECT COUNT(*)::int AS n FROM notifications WHERE type = 'followup_expired'"))[0].n === notesBefore + 2);
     check("P17 the expired slot is free for others", (await call("GET", "/api/therapists/" + U.t1.id + "/slots?date=" + day(21))).j.data.slots.some((x) => x.time === "15:00"));
 
     // no_slot: the slot was taken before submit
     const src4 = await mkSrc();
     await q(`INSERT INTO appointments(patient_id, therapist_id, date, time, status, payment_status) VALUES ($1,$2,$3,'15:00','confirmed','Paid')`, [U.p2.id, U.t1.id, day(22)]);
-    const alertsBefore = (await q("SELECT COUNT(*)::int AS n FROM notifications WHERE title = 'A recommended time is no longer free'"))[0].n;
+    const alertsBefore = (await q("SELECT COUNT(*)::int AS n FROM notifications WHERE type = 'followup_no_slot' AND title = 'Slot unavailable'"))[0].n;
     r = await send(src4, { nextSessionPlan: { mode: "single", date: day(22), time: "15:00" } });
-    check("P17 a slot that was just taken becomes 'no_slot' and the therapist is alerted", r.s === 200 && (await q("SELECT COUNT(*)::int AS n FROM followup_proposals WHERE source_pcr_id = (SELECT id FROM pcr WHERE appointment_id = $1) AND status = 'no_slot'", [src4]))[0].n === 1 && (await q("SELECT COUNT(*)::int AS n FROM notifications WHERE title = 'A recommended time is no longer free'"))[0].n === alertsBefore + 1);
+    check("P17 a slot that was just taken becomes 'no_slot' and the therapist is alerted", r.s === 200 && (await q("SELECT COUNT(*)::int AS n FROM followup_proposals WHERE source_pcr_id = (SELECT id FROM pcr WHERE appointment_id = $1) AND status = 'no_slot'", [src4]))[0].n === 1 && (await q("SELECT COUNT(*)::int AS n FROM notifications WHERE type = 'followup_no_slot' AND title = 'Slot unavailable'"))[0].n === alertsBefore + 1);
 
     // ---- reminders: exactly once, respecting preferences
     const mkConf = async (patientId, minFromNow, name = "Fiona Patient") => {
@@ -1682,6 +1683,35 @@ async function seed() {
     r = await call("GET", "/api/therapists/my-patients", T.p1);
     check("P22 patient cannot access therapist my-patients (403)", r.s === 403);
 
+    // exact KPI check on a therapist whose data we control
+    {
+      const [kt] = await q("INSERT INTO users(uid,email,name,phone,role,is_verified,city,state) VALUES ('th-kpi','kpi@x.com','Dr KPI','9000000400','therapist',true,'Vadodara','Gujarat') RETURNING *");
+      await q("INSERT INTO user_roles(user_id, role_id) SELECT $1, id FROM roles WHERE name = 'therapist'", [kt.id]);
+      await q("INSERT INTO therapist_profiles(user_id, hourly_rate, profile_status, specialty) VALUES ($1, 800, 'approved', '{1}')", [kt.id]);
+      const ap = async (patient, daysAgo, status, pcr, amount, hour) => (await q(`INSERT INTO appointments(patient_id, patient_name, therapist_id, therapist_name, service_type_id, therapy_type, service_amount, total_amount, date, time, status, payment_status, pcr_status, mode, created_at)
+        VALUES ($1,'P',$2,'Dr KPI',1,'Physio',$3,$3, current_date - $4::int, $5, $6, 'Paid', $7, 'home', now()) RETURNING id`, [patient.id, kt.id, amount, daysAgo, hour, status, pcr]))[0].id;
+      await ap(U.p1, 5, "completed", "locked", 1000, "09:00");
+      await ap(U.p1, 8, "completed", "locked", 1000, "10:00");
+      await ap(U.p2, 12, "completed", "submitted", 1500, "11:00");          // completed, PCR not locked, older than 48 h -> alert
+      await ap(U.p2, 120, "completed", "locked", 1000, "09:00");            // older than 90 days: not counted
+      await ap(U.p1, 3, "cancelled_by_patient", "not_started", 1000, "12:00");
+      await q("INSERT INTO therapist_reviews(therapist_id, patient_id, appointment_id, rating, review, created_at) VALUES ($1,$2,1,5,'x',now()), ($1,$2,1,4,'x',now()), ($1,$2,1,1,'old', now() - interval '200 days')", [kt.id, U.p1.id]);
+      await q("INSERT INTO payout_items(source_id, therapist_id, gross_amount, net_amount, state, week_start, type, created_at) VALUES (1,$1,1000,1000,'Paid', current_date - 7, 'service', now()), (2,$1,500,500,'Pending', current_date, 'service', now()), (3,$1,90,90,'Pending', current_date, 'affiliate', now())", [kt.id]);
+      await q("INSERT INTO affiliate_commissions(order_id, order_item_id, therapist_id, sale_amount, commission_pct, commission_amount, status) VALUES (1, 9001, $1, 1800, 5, 90, 'pending'), (1, 9002, $1, 1000, 5, 50, 'cancelled_returned')", [kt.id]);
+      r = await call("GET", "/api/therapists/dashboard-stats/" + kt.id, token({ ...kt, roleName: "therapist" }));
+      const k = r.j && r.j.data && r.j.data.kpis;
+      check("P22 KPI sessions completed = 3 (the 120-day-old one and the cancelled one are left out)", k && k.sessionsCompleted === 3, JSON.stringify(k));
+      check("P22 KPI unique patients (last 90 days) = 2", k && k.uniquePatients === 2, JSON.stringify(k));
+      check("P22 KPI average rating = 4.5 (only the last 90 days)", k && Number(k.avgRating) === 4.5, JSON.stringify(k));
+      check("P22 KPI net payout = 1500 (service lines; the commission is shown separately)", k && k.netPayout === 1500, JSON.stringify(k));
+      check("P22 KPI product commissions = 90 (the returned one is not counted)", k && k.productCommissions === 90, JSON.stringify(k));
+      check("P22 KPI PCR lock rate = 67% (2 of 3)", k && k.pcrLockRate === 67, JSON.stringify(k));
+      check("P22 PCR alert = 1 unlocked PCR older than 48 h worth 1500", k && k.pcrAlert.pendingCount >= 1 && k.pcrAlert.pendingAmount >= 1500, JSON.stringify(k && k.pcrAlert));
+      check("P22 weekly earnings chart splits Service and Product from payout lines", (r.j.data.charts.weeklyEarningsData || []).reduce((a, w) => a + w.Service, 0) === 1500 && (r.j.data.charts.weeklyEarningsData || []).reduce((a, w) => a + w.Product, 0) === 90, JSON.stringify(r.j.data.charts.weeklyEarningsData));
+      r = await call("GET", "/api/therapists/dashboard-stats/" + kt.id, T.t2);
+      check("P22 another therapist cannot read these KPIs (403)", r.s === 403);
+    }
+
     // 4. Quality evaluation flags under-performing therapist (<4.0)
     const [tLow] = await q("INSERT INTO users(uid,email,name,phone,role,is_verified,city,state) VALUES ('therapist-low','tlow@x.com','Dr Low','9000000099','therapist',true,'Vadodara','Gujarat') RETURNING *");
     await q("INSERT INTO user_roles(user_id, role_id) SELECT $1, id FROM roles WHERE name = 'therapist'", [tLow.id]);
@@ -1753,11 +1783,40 @@ async function seed() {
       "got " + r.s + " " + JSON.stringify(r.j)
     );
 
+    // outcome summary with controlled data: 5 discharged "Knee OA" plans (shown) and 4 "Hip" plans (hidden, fewer than 5)
+    {
+      const bbs = (await q("SELECT id FROM outcome_measures WHERE code = 'BBS'"))[0].id;
+      const tug = (await q("SELECT id FROM outcome_measures WHERE code = 'TUG'"))[0].id;
+      const mkPlan = async (cond, goalStatus, n) => {
+        const pl = (await q("INSERT INTO treatment_plans(patient_id, primary_therapist_id, service_type_id, condition, planned_sessions, status, updated_at) VALUES ($1,$2,1,$3,6,'discharged', now() - interval '5 days') RETURNING id", [U.p1.id, U.t1.id, cond]))[0].id;
+        await q("INSERT INTO plan_measures(plan_id, measure_id) VALUES ($1,$2), ($1,$3)", [pl, bbs, tug]);
+        await q("INSERT INTO treatment_goals(plan_id, description, measure_id, status) VALUES ($1,'g',$2,$3)", [pl, bbs, goalStatus]);
+        await q("INSERT INTO outcome_results(plan_id, measure_id, value, assessment_point, recorded_at) VALUES ($1,$2,20,'baseline', now() - interval '60 days'), ($1,$2,30,'review', now() - interval '40 days'), ($1,$2,40,'discharge', now() - interval '6 days')", [pl, bbs]);
+        if (n === 0) await q("INSERT INTO outcome_results(plan_id, measure_id, value, assessment_point, recorded_at) VALUES ($1,$2,35,'review', now() - interval '20 days')", [pl, bbs]);   // an extra review must not change the plan's weight
+        await q("INSERT INTO outcome_results(plan_id, measure_id, value, assessment_point, recorded_at) VALUES ($1,$2,30,'baseline', now() - interval '60 days'), ($1,$2,20,'discharge', now() - interval '6 days')", [pl, tug]);   // TUG: lower is better, 30 -> 20 = improvement of 10
+        for (let i = 0; i < 3 + n; i += 1) await q(`INSERT INTO appointments(patient_id, patient_name, therapist_id, therapist_name, service_type_id, therapy_type, service_amount, total_amount, date, time, status, payment_status, treatment_plan_id, mode, created_at)
+          VALUES ($1,'P',$2,'Dr',1,'Physio',1000,1000, current_date - (30 + $5::int), $4, 'completed','Paid',$3,'home', now())`, [U.p1.id, U.t1.id, pl, "0" + (9 + i) + ":00", n * 10 + i]);
+        return pl;
+      };
+      const statuses = ["achieved", "achieved", "partially_achieved", "not_achieved", "achieved"];
+      for (let i = 0; i < 5; i += 1) await mkPlan("Knee OA", statuses[i], i);
+      for (let i = 0; i < 4; i += 1) await mkPlan("Hip", "achieved", i);
+      r = await call("GET", "/api/therapy-admin/outcome-summary", T.therapy);
+      const d = r.j && r.j.data;
+      const knee = (d.byCondition || []).filter((g) => g.condition === "Knee OA");
+      check("P22 outcome summary: a condition group with 5 plans is shown with counts, one with 4 is hidden", knee.length === 2 && knee.every((g) => g.planCount === 5) && !(d.byCondition || []).some((g) => g.condition === "Hip"), JSON.stringify(d.byCondition));
+      check("P22 average change per measure uses one latest value per plan (BBS +20, TUG improvement +10)", knee.find((g) => g.measureCode === "BBS").avgChange === 20 && knee.find((g) => g.measureCode === "TUG").avgChange === 10, JSON.stringify(knee));
+      check("P22 goals achieved / partially achieved are percentages of the goals of discharged plans", d.goalsTotal >= 9 && d.goalsAchieved >= 6 && d.percentGoalsAchieved === Math.round((d.goalsAchieved / d.goalsTotal) * 100), JSON.stringify([d.goalsTotal, d.goalsAchieved, d.percentGoalsAchieved]));
+      check("P22 median sessions to discharge comes from the completed sessions of those plans", d.medianSessionsToDischarge >= 3 && d.dischargedPlansCount >= 9, JSON.stringify([d.medianSessionsToDischarge, d.dischargedPlansCount]));
+    }
+
     // 7. Emergency leave reassignment
     const tomorrowStr = (await q("SELECT (CURRENT_DATE + 1)::text as d"))[0].d;
     const [emAppt] = await q(`INSERT INTO appointments(patient_id, patient_name, therapist_id, therapist_name, service_type_id, therapy_type, service_amount, total_amount, date, time, status, payment_status, mode, created_at)
       VALUES ($1, 'Patient P1', $2, 'Dr T1', 1, 'Physio', 1200, 1200, $3, '11:00', 'confirmed', 'Paid', 'home', now()) RETURNING id`, [U.p1.id, U.t1.id, tomorrowStr]);
-    await q(`INSERT INTO therapist_leaves(therapist_id, start_date, end_date, reason, status) VALUES ($1, $2, $2, 'Emergency', 'approved')`, [U.t1.id, tomorrowStr]);
+    await q(`INSERT INTO therapist_leaves(therapist_id, start_date, end_date, reason, status) VALUES ($1, $2, $2, 'Emergency', 'approved')`, [U.tp1, tomorrowStr]);
+    await q("DELETE FROM therapist_availability WHERE therapist_id = $1", [U.tp2]);
+    for (const d of ["sun", "mon", "tue", "wed", "thu", "fri", "sat"]) await q("INSERT INTO therapist_availability(therapist_id, day_of_week, is_enabled, morning_start, morning_end) VALUES ($1,$2,true,'09:00','18:00')", [U.tp2, d]);
 
     await q("UPDATE therapist_profiles SET quality_status = 'ok', registration_valid_until = CURRENT_DATE + INTERVAL '1 year' WHERE user_id = $1", [U.t2.id]);
 
@@ -1777,6 +1836,103 @@ async function seed() {
       r.s === 200 && r.j.success && reassignRow.therapist_id === U.t2.id && notesCount >= 1,
       "got " + r.s + " " + JSON.stringify(r.j) + " row=" + JSON.stringify(reassignRow) + " notes=" + notesCount
     );
+
+    // --- the rest of the P22 emergency rules, checked one by one
+    check("P22 reassignment writes a status-history row and an audit-log row",
+      (await q("SELECT 1 FROM appointment_status_history WHERE appointment_id = $1 AND note LIKE 'Reassigned from%'", [emAppt.id])).length === 1 &&
+      (await q("SELECT 1 FROM audit_logs WHERE action = 'reassign_booking' AND entity_id = $1", [String(emAppt.id)])).length === 1);
+    check("P22 the new AND the old therapist are told, with the patient",
+      (await q("SELECT 1 FROM notification_log WHERE event = 'booking_reassigned' AND user_id = $1 AND channel = 'push'", [U.t2.id])).length >= 1 &&
+      (await q("SELECT 1 FROM notification_log WHERE event = 'booking_reassigned' AND user_id = $1 AND channel = 'push'", [U.t1.id])).length >= 1 &&
+      (await q("SELECT 1 FROM notification_log WHERE event = 'booking_reassigned' AND user_id = $1 AND channel = 'whatsapp'", [U.p1.id])).length >= 1);
+    r = await call("POST", "/api/therapy-admin/reassign", T.therapy, { bookingId: emAppt.id, newTherapistId: U.t2.id });
+    check("P22 a booking already moved to that therapist is refused (400)", r.s === 400, "got " + r.s);
+
+    const [emB] = await q(`INSERT INTO appointments(patient_id, patient_name, therapist_id, therapist_name, service_type_id, therapy_type, service_amount, total_amount, date, time, status, payment_status, mode, created_at)
+      VALUES ($1, 'Patient P1', $2, 'Dr T1', 1, 'Physio', 1200, 1200, $3, '12:00', 'confirmed', 'Paid', 'home', now()) RETURNING id`, [U.p1.id, U.t1.id, tomorrowStr]);
+    await q("UPDATE therapist_profiles SET quality_status = 'frozen' WHERE user_id = $1", [U.t2.id]);
+    r = await call("POST", "/api/therapy-admin/reassign", T.therapy, { bookingId: emB.id, newTherapistId: U.t2.id });
+    check("P22 a frozen therapist cannot take over (400)", r.s === 400 && /not currently accepting/i.test(r.raw || ""), "got " + r.s + " " + (r.raw || "").slice(0, 120));
+    r = await call("GET", "/api/therapy-admin/emergency-queue", T.therapy);
+    const rowB = (r.j.data || []).find((x) => x.booking.id === emB.id);
+    check("P22 the candidate list leaves out the frozen therapist", rowB && !rowB.candidates.some((c) => c.therapistId === U.t2.id));
+    await q("UPDATE therapist_profiles SET quality_status = 'ok', registration_valid_until = CURRENT_DATE - 1 WHERE user_id = $1", [U.t2.id]);
+    r = await call("POST", "/api/therapy-admin/reassign", T.therapy, { bookingId: emB.id, newTherapistId: U.t2.id });
+    check("P22 a therapist with an expired registration cannot take over (400)", r.s === 400 && /expired/i.test(r.raw || ""), "got " + r.s + " " + (r.raw || "").slice(0, 120));
+    await q("UPDATE therapist_profiles SET registration_valid_until = CURRENT_DATE + INTERVAL '1 year' WHERE user_id = $1", [U.t2.id]);
+    await q("UPDATE therapist_profiles SET specialty = '{5}' WHERE user_id = $1", [U.t2.id]);
+    r = await call("POST", "/api/therapy-admin/reassign", T.therapy, { bookingId: emB.id, newTherapistId: U.t2.id });
+    check("P22 a therapist of another service type cannot take over (400)", r.s === 400 && /service/i.test(r.raw || ""), "got " + r.s + " " + (r.raw || "").slice(0, 120));
+    await q("UPDATE therapist_profiles SET specialty = '{1,2}' WHERE user_id = $1", [U.t2.id]);
+
+    // 2 hours before the slot, still on the therapist who is on leave -> cancelled by admin, patient gets 100% back
+    await q("UPDATE appointments SET payment_status = 'Paid', razorpay_payment_id = 'pay_p22_auto', payment_method = 'razorpay' WHERE id = $1", [emB.id]);
+    const emergencyService = require("../../src/services/emergencyService");
+    const accessUtil = require("../../src/utils/access");
+    const slotMs = accessUtil.slotStart({ date: tomorrowStr, time: "12:00" }).getTime();
+    const early = await emergencyService.autoCancelUnassigned(slotMs - 5 * 3600e3);
+    check("P22 more than 2 hours before the slot nothing is cancelled", early.cancelled === 0 && (await q("SELECT status FROM appointments WHERE id = $1", [emB.id]))[0].status === "confirmed");
+    const refundsBefore = rzpRefunds.length;
+    const late = await emergencyService.autoCancelUnassigned(slotMs - 90 * 60e3);
+    const after = (await q("SELECT status FROM appointments WHERE id = $1", [emB.id]))[0];
+    check("P22 within 2 hours the unassigned booking is cancelled by admin with a 100% Razorpay refund",
+      late.cancelled >= 1 && after.status === "cancelled_by_admin" && rzpRefunds.filter((x) => x.pid === "pay_p22_auto").length === 1 && rzpRefunds.find((x) => x.pid === "pay_p22_auto").amount === 120000,
+      JSON.stringify(late) + " " + after.status + " refunds " + (rzpRefunds.length - refundsBefore));
+    check("P22 ... and the patient is told (booking_cancelled)", (await q("SELECT 1 FROM notification_log WHERE event = 'booking_cancelled' AND user_id = $1 AND channel = 'whatsapp'", [U.p1.id])).length >= 1);
+    const again = await emergencyService.autoCancelUnassigned(slotMs - 80 * 60e3);
+    check("P22 running the job again does not refund twice", again.cancelled === 0 && rzpRefunds.filter((x) => x.pid === "pay_p22_auto").length === 1);
+
+    // a leave with hours only blocks those hours
+    const [emC] = await q(`INSERT INTO appointments(patient_id, patient_name, therapist_id, therapist_name, service_type_id, therapy_type, service_amount, total_amount, date, time, status, payment_status, mode, created_at)
+      VALUES ($1, 'Patient P1', $2, 'Dr T1', 1, 'Physio', 1200, 1200, $3, '16:00', 'confirmed', 'Paid', 'home', now()) RETURNING id`, [U.p1.id, U.t1.id, tomorrowStr]);
+    await q("UPDATE therapist_leaves SET start_time = '09:00', end_time = '13:00' WHERE therapist_id = $1 AND start_date = $2", [U.tp1, tomorrowStr]);
+    const impacted = (await emergencyService.listImpacted()).map((x) => x.id);
+    check("P22 a leave for 09:00-13:00 does not flag the 16:00 booking", !impacted.includes(emC.id));
+    await q("UPDATE therapist_leaves SET start_time = NULL, end_time = NULL WHERE therapist_id = $1 AND start_date = $2", [U.tp1, tomorrowStr]);
+    check("P22 a whole-day leave flags it", (await emergencyService.listImpacted()).map((x) => x.id).includes(emC.id));
+    await q("UPDATE therapist_leaves SET therapist_id = $1 WHERE therapist_id = $2 AND start_date = $3", [U.t1.id + 1000, U.tp1, tomorrowStr]);
+    check("P22 a leave belonging to a different therapist id (id mix-up) flags nothing", !(await emergencyService.listImpacted()).map((x) => x.id).includes(emC.id));
+    await q("UPDATE therapist_leaves SET therapist_id = $1 WHERE therapist_id = $2 AND start_date = $3", [U.tp1, U.t1.id + 1000, tomorrowStr]);
+
+    // quality rule: last windowRatings ratings, only with at least minRatings
+    const mkTh = async (tag) => {
+      const [u] = await q("INSERT INTO users(uid,email,name,phone,role,is_verified,city,state) VALUES ($1,$2,$3,'9000000300','therapist',true,'Vadodara','Gujarat') RETURNING *", ["tq-" + tag, "tq" + tag + "@x.com", "Dr Q" + tag]);
+      await q("INSERT INTO user_roles(user_id, role_id) SELECT $1, id FROM roles WHERE name = 'therapist'", [u.id]);
+      await q("INSERT INTO therapist_profiles(user_id, hourly_rate, profile_status, quality_status, specialty) VALUES ($1, 800, 'approved', 'ok', '{1}')", [u.id]);
+      return u;
+    };
+    const rate = async (u, rating, n, minutesAgo = 0) => { for (let i = 0; i < n; i += 1) await q("INSERT INTO therapist_reviews(therapist_id, patient_id, appointment_id, rating, review, created_at) VALUES ($1,$2,1,$3,'x', now() - ($4 || ' minutes')::interval)", [u.id, U.p1.id, rating, String(minutesAgo + i)]); };
+    const stat = async (u) => (await q("SELECT quality_status FROM therapist_profiles WHERE user_id = $1", [u.id]))[0].quality_status;
+    const qa = await mkTh("a"), qb = await mkTh("b"), qc = await mkTh("c"), qd = await mkTh("d");
+    await rate(qa, 3, 10);                         // 10 ratings averaging 3.0 -> under review
+    await rate(qb, 1, 9);                          // 9 ratings only -> not judged
+    await rate(qc, 4, 5); await rate(qc, 5, 5);    // 10 ratings averaging 4.5 -> ok (not below 4.5)
+    await rate(qd, 1, 5, 5000); await rate(qd, 5, 20, 0);   // 5 old bad ratings fall out of the last-20 window -> ok
+    for (const u of [qa, qb, qc, qd]) await qualityService.evaluateTherapistQuality(u.id);
+    check("P22 10 ratings averaging below 4.0 -> under_review", (await stat(qa)) === "under_review");
+    check("P22 fewer than 10 ratings are not judged at all", (await stat(qb)) === "ok");
+    check("P22 an average of exactly 4.5 is fine", (await stat(qc)) === "ok");
+    check("P22 only the last 20 ratings count (old bad ones dropped)", (await stat(qd)) === "ok");
+    await rate(qc, 4, 10);                         // now the last 10 average 4.0..: 4.0 is below 4.5 -> coaching, not below 4.0
+    await qualityService.evaluateTherapistQuality(qc.id);
+    check("P22 an average between 4.0 and 4.5 -> coaching", (await stat(qc)) === "coaching");
+    r = await call("GET", "/api/therapy-admin/quality-queue", T.therapy);
+    const ids = (r.j.data || []).map((x) => x.therapistId);
+    check("P22 the quality queue shows the flagged therapists (under_review, coaching) and not the ok ones", ids.includes(qa.id) && ids.includes(qc.id) && !ids.includes(qb.id) && !ids.includes(qd.id), JSON.stringify(ids));
+    const qaRow = (r.j.data || []).find((x) => x.therapistId === qa.id);
+    check("P22 the queue row carries the real average and count", qaRow && qaRow.avgRating === 3 && qaRow.totalRatings === 10, JSON.stringify(qaRow && [qaRow.avgRating, qaRow.totalRatings]));
+    await qualityService.recordQualityAction({ therapistId: qa.id, action: "freeze", note: "Interview done", actorId: U.therapy.id });
+    check("P22 an admin freeze sticks: a new evaluation never un-freezes", (await stat(qa)) === "frozen" && (await qualityService.evaluateTherapistQuality(qa.id)).qualityStatus === "frozen");
+    await qualityService.recordQualityAction({ therapistId: qa.id, action: "unfreeze", note: "Cleared", actorId: U.therapy.id });
+    check("P22 unfreeze sets it back to ok and is logged", (await stat(qa)) === "ok" && (await q("SELECT 1 FROM therapist_quality_actions WHERE action = 'unfreeze'")).length >= 1);
+
+    // credentials: expiring in 30 days -> reminder (therapist + admin) once a week; expired -> no slots
+    const qe = await mkTh("e");
+    await q("UPDATE therapist_profiles SET council = 'NCAHP', registration_valid_until = CURRENT_DATE + 10 WHERE user_id = $1", [qe.id]);
+    await qualityService.checkCredentialExpiryAll();
+    await qualityService.checkCredentialExpiryAll();
+    check("P22 a registration expiring within 30 days: the therapist is reminded once (not daily)", (await q("SELECT COUNT(*)::int AS n FROM notifications WHERE user_uid = $1 AND type = 'credential_expiry'", [String(qe.id)]))[0].n === 1);
+    check("P22 ... and the therapy admins are told", (await q("SELECT 1 FROM notifications WHERE type = 'therapist_credential_expiring' AND message LIKE '%Dr Qe%'")).length >= 1);
   }
 
   // ============================================================ P23: Super Admin and E-com Admin dashboard upgrades
@@ -1825,6 +1981,28 @@ async function seed() {
       r.j.data.mismatches.some((m) => m.type === "missing_in_curevan"),
       "got " + r.s + " mismatches=" + JSON.stringify(r.j && r.j.data && r.j.data.mismatches)
     );
+
+    // more than 100 payments in a day: every page is read, nothing is dropped or counted twice
+    FakeRazorpay.mockPayments = [{ id: "pay_clean_1", amount: 200000, status: "captured", order_id: "order_clean_1", created_at: 1792047600 }];
+    for (let i = 0; i < 230; i += 1) FakeRazorpay.mockPayments.push({ id: "pay_bulk_" + i, amount: 10000, status: "captured", order_id: "order_bulk_" + i, created_at: 1792047600 });
+    r = await call("GET", `/api/admin/reconciliation?date=${reconDate}`, T.su);
+    check("P23 reconciliation reads all pages of a busy day (231 payments, 230 missing in Curevan)", r.s === 200 && r.j.data.summary.razorpayCount === 231 && r.j.data.summary.matchedCount === 1 && r.j.data.summary.mismatchCount === 230, JSON.stringify(r.j && r.j.data && r.j.data.summary));
+    // a payment that was partly refunded is still a captured payment of a 'Partially Refunded' booking: it matches
+    await q(`INSERT INTO appointments(patient_id, patient_name, therapist_id, therapist_name, service_type_id, service_amount, total_amount, date, time, status, payment_status, razorpay_payment_id, razorpay_order_id, paid_at, created_at)
+             VALUES ($1,'P',$2,'Dr',1,1500,1500,'2031-02-01','10:00','cancelled_by_patient','Partially Refunded','pay_part_1','order_part_1','2026-10-15 15:00:00+05:30','2026-10-15 15:00:00+05:30')`, [U.p1.id, U.t1.id]);
+    FakeRazorpay.mockPayments = [
+      { id: "pay_clean_1", amount: 200000, status: "captured", order_id: "order_clean_1", created_at: 1792047600 },
+      { id: "pay_part_1", amount: 150000, status: "captured", order_id: "order_part_1", created_at: 1792047600 },
+    ];
+    r = await call("GET", `/api/admin/reconciliation?date=${reconDate}`, T.su);
+    check("P23 a partly refunded booking still reconciles (no false mismatch)", r.s === 200 && r.j.data.summary.mismatchCount === 0 && r.j.data.summary.matchedCount === 2, JSON.stringify(r.j && r.j.data && r.j.data.summary));
+    // Razorpay down: say so, do not report every paid item as missing
+    FakeRazorpay.failPayments = true;
+    r = await call("GET", `/api/admin/reconciliation?date=${reconDate}`, T.su);
+    check("P23 when Razorpay cannot be reached the report refuses (502), it does not invent mismatches", r.s === 502, "got " + r.s);
+    FakeRazorpay.failPayments = false;
+    r = await call("GET", `/api/admin/reconciliation?date=${reconDate}`, T.p1);
+    check("P23 reconciliation is for admins only (403)", r.s === 403);
 
     // Reset FakeRazorpay mockPayments
     FakeRazorpay.mockPayments = null;
@@ -1990,6 +2168,25 @@ async function seed() {
   const unmapped = rows.filter((y) => !y.mapped).map((y) => y.p);
   check(`#6 calls with NO backend route yet (all assigned to later prompts): ${unmapped.join(", ")}`, unmapped.length <= 12, unmapped.length + " found");
 
+
+  // P24 coverage: every event of the pack's table was sent by the REAL flow above (not by calling notify directly), on the channels the table names
+  {
+    const rows = await q("SELECT event, channel, status FROM notification_log");
+    const via = (ev) => new Set(rows.filter((x) => x.event === ev).map((x) => x.channel));
+    const need = {
+      booking_confirmed: ["whatsapp", "inapp", "email", "push"], followup_proposed: ["whatsapp", "inapp"], followup_nudge: ["whatsapp", "inapp"], followup_expired: ["whatsapp", "inapp", "push"],
+      followup_no_slot: ["whatsapp", "inapp", "push"], reminder_24h: ["whatsapp"], reminder_2h: ["whatsapp"], reminder_30_min: ["whatsapp", "push"], therapist_daily_agenda: ["whatsapp", "push"],
+      therapist_60min: ["whatsapp", "push"], followup_overdue: ["whatsapp", "inapp"], hep_daily: ["whatsapp"], progress_report_ready: ["whatsapp", "inapp", "email"],
+      therapist_on_the_way: ["whatsapp", "push"], session_completed_review: ["whatsapp", "inapp"], pcr_pdf_ready: ["whatsapp", "email"], booking_cancelled: ["whatsapp", "inapp", "push"],
+      booking_reassigned: ["whatsapp", "inapp", "push"], order_paid: ["whatsapp", "email"], order_shipped: ["whatsapp", "email"], order_delivered: ["whatsapp", "email"],
+      refund_processed: ["whatsapp", "email"], payout_paid: ["whatsapp", "email"], sos_raised: ["push", "sms"],
+    };
+    for (const [ev, chans] of Object.entries(need)) {
+      const got = via(ev);
+      check("P24 event " + ev + " was sent by its real flow on " + chans.join(" + "), chans.every((c) => got.has(c)), "channels seen: " + [...got].join(","));
+    }
+    check("P24 all 24 events of the pack's table are covered", Object.keys(need).length === 24);
+  }
   unmute();
   const widthName = Math.max(...results.map((x) => x.name.length));
   for (const x of results) console.log((x.ok ? "PASS " : "FAIL ") + x.name + (x.ok ? "" : "  <-- " + x.detail));
