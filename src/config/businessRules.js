@@ -46,7 +46,7 @@ module.exports = Object.freeze({
   outcomeSummary: Object.freeze({ minPlansPerGroup: 5 }),                                              // groups with fewer plans are hidden (P22)
   emergency: Object.freeze({ radiusKm: 8, autoCancelHoursBefore: 2, lookAheadDays: 1 }),                // therapist leave: replacement radius, auto-cancel window, days looked ahead (P22)
   maskedCall: Object.freeze({ windowHoursBefore: 2, windowHoursAfter: 1 }),                              // D12
-  features: Object.freeze({ maskedCall: false, carePacks: false }),                                      // switched on by P27 / P28
+  features: Object.freeze({ carePacks: false }),                                                          // maskedCall is live when TELEPHONY_PROVIDER is set (P27); carePacks is switched on by P28
   support: Object.freeze({ openHour: 8, closeHour: 21, callbackBy: '09:30' }),
   ai: Object.freeze({ modelId: process.env.AI_MODEL_ID || '' }),                                         // set at go-live
 });

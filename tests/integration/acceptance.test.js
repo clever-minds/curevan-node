@@ -2281,6 +2281,140 @@ async function seed() {
     check("P26 ... and an unknown priority", r.j && r.j.success === false);
   }
 
+  // P27 masked calling
+  {
+    const telephony = require("../../src/services/telephony");
+    const axiosMod = require("axios");
+    const pad2 = (n) => String(n).padStart(2, "0");
+    const istNow = (minFromNow) => { const d = new Date(Date.now() + 5.5 * 3600e3 + minFromNow * 60000); return { date: `${d.getUTCFullYear()}-${pad2(d.getUTCMonth() + 1)}-${pad2(d.getUTCDate())}`, time: `${pad2(d.getUTCHours())}:${pad2(d.getUTCMinutes())}` }; };
+    const mkU = async (tag, role, phone) => {
+      const [u] = await q("INSERT INTO users(uid,email,name,phone,role,is_verified,city,state) VALUES ($1,$2,$3,$4,$5,true,'Vadodara','Gujarat') RETURNING *", ["p27-" + tag, "p27" + tag + "@x.com", "P27 " + tag, phone, role]);
+      await q("INSERT INTO user_roles(user_id, role_id) SELECT $1, id FROM roles WHERE name = $2", [u.id, role]);
+      return { ...u, tk: token({ ...u, roleName: role }) };
+    };
+    const PH = { p: "9810000001", t: "9820000002" };
+    const cp = await mkU("pat", "patient", PH.p), ct = await mkU("ther", "therapist", PH.t), cx = await mkU("other", "patient", "9830000003"), cn = await mkU("nophone", "patient", null);
+    const mkB = async (minFromNow, status = "confirmed", patient = cp) => { const w = istNow(minFromNow); return (await q(`INSERT INTO appointments(patient_id, patient_name, therapist_id, therapist_name, service_type_id, service_amount, total_amount, date, time, status, payment_status, mode, created_at)
+      VALUES ($1,'P',$2,'Dr',1,1500,1500,$3,$4,$5,'Paid','home', now()) RETURNING id`, [patient.id, ct.id, w.date, w.time, status]))[0].id; };
+    const mask = (who, id) => call("POST", "/api/communication/mask-call", who.tk, { appointmentId: id });
+
+    // provider off: the button is hidden, the endpoint says so
+    delete process.env.TELEPHONY_PROVIDER;
+    const inWin = await mkB(30);
+    r = await call("GET", "/api/config/public");
+    check("P27 with no provider configured the feature flag is false (the Call button stays hidden)", r.j.data.features.maskedCall === false);
+    r = await mask(cp, inWin);
+    check("P27 with no provider the endpoint answers 503", r.s === 503);
+
+    process.env.TELEPHONY_PROVIDER = "console";
+    r = await call("GET", "/api/config/public");
+    check("P27 with a provider configured the flag is true and the window is public (2 h before, 1 h after)", r.j.data.features.maskedCall === true && r.j.data.maskedCall.windowHoursBefore === 2 && r.j.data.maskedCall.windowHoursAfter === 1);
+
+    // the window
+    r = await mask(cp, inWin);
+    check("P27 the patient can call 30 minutes before the slot", r.s === 201 && r.j.data.callId && r.j.data.status === "initiated", "got " + r.s + " " + r.raw);
+    check("P27 NO real number appears in the response", !new RegExp(PH.p + "|" + PH.t + "|\\+91|98100|98200").test(r.raw), r.raw);
+    const row1 = (await q("SELECT * FROM masked_calls WHERE id = $1", [r.j.data.callId]))[0];
+    check("P27 the call is recorded: appointment, caller role and id, provider sid, status; and no phone column exists", row1 && row1.appointment_id === inWin && row1.caller_role === "patient" && row1.caller_user_id === cp.id && /^console_/.test(row1.provider_call_sid) && row1.status === "initiated" && !(await q("SELECT column_name FROM information_schema.columns WHERE table_name = 'masked_calls'")).some((c) => /phone|number|msisdn/i.test(c.column_name)));
+    r = await mask(ct, inWin);
+    const row2 = r.s === 201 ? (await q("SELECT caller_role, caller_user_id FROM masked_calls WHERE id = $1", [r.j.data.callId]))[0] : null;
+    check("P27 the assigned therapist can call the patient too", r.s === 201 && row2.caller_role === "therapist" && row2.caller_user_id === ct.id, "got " + r.s + " " + r.raw);
+
+    const early = await mkB(3 * 60);
+    r = await mask(cp, early);
+    check("P27 three hours before the slot it is refused with 'Calling opens 2 hours before your appointment'", r.s === 403 && r.j.message === "Calling opens 2 hours before your appointment", "got " + r.s + " " + r.raw);
+    const justBefore = await mkB(119);
+    r = await mask(cp, justBefore);
+    check("P27 119 minutes before: open", r.s === 201);
+    const justOutside = await mkB(125);
+    r = await mask(cp, justOutside);
+    check("P27 125 minutes before: still closed", r.s === 403);
+    const over = await mkB(-3 * 60);
+    r = await mask(cp, over);
+    check("P27 more than an hour after the slot ended: closed (403)", r.s === 403);
+    const lateInside = await mkB(-100);
+    r = await mask(cp, lateInside);
+    check("P27 40 minutes after the slot ended: still open (calling about a late visit)", r.s === 201, "got " + r.s + " " + r.raw);
+
+    // who and which booking
+    r = await mask(cx, inWin);
+    check("P27 a patient who is not on this booking cannot call (403)", r.s === 403);
+    r = await call("POST", "/api/communication/mask-call", T.su, { appointmentId: inWin });
+    check("P27 not even an admin can use the booking's calling (403)", r.s === 403);
+    r = await call("POST", "/api/communication/mask-call", undefined, { appointmentId: inWin });
+    check("P27 a login is needed (401)", r.s === 401);
+    let statusMin = 40;
+    for (const st of ["pending_payment", "completed", "cancelled_by_patient", "searching_therapist"]) {
+      const id = await mkB(statusMin++, st);
+      r = await mask(cp, id);
+      check("P27 a booking in status " + st + " cannot be called about (403)", r.s === 403, "got " + r.s);
+    }
+    r = await mask(cp, 99999999);
+    check("P27 an unknown booking is 404", r.s === 404);
+    r = await call("POST", "/api/communication/mask-call", cp.tk, {});
+    check("P27 appointmentId is required (400)", r.s === 400);
+    const noPhoneBooking = await mkB(35, "confirmed", cn);
+    r = await mask(cn, noPhoneBooking);
+    check("P27 a caller without a number on file is told to add one (409)", r.s === 409 && /mobile number/i.test(r.raw));
+    await q("UPDATE users SET phone = NULL WHERE id = $1", [ct.id]);
+    r = await mask(cp, inWin);
+    check("P27 when the other person has no number the caller is told to contact support (409)", r.s === 409 && /support/i.test(r.raw) && !/982/.test(r.raw));
+    await q("UPDATE users SET phone = $2 WHERE id = $1", [ct.id, PH.t]);
+
+    // provider failure
+    process.env.TELEPHONY_PROVIDER = "fail";
+    const before = (await q("SELECT COUNT(*)::int AS n FROM masked_calls WHERE status = 'failed'"))[0].n;
+    r = await mask(cp, inWin);
+    check("P27 a provider failure answers 502 with a calm message and no number", r.s === 502 && !/981|982|\+91/.test(r.raw));
+    check("P27 ... and the attempt is recorded as failed", (await q("SELECT COUNT(*)::int AS n FROM masked_calls WHERE status = 'failed'"))[0].n === before + 1);
+
+    // Exotel: what is sent to the provider (stubbed HTTP)
+    process.env.TELEPHONY_PROVIDER = "exotel";
+    Object.assign(process.env, { EXOTEL_SID: "curevan1", EXOTEL_API_KEY: "key1", EXOTEL_API_TOKEN: "tok1", EXOTEL_VIRTUAL_NUMBER: "08000000000", TELEPHONY_STATUS_CALLBACK_URL: "https://api.example.test/api/hooks/telephony?token=hooktok" });
+    const realPost = axiosMod.post; let sent = null;
+    axiosMod.post = async (url, body, opts) => { sent = { url, body: String(body), opts }; return { data: { Call: { Sid: "EXO-SID-1", Status: "queued" } } }; };
+    r = await mask(cp, inWin);
+    const sp = new URLSearchParams(sent && sent.body);
+    check("P27 Exotel: the caller is rung first, then the other party, both through the virtual number; the status callback is set", r.s === 201 && /\/v1\/Accounts\/curevan1\/Calls\/connect\.json$/.test(sent.url) && sp.get("From") === "+919810000001" && sp.get("To") === "+919820000002" && sp.get("CallerId") === "08000000000" && /hooktok/.test(sp.get("StatusCallback")) && sent.opts.auth.username === "key1" && sent.opts.auth.password === "tok1", JSON.stringify(sent));
+    check("P27 Exotel: the call id of Exotel is stored; the real numbers are not in the answer", (await q("SELECT provider_call_sid, status FROM masked_calls WHERE id = $1", [r.j.data.callId]))[0].provider_call_sid === "EXO-SID-1" && !/981|982/.test(r.raw));
+    axiosMod.post = async () => { throw Object.assign(new Error("boom"), { response: { status: 400, data: { RestException: { Message: "bad number" } } } }); };
+    r = await mask(cp, inWin);
+    check("P27 Exotel refuses the call: 502, and the provider's text (it may hold numbers) is not shown", r.s === 502 && !/bad number|981|982/.test(r.raw));
+    axiosMod.post = realPost;
+    delete process.env.EXOTEL_API_TOKEN;
+    r = await mask(cp, inWin);
+    check("P27 Exotel without credentials: 502, nothing is called", r.s === 502);
+    process.env.EXOTEL_API_TOKEN = "tok1";
+
+    // status webhook
+    process.env.TELEPHONY_WEBHOOK_TOKEN = "hooktok";
+    process.env.TELEPHONY_PROVIDER = "console";
+    r = await mask(cp, inWin);
+    const sid = (await q("SELECT provider_call_sid FROM masked_calls WHERE id = $1", [r.j.data.callId]))[0].provider_call_sid;
+    const hook = (query, body, ct2 = "application/x-www-form-urlencoded") => fetch(base + "/api/hooks/telephony" + query, { method: "POST", headers: { "content-type": ct2 }, body });
+    let h = await hook("", new URLSearchParams({ CallSid: sid, Status: "completed", Duration: "125" }).toString());
+    check("P27 the status webhook refuses a call without the token (401)", h.status === 401);
+    h = await hook("?token=wrong", new URLSearchParams({ CallSid: sid, Status: "completed", Duration: "125" }).toString());
+    check("P27 ... and with a wrong token (401)", h.status === 401 && (await q("SELECT status FROM masked_calls WHERE provider_call_sid = $1", [sid]))[0].status === "initiated");
+    h = await hook("?token=hooktok", new URLSearchParams({ CallSid: sid, Status: "in-progress" }).toString());
+    check("P27 a ringing/in-progress update changes the status and keeps the call open", h.status === 200 && (await q("SELECT status, ended_at FROM masked_calls WHERE provider_call_sid = $1", [sid]))[0].status === "in-progress" && (await q("SELECT ended_at FROM masked_calls WHERE provider_call_sid = $1", [sid]))[0].ended_at === null);
+    h = await hook("?token=hooktok", new URLSearchParams({ CallSid: sid, Status: "completed", Duration: "125" }).toString());
+    const done = (await q("SELECT status, duration_seconds, ended_at FROM masked_calls WHERE provider_call_sid = $1", [sid]))[0];
+    check("P27 the completed callback stores the duration and the end time (form-encoded, as Exotel sends it)", h.status === 200 && done.status === "completed" && done.duration_seconds === 125 && done.ended_at);
+    h = await hook("?token=hooktok", JSON.stringify({ CallSid: sid, Status: "completed", Duration: 130 }), "application/json");
+    check("P27 a JSON callback works too", h.status === 200 && (await q("SELECT duration_seconds FROM masked_calls WHERE provider_call_sid = $1", [sid]))[0].duration_seconds === 130);
+    h = await hook("?token=hooktok", new URLSearchParams({ CallSid: "unknown-sid", Status: "completed" }).toString());
+    check("P27 an unknown call id is ignored with a 200 (the provider must not retry)", h.status === 200);
+    h = await hook("?token=hooktok", new URLSearchParams({ CallSid: sid, Status: "no_answer" }).toString());
+    check("P27 provider words are normalised (no_answer -> no-answer)", (await q("SELECT status FROM masked_calls WHERE provider_call_sid = $1", [sid]))[0].status === "no-answer");
+    delete process.env.TELEPHONY_WEBHOOK_TOKEN;
+    h = await hook("?token=anything", new URLSearchParams({ CallSid: sid, Status: "completed" }).toString());
+    check("P27 with no token configured the webhook is closed (401)", h.status === 401);
+
+    check("P27 the number mask keeps only 4 digits for logs", telephony.mask("+919810000001") === "******0001");
+    delete process.env.TELEPHONY_PROVIDER;
+  }
+
   // invoices
   r = await call("GET", "/api/invoices/list", T.su);
   const allInv = (await q("SELECT COUNT(*)::int AS n FROM invoices"))[0].n;

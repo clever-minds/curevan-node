@@ -1,6 +1,7 @@
 const express = require("express");
 const router = express.Router();
 const rules = require("../config/businessRules");
+const telephony = require("../services/telephony");
 
 // Non-secret business values the apps need (timer length, OTP length, travel window). No login needed.
 router.get("/public", (req, res) => {
@@ -13,7 +14,8 @@ router.get("/public", (req, res) => {
       visit: { travelFromMinutesBefore: rules.visit.travelFromMinutesBefore },
       shop: { freeShippingThresholdInr: rules.shop.freeShippingThresholdInr, flatShippingFeeInr: rules.shop.flatShippingFeeInr, returnWindowDays: rules.shop.returnWindowDays },
       support: { openHour: rules.support.openHour, closeHour: rules.support.closeHour, callbackBy: rules.support.callbackBy },
-      features: { maskedCall: rules.features.maskedCall, carePacks: rules.features.carePacks },
+      features: { maskedCall: telephony.isLive(), carePacks: rules.features.carePacks },
+      maskedCall: { windowHoursBefore: rules.maskedCall.windowHoursBefore, windowHoursAfter: rules.maskedCall.windowHoursAfter },
       affiliate: { patientDiscountPct: rules.affiliate.patientDiscountPct, therapistCommissionPct: rules.affiliate.therapistCommissionPct, eligibleAfterDeliveryDays: rules.affiliate.eligibleAfterDeliveryDays },
       cancellation: {
         freeHoursBefore: rules.cancellation.freeHoursBefore,
