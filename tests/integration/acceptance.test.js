@@ -1644,6 +1644,135 @@ async function seed() {
     check("P21 feature flags maskedCall and carePacks are false in public config", r.s === 200 && r.j.data.features.maskedCall === false && r.j.data.features.carePacks === false);
   }
 
+  // P22 therapist dashboard on real data & therapy admin queues
+  {
+    const qualityService = require("../../src/services/qualityService");
+    const slotService = require("../../src/services/slotService");
+
+    // 1. Migration 0014 columns and tables
+    const cols = (await q(`SELECT column_name FROM information_schema.columns WHERE table_name = 'therapist_profiles'`)).map(c => c.column_name);
+    check("P22 migration 0014 added council, registration_valid_until, quality_status to therapist_profiles",
+      cols.includes("council") && cols.includes("registration_valid_until") && cols.includes("quality_status") && cols.includes("quality_note")
+    );
+    const hasActionsTbl = (await q(`SELECT EXISTS (SELECT FROM information_schema.tables WHERE table_name = 'therapist_quality_actions') AS ex`))[0].ex;
+    check("P22 therapist_quality_actions table exists", hasActionsTbl === true);
+
+    // 2. Therapist dashboard real KPIs & PCR alerts
+    r = await call("GET", "/api/therapists/dashboard-stats/" + U.t1.id, T.t1);
+    check("P22 therapist dashboard stats returns 200 with real KPI metrics and PCR alert",
+      r.s === 200 && r.j.success && typeof r.j.data.kpis.sessionsCompleted === "number" &&
+      typeof r.j.data.kpis.pcrAlert.pendingCount === "number" && typeof r.j.data.kpis.pcrAlert.pendingAmount === "number" &&
+      Array.isArray(r.j.data.charts.sessionData) && Array.isArray(r.j.data.charts.modeSplitData) &&
+      Array.isArray(r.j.data.charts.weeklyEarningsData) && Array.isArray(r.j.data.charts.topServicesData)
+    );
+    r = await call("GET", "/api/therapists/dashboard-stats/" + U.t1.id, T.p1);
+    check("P22 patient cannot access therapist stats (403)", r.s === 403);
+
+    // 3. Therapist my-patients progress endpoint
+    r = await call("GET", "/api/therapists/my-patients", T.t1);
+    check("P22 therapist my-patients returns array of active treatment plans with trends and review indicators",
+      r.s === 200 && r.j.success && Array.isArray(r.j.data)
+    );
+    r = await call("GET", "/api/therapists/my-patients", T.p1);
+    check("P22 patient cannot access therapist my-patients (403)", r.s === 403);
+
+    // 4. Quality evaluation flags under-performing therapist (<4.0)
+    const [tLow] = await q("INSERT INTO users(uid,email,name,phone,role,is_verified,city,state) VALUES ('therapist-low','tlow@x.com','Dr Low','9000000099','therapist',true,'Vadodara','Gujarat') RETURNING *");
+    await q("INSERT INTO user_roles(user_id, role_id) SELECT $1, id FROM roles WHERE name = 'therapist'", [tLow.id]);
+    await q("INSERT INTO therapist_profiles(user_id, hourly_rate, profile_status, quality_status, council, registration_valid_until) VALUES ($1, 800, 'approved', 'ok', 'NCAHP', CURRENT_DATE + INTERVAL '1 year')", [tLow.id]);
+    for (let i = 0; i < 10; i++) {
+      await q("INSERT INTO therapist_reviews(therapist_id, patient_id, appointment_id, rating, review) VALUES ($1, $2, $3, 3, 'Average')", [tLow.id, U.p1.id, 1]);
+    }
+    const evalRes = await qualityService.evaluateTherapistQuality(tLow.id);
+    const updatedLow = (await q("SELECT quality_status FROM therapist_profiles WHERE user_id = $1", [tLow.id]))[0];
+    check("P22 qualityService flags therapist with <4.0 average rating to under_review or coaching",
+      (updatedLow.quality_status === "under_review" || updatedLow.quality_status === "coaching") && evalRes.flagged === true
+    );
+
+    // 5. Expired registration or frozen therapist excluded from directory and available slots
+    await q("UPDATE therapist_profiles SET registration_valid_until = CURRENT_DATE - INTERVAL '5 days' WHERE user_id = $1", [tLow.id]);
+    r = await call("GET", "/api/therapists/" + tLow.id);
+    check("P22 expired therapist profile returns 404 from public endpoint", r.s === 404);
+    let bookableErr = false;
+    try {
+      await slotService.assertSlotBookable(tLow.id, new Date().toISOString().slice(0, 10), "10:00");
+    } catch (e) {
+      bookableErr = true;
+    }
+    check("P22 slotService.assertSlotBookable rejects expired registration therapist", bookableErr === true);
+
+    await q("UPDATE therapist_profiles SET registration_valid_until = CURRENT_DATE + INTERVAL '1 year', quality_status = 'frozen', quality_note = 'Quality hold' WHERE user_id = $1", [tLow.id]);
+    bookableErr = false;
+    try {
+      await slotService.assertSlotBookable(tLow.id, new Date().toISOString().slice(0, 10), "10:00");
+    } catch (e) {
+      bookableErr = true;
+    }
+    check("P22 slotService.assertSlotBookable rejects frozen therapist", bookableErr === true);
+
+    // 6. Therapy Admin Queues & Endpoints
+    r = await call("GET", "/api/therapy-admin/overview", T.p1);
+    check("P22 patient cannot access therapy admin endpoints (403)", r.s === 403);
+    r = await call("GET", "/api/therapy-admin/overview", T.therapy);
+    check("P22 therapy admin overview returns queue counts",
+      r.s === 200 && r.j.success && typeof r.j.data.qualityQueue === "number" && typeof r.j.data.credentialQueue === "number" && typeof r.j.data.emergencyReassignment === "number"
+    );
+
+    r = await call("GET", "/api/therapy-admin/quality-queue", T.therapy);
+    check("P22 therapy admin quality queue lists non-ok therapists",
+      r.s === 200 && r.j.success && r.j.data.some(t => t.id === tLow.id || t.user_id === tLow.id || t.therapistId === tLow.id)
+    );
+
+    r = await call("POST", "/api/therapy-admin/quality-action", T.therapy, {
+      therapistId: tLow.id,
+      action: "add_note",
+      note: "Discussed rating improvements with therapist"
+    });
+    check("P22 recording a quality action succeeds and logs to therapist_quality_actions",
+      r.s === 200 && r.j.success && (await q("SELECT COUNT(*)::int AS n FROM therapist_quality_actions WHERE therapist_id = $1 OR therapist_id = (SELECT id FROM therapist_profiles WHERE user_id = $1)", [tLow.id]))[0].n >= 1
+    );
+
+    r = await call("GET", "/api/therapy-admin/credential-queue", T.therapy);
+    check("P22 therapy admin credential queue returns valid queue list", r.s === 200 && r.j.success && Array.isArray(r.j.data), "got " + r.s + " " + JSON.stringify(r.j));
+
+    r = await call("GET", "/api/therapy-admin/overdue-followups", T.therapy);
+    check("P22 therapy admin overdue follow-ups queue returns valid list", r.s === 200 && r.j.success && Array.isArray(r.j.data));
+
+    r = await call("GET", "/api/therapy-admin/stalled-progress", T.therapy);
+    check("P22 therapy admin stalled progress queue returns valid list", r.s === 200 && r.j.success && Array.isArray(r.j.data));
+
+    r = await call("GET", "/api/therapy-admin/outcome-summary", T.therapy);
+    check("P22 therapy admin outcome summary returns aggregated metrics from real data",
+      r.s === 200 && r.j.success && typeof r.j.data.totalDischarged === "number" && Array.isArray(r.j.data.byCondition),
+      "got " + r.s + " " + JSON.stringify(r.j)
+    );
+
+    // 7. Emergency leave reassignment
+    const tomorrowStr = (await q("SELECT (CURRENT_DATE + 1)::text as d"))[0].d;
+    const [emAppt] = await q(`INSERT INTO appointments(patient_id, patient_name, therapist_id, therapist_name, service_type_id, therapy_type, service_amount, total_amount, date, time, status, payment_status, mode, created_at)
+      VALUES ($1, 'Patient P1', $2, 'Dr T1', 1, 'Physio', 1200, 1200, $3, '11:00', 'confirmed', 'Paid', 'home', now()) RETURNING id`, [U.p1.id, U.t1.id, tomorrowStr]);
+    await q(`INSERT INTO therapist_leaves(therapist_id, start_date, end_date, reason, status) VALUES ($1, $2, $2, 'Emergency', 'approved')`, [U.t1.id, tomorrowStr]);
+
+    await q("UPDATE therapist_profiles SET quality_status = 'ok', registration_valid_until = CURRENT_DATE + INTERVAL '1 year' WHERE user_id = $1", [U.t2.id]);
+
+    r = await call("GET", "/api/therapy-admin/emergency-queue", T.therapy);
+    check("P22 emergency queue detects booking impacted by therapist leave",
+      r.s === 200 && r.j.success && r.j.data.some(b => (b.booking ? b.booking.id : b.id) === emAppt.id)
+    );
+
+    r = await call("POST", "/api/therapy-admin/reassign", T.therapy, {
+      bookingId: emAppt.id,
+      newTherapistId: U.t2.id,
+      reason: "Original therapist on emergency leave"
+    });
+    const reassignRow = (await q("SELECT therapist_id, therapist_name FROM appointments WHERE id = $1", [emAppt.id]))[0];
+    const notesCount = (await q("SELECT COUNT(*)::int AS n FROM notifications WHERE user_uid = $1 AND title LIKE '%Reassigned%'", [String(U.p1.id)]))[0].n;
+    check("P22 1-click reassignment reassigns appointment and notifies patient",
+      r.s === 200 && r.j.success && reassignRow.therapist_id === U.t2.id && notesCount >= 1,
+      "got " + r.s + " " + JSON.stringify(r.j) + " row=" + JSON.stringify(reassignRow) + " notes=" + notesCount
+    );
+  }
+
   // invoices
   r = await call("GET", "/api/invoices/list", T.su);
   const allInv = (await q("SELECT COUNT(*)::int AS n FROM invoices"))[0].n;

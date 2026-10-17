@@ -54,3 +54,6 @@ require('./jobs/weeklyPayoutJob').start();
 
 // P20: affiliate commissions become eligible after the return window
 require('./jobs/affiliateJob').start();
+
+// P22: quality rules and credential expiry checks
+require('./jobs/qualityCredentialJob').start();

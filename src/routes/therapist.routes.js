@@ -39,7 +39,11 @@ router.post("/document",authMiddleware, requireRole("therapist"),responseHandler
 router.get("/listnearby",responseHandler, therapistController.listUsersWithProfilesInRadius);
 
 // Dashboard
-router.get("/dashboard-stats/:therapistId", authMiddleware, requireRole("therapist", "admin.ecom", "admin.therapy"), responseHandler, therapistController.getDashboardStats);
+router.get("/dashboard-stats", authMiddleware, requireRole("therapist", "admin.ecom", "admin.therapy", "admin.super"), responseHandler, therapistController.getDashboardStats);
+router.get("/dashboard-stats/:therapistId", authMiddleware, requireRole("therapist", "admin.ecom", "admin.therapy", "admin.super"), responseHandler, therapistController.getDashboardStats);
+router.get("/stats", authMiddleware, requireRole("therapist", "admin.ecom", "admin.therapy", "admin.super"), responseHandler, therapistController.getDashboardStats);
+router.get("/stats/:therapistId", authMiddleware, requireRole("therapist", "admin.ecom", "admin.therapy", "admin.super"), responseHandler, therapistController.getDashboardStats);
+router.get("/my-patients", authMiddleware, requireRole("therapist"), responseHandler, therapistController.getMyPatientsProgress);
 router.get("/earnings/:therapistId", authMiddleware, requireRole("therapist", "admin.ecom", "admin.therapy"), responseHandler, therapistController.getEarnings);
 
 

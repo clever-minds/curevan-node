@@ -50,7 +50,7 @@ function sameDay(stored, ymd) {
 async function loadFacts(therapistUserId, ymd, transaction) {
   const opts = { type: QueryTypes.SELECT, transaction };
   const [profile] = await sequelize.query(
-    `SELECT id FROM therapist_profiles WHERE user_id = :uid`,
+    `SELECT id, quality_status, registration_valid_until FROM therapist_profiles WHERE user_id = :uid`,
     { ...opts, replacements: { uid: therapistUserId } }
   );
   if (!profile) return null;
@@ -119,6 +119,9 @@ async function getAvailableSlots(therapistUserId, ymd, now = Date.now()) {
 
   const facts = await loadFacts(therapistUserId, ymd);
   if (!facts) throw new SlotError(404, "Therapist not found");
+  if (facts.profile.quality_status === "frozen" || (facts.profile.registration_valid_until && String(facts.profile.registration_valid_until).slice(0, 10) < todayIst(now))) {
+    return { ...base, slots: [] };
+  }
 
   const length = rules.session.slotMinutes;
   const blocked = leaveWindows(facts.leaves);
@@ -153,6 +156,12 @@ async function assertSlotBookable(therapistUserId, ymd, time, { transaction, now
 
   const facts = await loadFacts(therapistUserId, ymd, transaction);
   if (!facts) throw new SlotError(404, "Therapist not found");
+  if (facts.profile.quality_status === "frozen") {
+    throw new SlotError(400, "The therapist is not currently accepting bookings.");
+  }
+  if (facts.profile.registration_valid_until && String(facts.profile.registration_valid_until).slice(0, 10) < todayIst(now)) {
+    throw new SlotError(400, "The therapist's professional registration has expired.");
+  }
 
   const length = rules.session.slotMinutes;
   if (!windowsFor(facts.availability, ymd).some(([from, to]) => minutes >= from && minutes + length <= to)) {

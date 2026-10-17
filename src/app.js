@@ -60,6 +60,7 @@ app.use('/api/payout-batches', require('./routes/payouts.routes'));
 app.use('/api/hooks', require('./routes/hooks.routes'));
 app.use('/api/invoices', require('./routes/invoices.routes'));
 app.use('/api/therapists', require('./routes/therapist.routes'));
+app.use('/api/therapy-admin', require('./routes/therapy-admin.routes'));
 app.use('/api/notifications', require('./routes/notifications.routes'));
 
 app.use('/api/appointments', require('./routes/appointments.routes'));
