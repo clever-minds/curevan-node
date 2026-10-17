@@ -245,7 +245,7 @@ async function confirmBookingPayment({ razorpayOrderId, paymentId, signature = n
          WHERE id = :id`,
         { replacements: { paymentId, id: appt.id }, type: QueryTypes.UPDATE, transaction }
       );
-      if (["pending_payment", "accepted_unpaid"].includes(appt.status)) {
+      if (["pending_payment", "accepted_unpaid", "proposed"].includes(appt.status)) {
         await stateMachine.transition(appt.id, "confirmed", { system: true }, { transaction, note: "payment verified" });
         appt.status = "confirmed";
       }

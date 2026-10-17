@@ -45,3 +45,6 @@ const unpaidTimer = setInterval(async () => {
 unpaidTimer.unref();
 
 console.log('Cron jobs initialized.');
+
+// P17: reminders, follow-up hold expiry, overdue follow-ups
+require('./jobs/reminderJob').start();

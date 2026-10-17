@@ -272,7 +272,7 @@ exports.createBookingAndInvoice = async (req, res) => {
       if (!appt) { await t.rollback(); return res.status(404).json({ success: false, error: "Appointment not found" }); }
       if (!access.same(appt.patient_id, req.user.id)) { await t.rollback(); return res.status(403).json({ success: false, error: "Forbidden" }); }
       if (appt.payment_status === "Paid") { await t.rollback(); return res.status(400).json({ success: false, error: "Already paid" }); }
-      if (appt.status !== STATUS.ACCEPTED_UNPAID) {
+      if (![STATUS.ACCEPTED_UNPAID, STATUS.PROPOSED].includes(appt.status)) {
         await t.rollback();
         return res.status(400).json({ success: false, error: "This request is not waiting for payment" });
       }
@@ -1052,6 +1052,10 @@ exports.updatePcr = async (req, res) => {
     // 7️⃣ Commit transaction
     await t.commit();
 
+    if (clinical.followUp) {
+      try { await require("../../services/followUpService").createProposals(clinical.followUp); }
+      catch (fuErr) { console.error("follow-up proposals failed:", fuErr.message); }   // the PCR is saved either way; the therapist can re-plan
+    }
     if (clinical.reportToMake) {
       try { await clinicalService.createReport(clinical.reportToMake); }
       catch (reportErr) { console.error("progress report failed:", reportErr.message); }
@@ -1796,7 +1800,7 @@ exports.confirmPayment = async (req, res) => {
       `UPDATE appointments SET payment_status = 'Paid', paid_at = NOW(), payment_method = :method WHERE id = :id`,
       { replacements: { id, method: gateway }, type: QueryTypes.UPDATE }
     );
-    if ([STATUS.PENDING_PAYMENT, STATUS.ACCEPTED_UNPAID].includes(appt.status)) {
+    if ([STATUS.PENDING_PAYMENT, STATUS.ACCEPTED_UNPAID, STATUS.PROPOSED].includes(appt.status)) {
       await stateMachine.transition(id, STATUS.CONFIRMED, { system: true }, { note: "offline payment recorded by admin" });
     }
 

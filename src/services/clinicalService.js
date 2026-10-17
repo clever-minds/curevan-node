@@ -3,6 +3,7 @@ const { QueryTypes } = require("sequelize");
 const { sequelize } = require("../config/db");
 const { planProgress } = require("./progressService");
 const { generateProgressPdf } = require("./progressReportPdf");
+const followUpService = require("./followUpService");
 
 class ClinicalError extends Error {
   constructor(httpStatus, message, extra = {}) { super(message); this.httpStatus = httpStatus; this.extra = extra; }
@@ -79,6 +80,18 @@ const assessmentPoint = (sessionType, sessionNumber, plan) => {
  */
 async function onPcrSave({ t, pcr, appointment, userId, data, submitting }) {
   const sessionType = SESSION_TYPES.includes(data.sessionType) ? data.sessionType : pcr.session_type || "follow_up";
+
+  // P17: the "next session plan" - required (when the client names a session type) except at discharge; kept on the PCR
+  const nextPlan = data.nextSessionPlan && typeof data.nextSessionPlan === "object" ? data.nextSessionPlan : null;
+  if (submitting && SESSION_TYPES.includes(data.sessionType) && sessionType !== "discharge") {
+    try { followUpService.validatePlan(nextPlan, { sessionType, planDischarged: false }); }
+    catch (e) { if (e instanceof followUpService.FollowUpError) throw new ClinicalError(e.httpStatus, e.message); throw e; }
+  }
+  if (nextPlan) {
+    const firstDate = nextPlan.mode === "single" ? nextPlan.date : nextPlan.mode === "series" ? (followUpService.slotsFromPlan(nextPlan)[0] || {}).date : null;
+    await sequelize.query(`UPDATE pcr SET next_session_plan = :plan::jsonb, next_treatment_date = COALESCE(:firstDate, next_treatment_date) WHERE id = :id`, { replacements: { plan: JSON.stringify(nextPlan), firstDate: firstDate || null, id: pcr.id }, type: QueryTypes.UPDATE, transaction: t });
+  }
+  const followUp = submitting && nextPlan && ["single", "series"].includes(nextPlan.mode) ? { pcrId: pcr.id, appointmentId: appointment.id, plan: nextPlan } : null;
   const planId = (await linkAppointment(appointment.id, t)) || null;
   let plan = null;
   if (planId) [plan] = await sequelize.query(`SELECT * FROM treatment_plans WHERE id = :id`, { replacements: { id: planId }, type: QueryTypes.SELECT, transaction: t });
@@ -89,7 +102,7 @@ async function onPcrSave({ t, pcr, appointment, userId, data, submitting }) {
     `UPDATE pcr SET session_type = :sessionType, treatment_plan_id = :planId, session_number = :sessionNumber WHERE id = :id`,
     { replacements: { sessionType, planId: plan ? plan.id : null, sessionNumber, id: pcr.id }, type: QueryTypes.UPDATE, transaction: t }
   );
-  if (!plan || !submitting) return { reportToMake: null };
+  if (!plan || !submitting) return { reportToMake: null, followUp };
 
   const due = await dueMeasures(plan, sessionType, sessionNumber, t);
   const given = Array.isArray(data.outcomeValues) ? data.outcomeValues : [];
@@ -140,7 +153,7 @@ async function onPcrSave({ t, pcr, appointment, userId, data, submitting }) {
     await sequelize.query(`UPDATE treatment_plans SET status = 'discharged', discharge_reason = :reason, updated_at = NOW() WHERE id = :id`, { replacements: { reason: String(data.dischargeReason).trim(), id: plan.id }, type: QueryTypes.UPDATE, transaction: t });
   }
   const makeReport = sessionType === "review" || sessionType === "discharge";
-  return { reportToMake: makeReport ? { planId: plan.id, type: sessionType === "discharge" ? "discharge" : "review", sessionNumber, summary: String(data.progressSummary).trim(), therapistId: appointment.therapist_id } : null };
+  return { followUp, reportToMake: makeReport ? { planId: plan.id, type: sessionType === "discharge" ? "discharge" : "review", sessionNumber, summary: String(data.progressSummary).trim(), therapistId: appointment.therapist_id } : null };
 }
 
 /** After the commit: store the report row and its PDF. */

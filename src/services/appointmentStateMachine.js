@@ -7,6 +7,9 @@ const rules = require("../config/businessRules");
 const otpService = require("./otpService");
 
 const STATUS = Object.freeze({
+  PROPOSED: "proposed",                       // P17: a follow-up the therapist recommended, waiting for the patient
+  PROPOSAL_EXPIRED: "proposal_expired",
+  PROPOSAL_DECLINED: "proposal_declined",
   PENDING_PAYMENT: "pending_payment",
   SEARCHING: "searching_therapist",
   ACCEPTED_UNPAID: "accepted_unpaid",
@@ -24,12 +27,15 @@ const STATUS = Object.freeze({
 });
 
 // states in which a booking is still alive (cancel / no-show are allowed from these)
-const ACTIVE = [STATUS.PENDING_PAYMENT, STATUS.SEARCHING, STATUS.ACCEPTED_UNPAID, STATUS.CONFIRMED, STATUS.ON_THE_WAY, STATUS.ARRIVED, STATUS.IN_PROGRESS];
-const TERMINAL = [STATUS.COMPLETED, STATUS.CANCELLED_PATIENT, STATUS.CANCELLED_THERAPIST, STATUS.CANCELLED_ADMIN, STATUS.CANCELLED_UNPAID, STATUS.NO_SHOW];
+const ACTIVE = [STATUS.PROPOSED, STATUS.PENDING_PAYMENT, STATUS.SEARCHING, STATUS.ACCEPTED_UNPAID, STATUS.CONFIRMED, STATUS.ON_THE_WAY, STATUS.ARRIVED, STATUS.IN_PROGRESS];
+const TERMINAL = [STATUS.PROPOSAL_EXPIRED, STATUS.PROPOSAL_DECLINED, STATUS.COMPLETED, STATUS.CANCELLED_PATIENT, STATUS.CANCELLED_THERAPIST, STATUS.CANCELLED_ADMIN, STATUS.CANCELLED_UNPAID, STATUS.NO_SHOW];
 
 // who: system | therapist (the assigned one) | patient (the owner) | admin
 const TRANSITIONS = [
-  { from: [STATUS.PENDING_PAYMENT], to: STATUS.CONFIRMED, who: ["system"] },
+  { from: [STATUS.PENDING_PAYMENT, STATUS.PROPOSED], to: STATUS.CONFIRMED, who: ["system"] },
+  { from: [STATUS.PROPOSED], to: STATUS.ACCEPTED_UNPAID, who: ["patient"] },                   // "confirm all": pay each session as it comes
+  { from: [STATUS.PROPOSED], to: STATUS.PROPOSAL_DECLINED, who: ["patient"] },
+  { from: [STATUS.PROPOSED, STATUS.ACCEPTED_UNPAID], to: STATUS.PROPOSAL_EXPIRED, who: ["system"] },
   { from: [STATUS.SEARCHING], to: STATUS.ACCEPTED_UNPAID, who: ["therapist", "system"] },
   { from: [STATUS.ACCEPTED_UNPAID], to: STATUS.CONFIRMED, who: ["system"] },
   { from: [STATUS.CONFIRMED], to: STATUS.ON_THE_WAY, who: ["therapist"] },
@@ -122,6 +128,11 @@ async function transition(appointmentId, to, actor, opts = {}) {
       rep[`x_${col}`] = val;
     }
     await sequelize.query(`UPDATE appointments SET ${sets.join(", ")} WHERE id = :id`, { replacements: rep, type: QueryTypes.UPDATE, transaction: t });
+
+    // a paid follow-up proposal counts as confirmed by the patient
+    if (to === STATUS.CONFIRMED && from === STATUS.PROPOSED || to === STATUS.CONFIRMED && from === STATUS.ACCEPTED_UNPAID) {
+      await sequelize.query(`UPDATE followup_proposals SET status = 'confirmed', patient_response_at = COALESCE(patient_response_at, NOW()) WHERE appointment_id = :id`, { replacements: { id: appointmentId }, type: QueryTypes.UPDATE, transaction: t });
+    }
 
     await sequelize.query(
       `INSERT INTO appointment_status_history (appointment_id, from_status, to_status, actor_id, note)

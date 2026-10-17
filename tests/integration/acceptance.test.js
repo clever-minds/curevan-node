@@ -780,7 +780,7 @@ async function seed() {
     await q("INSERT INTO pcr(appointment_id, patient_id, therapist_id, service_type_id, status, version) VALUES ($1,$2,$3,$4,'not_started',1)", [id, patientId, U.t1.id, serviceTypeId]);
     return id;
   };
-  const submit = (apptId, body) => call("PATCH", "/api/appointments/pcr/" + apptId, T.t1, { ...fullPcr, status: "submitted", ...body });
+  const submit = (apptId, body) => call("PATCH", "/api/appointments/pcr/" + apptId, T.t1, { ...fullPcr, status: "submitted", nextSessionPlan: body.sessionType === "discharge" ? { mode: "none" } : { mode: "later", reason: "patient will book later" }, ...body });
   const ov = (code, value, extra = {}) => ({ measureId: mid[code], value, ...extra });
 
   // --- measure library admin
@@ -964,6 +964,181 @@ async function seed() {
   r = await call("GET", "/api/clinical/plans/" + planA + "/progress", cgLive);
   check("P16 after revoking, access is closed again (403)", r.s === 403, "got " + r.s);
 
+  }
+
+  // ---- P17: next-session proposals, holds, reminders, calendar, overdue
+  {
+    const followUpService = require("../../src/services/followUpService");
+    const reminderService = require("../../src/services/reminderService");
+    const [fuPatient] = await q("INSERT INTO users(uid, email, name, phone, role, is_verified) VALUES ('fu-1','fu1@x.com','Fiona Patient','9000000066','patient',true) RETURNING id");
+    const fuToken = token({ id: fuPatient.id, uid: "fu-1", email: "fu1@x.com", role: "patient" });
+    await q("UPDATE users SET reminder_prefs = '{\"r24h\":true,\"r2h\":true,\"hep_daily\":false}'::jsonb WHERE id = $1", [fuPatient.id]);
+    const [fuAddr] = await q("INSERT INTO order_addresses(user_id, address_type, full_name, full_address, city, state, pincode) VALUES ($1,'shipping','Fiona','5 Lake Rd','Vadodara','Gujarat','390001') RETURNING id", [fuPatient.id]);
+    let fuN = 0;
+    const mkSrc = async () => {   // a finished visit waiting for its PCR
+      fuN += 1;
+      const id = (await q(`INSERT INTO appointments(patient_id, patient_name, therapist_id, therapist_name, service_type_id, service_amount, total_amount, date, time, status, payment_status, payment_method, service_address_id)
+        VALUES ($1,'Fiona Patient',$2,'Dr One',1,1500,1500,$3,'08:00','pcr_pending','Paid','razorpay',$4) RETURNING id`, [fuPatient.id, U.t1.id, day(-(300 - fuN)), fuAddr.id]))[0].id;
+      await q("INSERT INTO pcr(appointment_id, patient_id, therapist_id, service_type_id, status, version) VALUES ($1,$2,$3,1,'not_started',1)", [id, fuPatient.id, U.t1.id]);
+      return id;
+    };
+    const send = (id, extra) => call("PATCH", "/api/appointments/pcr/" + id, T.t1, { ...fullPcr, status: "submitted", sessionType: "follow_up", ...extra });
+    const src1 = await mkSrc();
+
+    // validation of the "next session plan"
+    r = await send(src1, {});
+    check("P17 a follow-up visit must say what happens next (400)", r.s === 400 && /what happens next/i.test(r.raw || ""), "got " + r.s + " " + (r.raw || "").slice(0, 120));
+    r = await send(src1, { nextSessionPlan: { mode: "none" } });
+    check("P17 'No further sessions' is only for a discharge (400)", r.s === 400);
+    r = await send(src1, { nextSessionPlan: { mode: "later" } });
+    check("P17 'Patient will book later' needs a reason (400)", r.s === 400);
+    r = await send(src1, { nextSessionPlan: { mode: "series", weekdays: [1, 3, 5], time: "16:00", occurrences: 13 } });
+    check("P17 a series is limited to 12 sessions (400)", r.s === 400);
+
+    // series: Mon/Wed/Fri 16:00 x 6
+    const seriesPlan = { mode: "series", weekdays: [1, 3, 5], time: "16:00", occurrences: 6, startDate: day(2) };
+    const notifBefore = (await q("SELECT COUNT(*)::int AS n FROM notifications WHERE user_uid = $1 AND title = 'Your next session'", [String(fuPatient.id)]))[0].n;
+    r = await send(src1, { nextSessionPlan: seriesPlan });
+    check("P17 PCR submitted with a 6-session series", r.s === 200, "got " + r.s + " " + (r.raw || "").slice(0, 150));
+    const props = await q("SELECT fp.*, a.status AS astatus, to_char(a.date,'YYYY-MM-DD') AS d, a.time FROM followup_proposals fp JOIN appointments a ON a.id = fp.appointment_id WHERE fp.patient_id = $1 AND fp.status = 'proposed' ORDER BY a.date", [fuPatient.id]);
+    check("P17 6 'proposed' appointments hold the slots (one series row, hold expiry set)", props.length === 6 && props.every((x) => x.astatus === "proposed" && x.time === "16:00" && x.hold_expires_at) && new Set(props.map((x) => x.series_id)).size === 1 && (await q("SELECT 1 FROM followup_series WHERE id = $1", [props[0].series_id])).length === 1, JSON.stringify(props.map((x) => x.d + " " + x.astatus)));
+    check("P17 they fall on Mon/Wed/Fri", props.every((x) => [1, 3, 5].includes(new Date(x.d + "T00:00:00Z").getUTCDay())));
+    check("P17 the old next_treatment_date is filled from the plan", (await q("SELECT left(next_treatment_date::text, 10) AS d FROM pcr WHERE appointment_id = $1", [src1]))[0].d === props[0].d, "");
+    const pn = await q("SELECT message FROM notifications WHERE user_uid = $1 AND title = 'Your next session' ORDER BY id DESC", [String(fuPatient.id)]);
+    check("P17 the patient is told once, with no clinical text", pn.length === notifBefore + 1 && /recommends 6 sessions/.test(pn[0].message) && !/hemipleg|stroke|aphasia|knee|diagnos/i.test(pn[0].message), pn[0] && pn[0].message);
+
+    // another patient cannot take those slots
+    r = await call("POST", "/api/appointments/create-appointment", T.p2, bk(U.t1.id, props[0].d, "16:00"));
+    check("P17 another patient cannot book a held slot (409)", r.s === 409, "got " + r.s + " " + (r.raw || "").slice(0, 100));
+    r = await call("GET", "/api/therapists/" + U.t1.id + "/slots?date=" + props[0].d);
+    check("P17 and the slot is gone from the free-slots list", r.s === 200 && !r.j.data.slots.some((x) => x.time === "16:00") && r.j.data.slots.some((x) => x.time === "09:00"));
+
+    // patient sees them; others do not
+    r = await call("GET", "/api/clinical/followups/mine", fuToken);
+    check("P17 the patient lists their 6 proposals", r.s === 200 && r.j.data.length === 6 && r.j.data.every((x) => x.apptStatus === "proposed"), "got " + r.s + " " + (r.raw || "").slice(0, 100));
+    r = await call("GET", "/api/clinical/followups/mine", T.p2);
+    check("P17 another patient sees none", r.s === 200 && r.j.data.length === 0);
+    r = await call("POST", "/api/clinical/followups/" + props[0].id + "/decline", T.p2);
+    check("P17 another patient cannot respond to them (403)", r.s === 403, "got " + r.s);
+
+    // change one time, decline one
+    r = await call("POST", "/api/clinical/followups/" + props[1].id + "/change", fuToken, { date: props[1].d, time: "12:00" });
+    check("P17 the patient chooses another time for one session", r.s === 200 && (await q("SELECT time FROM appointments WHERE id = $1", [props[1].appointment_id]))[0].time === "12:00" && (await q("SELECT status FROM followup_proposals WHERE id = $1", [props[1].id]))[0].status === "changed", "got " + r.s + " " + (r.raw || "").slice(0, 120));
+    r = await call("POST", "/api/clinical/followups/" + props[2].id + "/change", fuToken, { date: props[1].d, time: "12:00" });
+    check("P17 a time that is taken is refused (409)", r.s === 409, "got " + r.s);
+    r = await call("POST", "/api/clinical/followups/" + props[2].id + "/change", fuToken, { date: props[2].d, time: "23:00" });
+    check("P17 a time outside the working hours is refused (400/409)", [400, 409].includes(r.s), "got " + r.s);
+    r = await call("POST", "/api/clinical/followups/" + props[5].id + "/decline", fuToken);
+    check("P17 the patient declines one: appointment proposal_declined, slot free again", r.s === 200 && (await q("SELECT status FROM appointments WHERE id = $1", [props[5].appointment_id]))[0].status === "proposal_declined" && (await call("GET", "/api/therapists/" + U.t1.id + "/slots?date=" + props[5].d)).j.data.slots.some((x) => x.time === "16:00"));
+
+    // confirm all: sessions wait for payment, one at a time
+    r = await call("POST", "/api/clinical/followups/" + props[0].id + "/confirm", fuToken, { all: true });
+    const confirmedIds = r.j && r.j.data && r.j.data.confirmed;
+    check("P17 'Confirm all' commits the 5 remaining sessions (awaiting payment, hold ends 12 h before each)", r.s === 200 && confirmedIds.length === 5 && (await q("SELECT COUNT(*)::int AS n FROM appointments WHERE id = ANY($1) AND status = 'accepted_unpaid'", [confirmedIds]))[0].n === 5 && (await q("SELECT COUNT(*)::int AS n FROM followup_proposals WHERE appointment_id = ANY($1) AND status = 'confirmed' AND hold_expires_at IS NOT NULL", [confirmedIds]))[0].n === 5, "got " + r.s + " " + (r.raw || "").slice(0, 150));
+    r = await call("POST", "/api/appointments/" + confirmedIds[0] + "/pay", T.therapy, { gateway: "manual_cash", paymentId: "m17" });
+    check("P17 a paid session becomes 'confirmed' (the visit flow and OTP then apply)", r.s === 200 && (await q("SELECT status, start_otp_hash FROM appointments WHERE id = $1", [confirmedIds[0]]))[0].status === "confirmed" && !!(await q("SELECT start_otp_hash FROM appointments WHERE id = $1", [confirmedIds[0]]))[0].start_otp_hash);
+
+    // single session through the normal payment (Step A from 'proposed', Step B verify)
+    const src2 = await mkSrc();
+    r = await send(src2, { nextSessionPlan: { mode: "single", date: day(20), time: "15:00" } });
+    const single = (await q("SELECT fp.id, fp.appointment_id FROM followup_proposals fp WHERE fp.source_pcr_id = (SELECT id FROM pcr WHERE appointment_id = $1)", [src2]))[0];
+    check("P17 'Single next session' creates one proposal", r.s === 200 && single, "got " + r.s + " " + (r.raw || "").slice(0, 120));
+    r = await call("POST", "/api/clinical/followups/" + single.id + "/confirm", fuToken, {});
+    check("P17 'Confirm & pay' hands over to the normal payment", r.s === 200 && r.j.data.next === "pay" && r.j.data.appointmentId === single.appointment_id);
+    r = await call("POST", "/api/appointments/create-appointment", fuToken, { appointmentId: single.appointment_id });
+    const rzS = r.j && r.j.razorpayOrderId;
+    check("P17 payment Step A works from 'proposed' (server price, Razorpay order)", r.s === 200 && rzS, "got " + r.s + " " + (r.raw || "").slice(0, 120));
+    r = await call("POST", "/api/payments/verify-booking", fuToken, { razorpay_order_id: rzS, razorpay_payment_id: "pay_p17", razorpay_signature: sign(rzS, "pay_p17") });
+    check("P17 Step B verifies it: the session is 'confirmed' and the proposal row too", r.s === 200 && (await q("SELECT status FROM appointments WHERE id = $1", [single.appointment_id]))[0].status === "confirmed" && (await q("SELECT status FROM followup_proposals WHERE id = $1", [single.id]))[0].status === "confirmed", "got " + r.s + " " + (r.raw || "").slice(0, 150));
+
+    // hold expiry: one nudge, then release
+    const src3 = await mkSrc();
+    await send(src3, { nextSessionPlan: { mode: "single", date: day(21), time: "15:00" } });
+    const exp = (await q("SELECT fp.id, fp.appointment_id FROM followup_proposals fp WHERE fp.source_pcr_id = (SELECT id FROM pcr WHERE appointment_id = $1)", [src3]))[0];
+    await q("UPDATE followup_proposals SET created_at = now() - interval '13 hours' WHERE id = $1", [exp.id]);
+    let jr = await followUpService.expireHolds();
+    jr = await followUpService.expireHolds();
+    check("P17 an unanswered proposal gets exactly one nudge after 12 h", (await q("SELECT COUNT(*)::int AS n FROM reminder_log WHERE appointment_id = $1 AND type = 'followup_nudge'", [exp.appointment_id]))[0].n === 1 && (await q("SELECT COUNT(*)::int AS n FROM notifications WHERE user_uid = $1 AND title = 'Keep your next session'", [String(fuPatient.id)]))[0].n === 1);
+    await q("UPDATE followup_proposals SET hold_expires_at = now() - interval '1 minute' WHERE id = $1", [exp.id]);
+    const notesBefore = (await q("SELECT COUNT(*)::int AS n FROM notifications WHERE title = 'A recommended session was released'"))[0].n;
+    jr = await followUpService.expireHolds();
+    check("P17 at hold expiry the booking is released (proposal_expired) and both sides are told", jr.expired >= 1 && (await q("SELECT status FROM appointments WHERE id = $1", [exp.appointment_id]))[0].status === "proposal_expired" && (await q("SELECT status FROM followup_proposals WHERE id = $1", [exp.id]))[0].status === "expired" && (await q("SELECT COUNT(*)::int AS n FROM notifications WHERE title = 'A recommended session was released'"))[0].n === notesBefore + 2);
+    check("P17 the expired slot is free for others", (await call("GET", "/api/therapists/" + U.t1.id + "/slots?date=" + day(21))).j.data.slots.some((x) => x.time === "15:00"));
+
+    // no_slot: the slot was taken before submit
+    const src4 = await mkSrc();
+    await q(`INSERT INTO appointments(patient_id, therapist_id, date, time, status, payment_status) VALUES ($1,$2,$3,'15:00','confirmed','Paid')`, [U.p2.id, U.t1.id, day(22)]);
+    const alertsBefore = (await q("SELECT COUNT(*)::int AS n FROM notifications WHERE title = 'A recommended time is no longer free'"))[0].n;
+    r = await send(src4, { nextSessionPlan: { mode: "single", date: day(22), time: "15:00" } });
+    check("P17 a slot that was just taken becomes 'no_slot' and the therapist is alerted", r.s === 200 && (await q("SELECT COUNT(*)::int AS n FROM followup_proposals WHERE source_pcr_id = (SELECT id FROM pcr WHERE appointment_id = $1) AND status = 'no_slot'", [src4]))[0].n === 1 && (await q("SELECT COUNT(*)::int AS n FROM notifications WHERE title = 'A recommended time is no longer free'"))[0].n === alertsBefore + 1);
+
+    // ---- reminders: exactly once, respecting preferences
+    const mkConf = async (patientId, minFromNow, name = "Fiona Patient") => {
+      const w = istParts(minFromNow);
+      return (await q(`INSERT INTO appointments(patient_id, patient_name, therapist_id, therapist_name, service_type_id, service_amount, total_amount, date, time, status, payment_status, payment_method, service_address_id)
+        VALUES ($1,$2,$3,'Dr One',1,1500,1500,$4,$5,'confirmed','Paid','razorpay',$6) RETURNING id`, [patientId, name, U.t1.id, w.date, w.time, fuAddr.id]))[0].id;
+    };
+    const a24 = await mkConf(fuPatient.id, 23 * 60 + 40);
+    const a2h = await mkConf(fuPatient.id, 90);
+    const a60 = await mkConf(fuPatient.id, 45);
+    const nowMs = Date.now();
+    let sent = await reminderService.run(nowMs);
+    sent = await reminderService.run(nowMs);
+    const cnt = async (appt, type, user) => (await q("SELECT COUNT(*)::int AS n FROM reminder_log WHERE appointment_id = $1 AND type = $2 AND user_id = $3", [appt, type, user]))[0].n;
+    check("P17 the 24 h reminder is logged exactly once even though the job ran twice", (await cnt(a24, "reminder_24h", fuPatient.id)) === 1 && (await q("SELECT COUNT(*)::int AS n FROM notifications WHERE user_uid = $1 AND message LIKE '%tomorrow%'", [String(fuPatient.id)]))[0].n === 1);
+    const m2 = await q("SELECT message FROM notifications WHERE user_uid = $1 AND message LIKE '%in 2 hours%'", [String(fuPatient.id)]);
+    check("P17 the 2 h reminder (once) says the start code will be visible", (await cnt(a2h, "reminder_2h", fuPatient.id)) === 1 && m2.length === 1 && /start code will be visible/.test(m2[0].message));
+    check("P17 the therapist gets the 60-minute reminder once, with the patient's first name only", (await cnt(a60, "therapist_60min", U.t1.id)) === 1 && (await q("SELECT COUNT(*)::int AS n FROM notifications WHERE user_uid = $1 AND title = 'Session starting soon' AND message LIKE '%Fiona%'", [String(U.t1.id)]))[0].n === 1);
+    // preferences
+    r = await call("PUT", "/api/clinical/reminder-prefs", T.p2, { r24h: false, r2h: true, hep_daily: false });
+    const a24b = await mkConf(U.p2.id, 23 * 60 + 35, "Patient Two");
+    await reminderService.run(nowMs);
+    check("P17 a patient who switched the 24 h reminder off does not get it", r.s === 200 && (await cnt(a24b, "reminder_24h", U.p2.id)) === 0);
+    // agenda 07:00 and HEP 18:00 (clock passed in)
+    const at = (hh) => new Date(day(1) + "T" + hh + ":00+05:30").getTime();   // tomorrow, so the earlier real-time run cannot have used up today's agenda
+    const agendaAppt = await mkConf(fuPatient.id, 0);
+    await q("UPDATE appointments SET time = '13:15', date = $2 WHERE id = $1", [agendaAppt, day(1)]);
+    await reminderService.run(at("08:00")); await reminderService.run(at("08:05"));
+    const agenda = await q("SELECT message FROM notifications WHERE user_uid = $1 AND title = 'Your sessions today' AND message LIKE '%13:15 Fiona%'", [String(U.t1.id)]);
+    check("P17 the therapist's daily agenda goes out once from 07:00 and lists the day's sessions", agenda.length === 1 && /13:15 Fiona/.test(agenda[0].message), JSON.stringify(agenda));
+    await q("UPDATE users SET reminder_prefs = '{\"r24h\":true,\"r2h\":true,\"hep_daily\":true}'::jsonb WHERE id = $1", [U.p2.id]);
+    await reminderService.run(at("19:00")); await reminderService.run(at("19:05"));
+    check("P17 the 18:00 home-exercise reminder goes to opted-in patients with an active plan, once a day", (await q("SELECT COUNT(*)::int AS n FROM notifications WHERE user_uid = $1 AND title = 'Time for your home exercises'", [String(U.p2.id)]))[0].n === 1);
+    check("P17 no reminder or proposal text contains the condition, diagnosis or clinical notes", (await q("SELECT COUNT(*)::int AS n FROM notifications WHERE message ~* '(hemipleg|stroke|aphasia|diagnos|knee|speech)' AND type IN ('reminder','followup_proposed','followup_nudge','followup_expired','followup_no_slot','followup_overdue')"))[0].n === 0);
+
+    // ---- calendar: .ics for one booking, personal feed with tentative entries
+    r = await call("GET", "/api/calendar/appointments/" + a24 + ".ics", fuToken);
+    check("P17 the patient downloads a .ics for their booking: no clinical text", r.s === 200 && /BEGIN:VEVENT/.test(r.raw) && /Curevan home session/.test(r.raw) && !/hemipleg|stroke|aphasia|diagnos/i.test(r.raw), "got " + r.s + " " + (r.raw || "").slice(0, 100));
+    r = await call("GET", "/api/calendar/appointments/" + a24 + ".ics", T.p2);
+    check("P17 another patient cannot (403)", r.s === 403);
+    await q(`INSERT INTO appointments(patient_id, patient_name, therapist_id, therapist_name, date, time, status, payment_status) VALUES ($1,'Fiona Patient',$2,'Dr One',$3,'11:00','proposed','Pending')`, [fuPatient.id, U.t1.id, day(5)]);
+    r = await call("GET", "/api/calendar/token", T.t1);
+    const feedUrl = r.j.data.url;
+    const feed = await fetch(feedUrl).then((x) => x.text());
+    check("P17 the therapist's personal feed (no login, secret address) lists confirmed sessions and marks proposed ones '(tentative)'", /BEGIN:VCALENDAR/.test(feed) && /Curevan home session with Fiona/.test(feed) && /\(tentative\)/.test(feed), feed.slice(0, 200));
+    r = await call("POST", "/api/calendar/token/regenerate", T.t1);
+    const newFeed = r.j.data.url;
+    check("P17 regenerating the token kills the old address", newFeed !== feedUrl && (await fetch(feedUrl)).status === 404 && (await fetch(newFeed)).status === 200);
+
+    // ---- overdue follow-up
+    const [odPatient] = await q("INSERT INTO users(uid, email, name, phone, role, is_verified) VALUES ('od-1','od1@x.com','Omar Patient','9000000067','patient',true) RETURNING id");
+    const [odPlan] = await q("INSERT INTO treatment_plans(patient_id, primary_therapist_id, service_type_id, condition, planned_sessions, frequency_per_week, plan_start) VALUES ($1,$2,1,'Back pain',10,2, CURRENT_DATE - 20) RETURNING id", [odPatient.id, U.t1.id]);
+    await q(`INSERT INTO appointments(patient_id, therapist_id, date, time, status, payment_status, treatment_plan_id) VALUES ($1,$2,$3,'11:00','completed','Paid',$4)`, [odPatient.id, U.t1.id, day(-10), odPlan.id]);
+    const od1 = await followUpService.markOverdue();
+    check("P17 a patient with an active plan and no next booking past the grace period is flagged overdue", od1.flagged >= 1 && (await q("SELECT follow_up_overdue FROM treatment_plans WHERE id = $1", [odPlan.id]))[0].follow_up_overdue === true && (await q("SELECT COUNT(*)::int AS n FROM notifications WHERE user_uid = $1 AND title = 'Time to book your next session'", [String(odPatient.id)]))[0].n === 1);
+    await followUpService.markOverdue();
+    check("P17 the patient is told only once", (await q("SELECT COUNT(*)::int AS n FROM notifications WHERE user_uid = $1 AND title = 'Time to book your next session'", [String(odPatient.id)]))[0].n === 1);
+    r = await call("GET", "/api/clinical/followups/overdue", T.therapy);
+    check("P17 Therapy Admin sees the overdue list", r.s === 200 && r.j.data.some((x) => x.planId === odPlan.id));
+    r = await call("GET", "/api/clinical/followups/overdue", T.t1);
+    check("P17 the primary therapist sees their own", r.s === 200 && r.j.data.some((x) => x.planId === odPlan.id));
+    r = await call("GET", "/api/clinical/followups/overdue", T.t2);
+    check("P17 another therapist does not see it", r.s === 200 && !r.j.data.some((x) => x.planId === odPlan.id));
+    r = await call("GET", "/api/clinical/followups/overdue", T.p1);
+    check("P17 patients cannot read the list (403)", r.s === 403);
+    await q(`INSERT INTO appointments(patient_id, therapist_id, date, time, status, payment_status, treatment_plan_id) VALUES ($1,$2,$3,'11:30','confirmed','Paid',$4)`, [odPatient.id, U.t1.id, day(3), odPlan.id]);
+    await followUpService.markOverdue();
+    check("P17 booking a next session clears the flag", (await q("SELECT follow_up_overdue FROM treatment_plans WHERE id = $1", [odPlan.id]))[0].follow_up_overdue === false);
   }
 
   // invoices

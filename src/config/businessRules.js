@@ -39,6 +39,8 @@ module.exports = Object.freeze({
   }),
   shop: Object.freeze({ freeShippingThresholdInr: 499, flatShippingFeeInr: 50, returnWindowDays: 7 }),   // D3 D11
   affiliate: Object.freeze({ patientDiscountPct: 10, therapistCommissionPct: 5, eligibleAfterDeliveryDays: 7 }), // D13
+  followUp: Object.freeze({ holdHours: 24, mustConfirmHoursBefore: 12, nudgeAfterHours: 12, overdueGraceDays: 2, maxSeriesSessions: 12 }),     // D16 (P17)
+  reminders: Object.freeze({ patientHoursBefore: [24, 2], therapistAgendaHour: 7, therapistMinutesBefore: 60, hepReminderHour: 18 }),            // D16 (P17)
   quality: Object.freeze({ windowRatings: 20, minRatings: 10, coachingBelow: 4.5, reviewBelow: 4.0 }),  // D9
   maskedCall: Object.freeze({ windowHoursBefore: 2, windowHoursAfter: 1 }),                              // D12
   support: Object.freeze({ openHour: 8, closeHour: 21, callbackBy: '09:30' }),
