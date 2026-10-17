@@ -1569,6 +1569,8 @@ exports.myOrders = async (req, res) => {
         o.status,
         o.payment_status AS "paymentStatus",
         o.created_at AS "createdAt",
+        o.delivered_at AS "deliveredAt",
+        (SELECT sh.awb FROM shipments sh WHERE sh.order_id = o.id ORDER BY sh.id DESC LIMIT 1) AS "awb",
         -- Invoice info
         i.id AS "invoiceId",
         i.invoice_number AS "invoiceNumber",
