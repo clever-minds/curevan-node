@@ -43,6 +43,7 @@ module.exports = Object.freeze({
   reminders: Object.freeze({ patientHoursBefore: [24, 2], therapistAgendaHour: 7, therapistMinutesBefore: 60, hepReminderHour: 18 }),            // D16 (P17)
   quality: Object.freeze({ windowRatings: 20, minRatings: 10, coachingBelow: 4.5, reviewBelow: 4.0 }),  // D9
   maskedCall: Object.freeze({ windowHoursBefore: 2, windowHoursAfter: 1 }),                              // D12
+  features: Object.freeze({ maskedCall: false, carePacks: false }),                                      // switched on by P27 / P28
   support: Object.freeze({ openHour: 8, closeHour: 21, callbackBy: '09:30' }),
   ai: Object.freeze({ modelId: process.env.AI_MODEL_ID || '' }),                                         // set at go-live
 });

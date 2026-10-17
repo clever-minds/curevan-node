@@ -1556,6 +1556,94 @@ async function seed() {
     check("P20 ... nor anonymous callers (401)", r.s === 401);
   }
 
+  // P21 patient dashboard summary
+  {
+    const pad2 = (n) => String(n).padStart(2, "0");
+    const ist = (minFromNow) => { const d = new Date(Date.now() + 5.5 * 3600e3 + minFromNow * 60000); return { date: `${d.getUTCFullYear()}-${pad2(d.getUTCMonth() + 1)}-${pad2(d.getUTCDate())}`, time: `${pad2(d.getUTCHours())}:${pad2(d.getUTCMinutes())}` }; };
+    const [p3] = await q("INSERT INTO users(uid,email,name,phone,role,is_verified,city,state) VALUES ('patient-p21','p21@x.com','Patient P21','9000000021','patient',true,'Vadodara','Gujarat') RETURNING *");
+    await q("INSERT INTO user_roles(user_id, role_id) SELECT $1, id FROM roles WHERE name = 'patient'", [p3.id]);
+    const [th21] = await q("INSERT INTO users(uid,email,name,phone,role,is_verified,city,state) VALUES ('therapist-p21','t21@x.com','Dr P21','9000000121','therapist',true,'Vadodara','Gujarat') RETURNING *");
+    const T3 = token(p3);
+    const dash = async (tk) => call("GET", "/api/patients/me/dashboard", tk);
+
+    r = await call("GET", "/api/patients/me/dashboard");
+    check("P21 the dashboard needs a login (401)", r.s === 401);
+    r = await dash(token({ ...th21, roleName: "therapist" }));
+    check("P21 only patients can open it (therapist 403)", r.s === 403);
+
+    r = await dash(T3);
+    let d = r.j && r.j.data;
+    check("P21 a new patient gets empty sections and isNew = true", r.s === 200 && d.isNew === true && d.activeBooking === null && d.recovery === null && d.proposals.length === 0 && d.orders.length === 0 && d.records.pcrs.length === 0 && d.lastTherapist === null, JSON.stringify(d).slice(0, 300));
+
+    // --- active booking and the start code window
+    const soon = ist(60), later = ist(3 * 24 * 60);
+    const mkAppt = (who, w, status, extra = {}) => q(`INSERT INTO appointments(patient_id, patient_name, therapist_id, therapist_name, service_type_id, therapy_type, service_amount, total_amount, date, time, status, payment_status, mode, created_at)
+      VALUES ($1,$2,$3,'Dr P21',1,'Physio',1500,1500,$4,$5,$6,'Paid','home', now()) RETURNING id`, [who.id, who.name, th21.id, w.date, w.time, status]).then((x) => x[0].id);
+    const farId = await mkAppt(p3, later, "confirmed");
+    r = await dash(T3); d = r.j.data;
+    check("P21 a booking days away is shown, but no start code is offered yet", d.activeBooking && d.activeBooking.id === farId && d.activeBooking.otpAvailable === false && d.isNew === false, JSON.stringify(d.activeBooking));
+    const soonId = await mkAppt(p3, soon, "confirmed");
+    r = await dash(T3); d = r.j.data;
+    check("P21 the nearest booking comes first and its start code is available (within 2 h)", d.activeBooking.id === soonId && d.activeBooking.otpAvailable === true && d.activeBooking.therapistName === "Dr P21");
+    r = await call("GET", "/api/appointments/" + soonId + "/otp", T3);
+    check("P21 ... and the OTP endpoint really gives the code to this patient", r.s === 200 && /^\d{4}$/.test(String(r.j.data.otp)));
+    r = await call("GET", "/api/appointments/" + soonId + "/otp", T.p2);
+    check("P21 another patient cannot read that code (403)", r.s === 403);
+    await q("UPDATE appointments SET status = 'pending_payment' WHERE id = $1", [soonId]);
+    r = await dash(T3); d = r.j.data;
+    check("P21 an unconfirmed booking never offers a start code", d.activeBooking.id === soonId && d.activeBooking.otpAvailable === false);
+    await q("UPDATE appointments SET status = 'confirmed' WHERE id = $1", [soonId]);
+    r = await dash(T.p2);
+    check("P21 other patients' bookings do not leak into my summary", !(r.j.data.activeBooking && [soonId, farId].includes(r.j.data.activeBooking.id)));
+
+    // --- pending proposal
+    const propW = ist(5 * 24 * 60);
+    const propAppt = await mkAppt(p3, propW, "proposed");
+    const [fp] = await q("INSERT INTO followup_proposals(patient_id, therapist_id, proposed_start, appointment_id, status, hold_expires_at) VALUES ($1,$2, now() + interval '5 days', $3, 'proposed', now() + interval '20 hours') RETURNING id", [p3.id, th21.id, propAppt]);
+    r = await dash(T3); d = r.j.data;
+    check("P21 a pending next-session proposal is listed with its hold expiry", d.proposals.length === 1 && d.proposals[0].id === fp.id && d.proposals[0].holdExpiresAt && d.activeBooking.id === soonId);
+
+    // --- recovery: plan, goal, outcome results, quick PCR scores
+    const [plan] = await q("INSERT INTO treatment_plans(patient_id, primary_therapist_id, service_type_id, condition, planned_sessions, frequency_per_week, review_every_sessions, status, follow_up_overdue) VALUES ($1,$2,1,'Stroke recovery',12,3,5,'active', true) RETURNING id", [p3.id, th21.id]);
+    const bbs = (await q("SELECT id FROM outcome_measures WHERE code = 'BBS'"))[0].id;
+    const tug = (await q("SELECT id FROM outcome_measures WHERE code = 'TUG'"))[0].id;
+    await q("INSERT INTO plan_measures(plan_id, measure_id) VALUES ($1,$2), ($1,$3)", [plan.id, tug, bbs]);
+    await q("INSERT INTO treatment_goals(plan_id, description, measure_id, baseline_value, target_value) VALUES ($1,'Walk safely indoors',$2,30,50)", [plan.id, bbs]);
+    const entered = [30, 38, 44];
+    const pcrIds = [];
+    for (let i = 0; i < 3; i += 1) {
+      const w = ist(-(10 - i) * 24 * 60);
+      const apptId = await mkAppt(p3, w, "completed");
+      await q("UPDATE appointments SET pcr_status = 'locked', treatment_plan_id = $2 WHERE id = $1", [apptId, plan.id]);
+      const [pc] = await q("INSERT INTO pcr(appointment_id, patient_id, therapist_id, status, therapist_name, functional_score, pain_vas) VALUES ($1,$2,$3,'locked','Dr P21',$4,$5) RETURNING id", [apptId, p3.id, th21.id, 3 + i * 2, 8 - i * 2]);
+      pcrIds.push(pc.id);
+      await q("INSERT INTO outcome_results(plan_id, measure_id, pcr_id, value, assessment_point, recorded_at) VALUES ($1,$2,$3,$4,$5, now() - ($6 || ' days')::interval)", [plan.id, bbs, pc.id, entered[i], i === 0 ? "baseline" : "session", String(10 - i)]);
+    }
+    await q("INSERT INTO progress_reports(plan_id, report_type, session_number, summary, therapist_id, shared_with_patient_at) VALUES ($1,'review',5,'ok',$2, now()), ($1,'review',10,'hidden',$2, NULL)", [plan.id, th21.id]);
+    r = await dash(T3); d = r.j.data;
+    const rec = d.recovery;
+    check("P21 recovery: condition, sessions done / planned, attendance, review countdown and the overdue flag come from the plan",
+      rec && rec.condition === "Stroke recovery" && rec.sessionsDone === 3 && rec.plannedSessions === 12 && rec.sessionsToNextReview === 2 && rec.followUpOverdue === true && rec.adherence && "ratio" in rec.adherence, JSON.stringify(rec).slice(0, 300));
+    const series = rec && rec.measures.find((m) => m.code === "BBS");
+    check("P21 chart values are exactly the outcome results entered in the PCRs", series && series.series.map((s) => s.value).join() === entered.join(), JSON.stringify(series && series.series.map((s) => s.value)));
+    check("P21 only measures that have data are returned, at most 3, goals first", rec.measures.length === 1 && rec.measures[0].code === "BBS" && rec.goals.length === 1 && rec.goals[0].measureCode === "BBS");
+    check("P21 the quick functional and pain scores equal what the PCRs hold", d.quickScores.map((x) => x.functionalScore + "/" + x.painVas).join() === "3/8,5/6,7/4", JSON.stringify(d.quickScores));
+    check("P21 health records: the last 3 locked PCRs, newest first; only reports shared with the patient", d.records.pcrs.length === 3 && d.records.pcrs[0].date >= d.records.pcrs[2].date && d.records.reports.length === 1 && d.records.reports[0].reportType === "review");
+    check("P21 last therapist is the one from the latest finished session", d.lastTherapist && d.lastTherapist.therapistId === th21.id && d.lastTherapist.name === "Dr P21");
+
+    // --- orders: the last 3 with tracking
+    for (let i = 1; i <= 4; i += 1) {
+      const oid = (await q("INSERT INTO orders(order_number, user_id, customer_name, subtotal, total, status, payment_status) VALUES ($1,$2,'Patient P21',100,100,$3,'Paid') RETURNING id", ["ORD-P21-" + i, p3.id, i === 4 ? "in_transit" : "Placed"]))[0].id;
+      if (i === 4) await q("INSERT INTO shipments(order_id, awb, carrier, status, provider) VALUES ($1,'AWBP21','Courier','In Transit','shiprocket')", [oid]);
+    }
+    r = await dash(T3); d = r.j.data;
+    check("P21 recent orders: the last 3, newest first, with the courier status and AWB", d.orders.length === 3 && d.orders[0].number === "ORD-P21-4" && d.orders[0].status === "in_transit" && d.orders[0].awb === "AWBP21" && d.orders[2].number === "ORD-P21-2", JSON.stringify(d.orders.map((o) => o.number)));
+
+    // --- feature flags for later prompts
+    r = await call("GET", "/api/config/public");
+    check("P21 feature flags maskedCall and carePacks are false in public config", r.s === 200 && r.j.data.features.maskedCall === false && r.j.data.features.carePacks === false);
+  }
+
   // invoices
   r = await call("GET", "/api/invoices/list", T.su);
   const allInv = (await q("SELECT COUNT(*)::int AS n FROM invoices"))[0].n;

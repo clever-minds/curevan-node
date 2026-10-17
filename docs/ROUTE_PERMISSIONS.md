@@ -225,3 +225,4 @@ Total routes: 170
 | PUT | /api/orders/returns/:id/reject, /receive, /inspect | admin.ecom |
 | POST | /api/coupons/generate-missing | admin.ecom, admin.therapy |
 | GET | /api/therapists/affiliate | therapist (own DR code and commission numbers) |
+| GET | /api/patients/me/dashboard | patient only (own summary: booking, proposals, plan, records, orders) |
