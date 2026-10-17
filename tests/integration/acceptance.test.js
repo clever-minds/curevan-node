@@ -37,7 +37,13 @@ let rzpSeq = 0, refundSeq = 0;
 class FakeRazorpay {
   constructor() {
     this.orders = { create: async (o) => { const x = { id: "order_I" + ++rzpSeq, amount: o.amount }; captured.push(x); return x; } };
-    this.payments = { refund: async (pid, o) => { rzpRefunds.push({ pid, amount: o.amount }); return { id: "rfnd_I" + ++refundSeq }; } };
+    this.payments = {
+      refund: async (pid, o) => { rzpRefunds.push({ pid, amount: o.amount }); return { id: "rfnd_I" + ++refundSeq }; },
+      all: async (params) => {
+        if (FakeRazorpay.mockPayments) return { entity: "collection", count: FakeRazorpay.mockPayments.length, items: FakeRazorpay.mockPayments };
+        return { entity: "collection", count: 0, items: [] };
+      }
+    };
   }
 }
 const mails = [], pushes = [];
@@ -1770,6 +1776,99 @@ async function seed() {
     check("P22 1-click reassignment reassigns appointment and notifies patient",
       r.s === 200 && r.j.success && reassignRow.therapist_id === U.t2.id && notesCount >= 1,
       "got " + r.s + " " + JSON.stringify(r.j) + " row=" + JSON.stringify(reassignRow) + " notes=" + notesCount
+    );
+  }
+
+  // ============================================================ P23: Super Admin and E-com Admin dashboard upgrades
+  {
+    // 1. E-com real inventory forecasting (no Math.random)
+    r = await call("GET", "/api/products/inventory/forecast", T.p1);
+    check("P23 /api/products/inventory/forecast needs admin role", r.s === 403);
+    r = await call("GET", "/api/products/inventory/forecast", T.ecom);
+    check("P23 ecom admin can fetch inventory forecast with real sold30d and daysCover",
+      r.s === 200 && r.j.success && Array.isArray(r.j.data) && r.j.data.length > 0 &&
+      "stock" in r.j.data[0] && "sold30d" in r.j.data[0] && "daysCover" in r.j.data[0] && "isLowStock" in r.j.data[0],
+      "got " + r.s + " " + JSON.stringify(r.j && r.j.data && r.j.data[0])
+    );
+    r = await call("GET", "/api/products/inventory/forecast", T.su);
+    check("P23 super admin can also fetch inventory forecast", r.s === 200 && r.j.success);
+
+    // 2. Reconciliation endpoint
+    const reconDate = "2026-10-15";
+    // Clean test day with zero mismatches:
+    const [recOrder] = await q(
+      `INSERT INTO orders(order_number, user_id, customer_name, subtotal, total, status, payment_status, razorpay_payment_id, razorpay_order_id, paid_at, created_at)
+       VALUES ('ORD-RECON-1', $1, 'Recon Customer', 2000, 2000, 'Placed', 'Paid', 'pay_clean_1', 'order_clean_1', '2026-10-15 12:00:00+05:30', '2026-10-15 12:00:00+05:30')
+       RETURNING id, total, razorpay_payment_id`,
+      [U.p1.id]
+    );
+
+    FakeRazorpay.mockPayments = [
+      { id: "pay_clean_1", amount: 200000, status: "captured", order_id: "order_clean_1", created_at: 1792047600 }
+    ];
+
+    r = await call("GET", `/api/admin/reconciliation?date=${reconDate}`, T.su);
+    check("P23 reconciliation on clean day shows 0 mismatches",
+      r.s === 200 && r.j.success && r.j.data.summary.mismatchCount === 0 && r.j.data.summary.matchedCount === 1 && r.j.data.mismatches.length === 0,
+      "got " + r.s + " " + JSON.stringify(r.j && r.j.data && r.j.data.summary)
+    );
+
+    // Add a mismatch: simulate an amount mismatch and an extra payment in Razorpay
+    FakeRazorpay.mockPayments = [
+      { id: "pay_clean_1", amount: 150000, status: "captured", order_id: "order_clean_1", created_at: 1792047600 },
+      { id: "pay_ghost_2", amount: 50000, status: "captured", order_id: "order_ghost_2", created_at: 1792047600 }
+    ];
+    r = await call("GET", `/api/admin/reconciliation?date=${reconDate}`, T.su);
+    check("P23 reconciliation flags amount mismatch and missing_in_curevan mismatch",
+      r.s === 200 && r.j.success && r.j.data.summary.mismatchCount >= 2 &&
+      r.j.data.mismatches.some((m) => m.type === "amount_mismatch") &&
+      r.j.data.mismatches.some((m) => m.type === "missing_in_curevan"),
+      "got " + r.s + " mismatches=" + JSON.stringify(r.j && r.j.data && r.j.data.mismatches)
+    );
+
+    // Reset FakeRazorpay mockPayments
+    FakeRazorpay.mockPayments = null;
+
+    // 3. Payment exceptions: pending orders > 30 min & failed webhooks
+    const [oldPending] = await q(
+      `INSERT INTO orders(order_number, user_id, customer_name, subtotal, total, status, payment_status, created_at)
+       VALUES ('ORD-ABANDON-P23', $1, 'Abandon Customer', 999, 999, 'pending_payment', 'Pending', NOW() - INTERVAL '45 minutes')
+       RETURNING id, order_number`,
+      [U.p1.id]
+    );
+
+    await q(
+      `INSERT INTO payment_webhook_events(event_id, event, payload, error, received_at)
+       VALUES ('evt_p23_fail', 'payment.failed', '{"msg":"card error"}', 'Card network gateway timeout', NOW())`
+    );
+
+    r = await call("GET", "/api/admin/payment-exceptions", T.ecom);
+    check("P23 payment exceptions returns pending orders > 30m and failed webhooks",
+      r.s === 200 && r.j.success &&
+      r.j.data.pendingOrders.some((o) => o.orderNumber === 'ORD-ABANDON-P23') &&
+      r.j.data.failedWebhooks.some((w) => w.eventId === 'evt_p23_fail'),
+      "got " + r.s + " " + JSON.stringify(r.j && r.j.data)
+    );
+
+    // 4. Super Admin Friday payout release panel actions
+    const testWeekStart = "2026-11-23";
+    const testWeekEnd = "2026-11-29";
+    await q("DELETE FROM payout_batches WHERE therapist_id = $1 AND week_start = $2", [U.t1.id, testWeekStart]);
+    const [p23Batch] = await q(
+      `INSERT INTO payout_batches(therapist_id, week_start, week_end, gross, platform_fee, gst_on_fee, tds, net, status)
+       VALUES ($1, $2, $3, 5000, 0, 0, 0, 5000, 'scheduled')
+       RETURNING id, status`,
+      [U.t1.id, testWeekStart, testWeekEnd]
+    );
+
+    r = await call("POST", `/api/payout-batches/${p23Batch.id}/approve`, T.su);
+    check("P23 admin can approve scheduled payout batch", r.s === 200 && r.j.success && r.j.data.status === "approved");
+
+    r = await call("POST", `/api/payout-batches/${p23Batch.id}/mark-paid`, T.su, { utr: "CMSP23TESTUTR123" });
+    const [paidBatch] = await q("SELECT status, utr, paid_at FROM payout_batches WHERE id = $1", [p23Batch.id]);
+    check("P23 admin can mark approved batch paid with bank UTR reference",
+      r.s === 200 && r.j.success && paidBatch.status === "paid" && paidBatch.utr === "CMSP23TESTUTR123" && paidBatch.paid_at !== null,
+      "got " + r.s + " " + JSON.stringify(paidBatch)
     );
   }
 

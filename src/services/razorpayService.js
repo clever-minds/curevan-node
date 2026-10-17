@@ -64,4 +64,12 @@ async function refund(paymentId, amountPaise, notes = {}) {
   return getClient().payments.refund(paymentId, { amount: amountPaise, speed: "normal", notes });
 }
 
-module.exports = { createOrder, verifyPaymentSignature, verifyWebhookSignature, refund, getKeyId, safeEqualHex };
+// Fetch captured payments for a timestamp window (timestamps in seconds)
+async function fetchPayments({ from, to, count = 100 } = {}) {
+  const params = { count };
+  if (from) params.from = from;
+  if (to) params.to = to;
+  return getClient().payments.all(params);
+}
+
+module.exports = { getClient, createOrder, verifyPaymentSignature, verifyWebhookSignature, refund, fetchPayments, getKeyId, safeEqualHex };

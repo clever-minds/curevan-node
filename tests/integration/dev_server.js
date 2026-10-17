@@ -18,7 +18,7 @@ Object.assign(process.env, {
   DB_NAME: process.env.DB_NAME || "curevan_test", DB_USER: process.env.DB_USER || "curevan", DB_PASSWORD: process.env.DB_PASSWORD || "testpw",
 });
 let n = 0;
-class FakeRazorpay { constructor() { this.orders = { create: async (o) => ({ id: "order_UI" + ++n, amount: o.amount }) }; this.payments = { refund: async () => ({ id: "rfnd_UI" + ++n }) }; } }
+class FakeRazorpay { constructor() { this.orders = { create: async (o) => ({ id: "order_UI" + ++n, amount: o.amount }) }; this.payments = { refund: async () => ({ id: "rfnd_UI" + ++n }), all: async () => ({ entity: "collection", count: 0, items: [] }) }; } }
 const orig = Module._load;
 Module._load = function (r, parent, ...a) {
   if (r === "razorpay" && !process.env.REAL_RAZORPAY) return FakeRazorpay;
