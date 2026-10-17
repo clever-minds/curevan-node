@@ -21,7 +21,9 @@ exports.createTicket = async (req, res) => {
   try {
     const userId = req.user?.id;
 
-    const { type, subject, message, priority, rating, item_id, topic } = req.body;
+    const { type, subject, message, priority, rating, item_id, topic, category } = req.body;
+    if (category !== undefined && !["clinical", "ecommerce", "billing", "general"].includes(category)) return res.error("category must be clinical, ecommerce, billing or general");
+    if (priority !== undefined && !["low", "medium", "high", "P1", "P2", "P3", "P4"].includes(priority)) return res.error("priority must be low, medium, high or P1 to P4");
 
     const file = req.file?.path || null; // multer file path
 
@@ -30,8 +32,8 @@ exports.createTicket = async (req, res) => {
 
     const [ticket] = await sequelize.query(
       `INSERT INTO tickets
-      (user_id, item_id, type, topic, subject, message, file, priority, rating)
-      VALUES (:userId, :item_id, :type, :topic, :subject, :message, :file, :priority, :rating)
+      (user_id, item_id, type, topic, subject, message, file, priority, rating, category)
+      VALUES (:userId, :item_id, :type, :topic, :subject, :message, :file, :priority, :rating, :category)
       RETURNING *`,
       {
         replacements: {
@@ -43,6 +45,7 @@ exports.createTicket = async (req, res) => {
           message,
           file,
           priority: priority || "medium",
+          category: category || null,
           rating: rating || null
         },
         type: QueryTypes.INSERT

@@ -237,3 +237,11 @@ Total routes: 170
 | GET | /api/privacy/export | any logged-in user (own data as JSON) |
 | GET | /api/privacy/admin/requests | admin.super |
 | PATCH | /api/privacy/admin/requests/:id | admin.super |
+
+## Added in P26
+
+| Method | Path | Who |
+|---|---|---|
+| POST | /api/support/chat/sessions | any logged-in user (starts a chat) |
+| POST | /api/support/chat/sessions/:id/messages | the owner of the chat |
+| POST | /api/support/escalate | any logged-in user (ticket from the AI chat; priority and team are decided by the server) |

@@ -2214,6 +2214,73 @@ async function seed() {
     check("P25 the retention schedule has clinical records, minors, tax/payment and marketing rules", /3 years/.test(retention) && /18/.test(retention) && /8 years/.test(retention) && /marketing/i.test(retention));
   }
 
+  // P26 AI chat sessions and escalation to a person
+  {
+    const esc = require("../../src/controllers/support/escalationController");
+    const noteCount = (uid, type) => q("SELECT COUNT(*)::int AS n FROM notifications WHERE user_uid = $1 AND type = $2", [String(uid), type]).then((x) => x[0].n);
+
+    r = await call("GET", "/api/config/public");
+    check("P26 public config tells the chat the support hours and the call-back time", r.s === 200 && r.j.data.support.openHour === 8 && r.j.data.support.closeHour === 21 && r.j.data.support.callbackBy === "09:30");
+
+    check("P26 support is open at 10:00 India time", esc.supportStatus(Date.parse("2026-10-14T10:00:00+05:30")).open === true && esc.supportStatus(Date.parse("2026-10-14T10:00:00+05:30")).callbackMessage === null);
+    const night = esc.supportStatus(Date.parse("2026-10-14T22:30:00+05:30"));
+    check("P26 at 22:30 it is closed and the user is promised a call back by 9:30", night.open === false && /09:30/.test(night.callbackMessage));
+    check("P26 at 07:59 it is still closed; 08:00 and 20:59 are open; 21:00 is closed", esc.supportStatus(Date.parse("2026-10-14T07:59:00+05:30")).open === false && esc.supportStatus(Date.parse("2026-10-14T08:00:00+05:30")).open === true && esc.supportStatus(Date.parse("2026-10-14T20:59:00+05:30")).open === true && esc.supportStatus(Date.parse("2026-10-14T21:00:00+05:30")).open === false);
+
+    // sessions and messages
+    r = await call("POST", "/api/support/chat/sessions", T.p1, { channel: "web" });
+    const sid = r.j && r.j.data && r.j.data.id;
+    check("P26 a chat session is created for the signed-in user", r.s === 201 && sid && (await q("SELECT user_id, channel, status FROM chat_sessions WHERE id = $1", [sid]))[0].user_id === U.p1.id);
+    r = await call("POST", "/api/support/chat/sessions", undefined, {});
+    check("P26 chat sessions need a login (401)", r.s === 401);
+    r = await call("POST", "/api/support/chat/sessions/" + sid + "/messages", T.p1, { messages: [{ sender: "user", text: "Where is my order?" }, { sender: "ai", text: "It is on its way.", toolCalls: [{ name: "trackOrder", ok: true }] }, { sender: "hacker", text: "x" }] });
+    const msgs = await q("SELECT sender, text, tool_calls FROM chat_messages WHERE session_id = $1 ORDER BY id", [sid]);
+    check("P26 messages are saved with the tool calls; an unknown sender is dropped", r.s === 200 && msgs.length === 2 && msgs[1].tool_calls[0].name === "trackOrder");
+    r = await call("POST", "/api/support/chat/sessions/" + sid + "/messages", T.p2, { messages: [{ sender: "user", text: "hi" }] });
+    check("P26 another user cannot write into my chat (404)", r.s === 404);
+
+    // escalation
+    r = await call("POST", "/api/support/escalate", T.p1, { reason: "nonsense", summary: "x y z abc" });
+    check("P26 an unknown reason is refused (400)", r.s === 400);
+    r = await call("POST", "/api/support/escalate", T.p1, { reason: "human_requested", summary: "" });
+    check("P26 a summary is required (400)", r.s === 400);
+    r = await call("POST", "/api/support/escalate", T.p2, { reason: "human_requested", category: "billing", summary: "x y z abc", sessionId: sid });
+    check("P26 nobody can attach a ticket to someone else's chat (404)", r.s === 404);
+    const ecomBefore = await noteCount(U.ecom.id, "ai_escalation");
+    r = await call("POST", "/api/support/escalate", T.p1, { reason: "human_requested", category: "ecommerce", summary: "Order ORD-1 shows delivered but I did not get it.\nCustomer wants a person to call.", sessionId: sid });
+    const tk = r.j && r.j.data;
+    const row = tk ? (await q("SELECT * FROM tickets WHERE id = $1", [tk.ticketId]))[0] : null;
+    check("P26 'I want a human' creates a ticket: category, priority, 2-line summary, link to the chat", r.s === 201 && row && row.category === "ecommerce" && row.priority === "P3" && /ORD-1/.test(row.ai_summary) && row.chat_session_id === sid && row.user_id === U.p1.id && row.type === "ai_escalation", JSON.stringify(row));
+    check("P26 ... the chat is marked escalated and keeps the summary", (await q("SELECT status, ai_summary FROM chat_sessions WHERE id = $1", [sid]))[0].status === "escalated");
+    check("P26 ... the right role is told (e-com admin for an e-commerce question), not the therapy team", (await noteCount(U.ecom.id, "ai_escalation")) === ecomBefore + 1 && (await q("SELECT COUNT(*)::int AS n FROM notifications WHERE user_uid = $1 AND type = 'ai_escalation' AND title LIKE '%ecommerce%'", [String(U.therapy.id)]))[0].n === 0);
+    check("P26 ... the answer carries the call-back text only outside support hours", typeof tk.supportOpen === "boolean" && (tk.supportOpen ? tk.callbackMessage === null : /09:30/.test(tk.callbackMessage)));
+
+    const matrix = [["clinical", "P2", U.therapy.id], ["billing", "P3", U.su.id], ["general", "P4", U.su.id]];
+    for (const [cat, prio, who] of matrix) {
+      const before = await noteCount(who, "ai_escalation");
+      r = await call("POST", "/api/support/escalate", T.p1, { reason: "human_requested", category: cat, summary: "Please call me about " + cat });
+      check(`P26 a human request about ${cat} gets ${prio} and goes to the right team`, r.s === 201 && r.j.data.priority === prio && (await noteCount(who, "ai_escalation")) === before + 1, JSON.stringify(r.j && r.j.data));
+    }
+    r = await call("POST", "/api/support/escalate", T.p1, { reason: "tool_failures", category: "ecommerce", summary: "The order lookup failed twice for ORD-7." });
+    check("P26 two failed tool attempts: a P3 ticket for the category", r.s === 201 && r.j.data.priority === "P3" && r.j.data.category === "ecommerce");
+    r = await call("POST", "/api/support/escalate", T.p1, { reason: "human_requested", category: "nonsense", summary: "Please call me" });
+    check("P26 an unknown category falls back to general", r.s === 201 && r.j.data.category === "general");
+
+    // red flag: always clinical and P1, told to the therapy team AND the Super Admin
+    const therBefore = await noteCount(U.therapy.id, "ai_escalation"), suBefore = await noteCount(U.su.id, "ai_escalation");
+    r = await call("POST", "/api/support/escalate", T.p1, { reason: "red_flag", category: "ecommerce", summary: "The user wrote that they have chest pain and cannot breathe." });
+    check("P26 a red-flag message is always clinical and P1 whatever category was sent", r.s === 201 && r.j.data.priority === "P1" && r.j.data.category === "clinical", JSON.stringify(r.j && r.j.data));
+    check("P26 ... a P1 tells the therapy admins and the Super Admin", (await noteCount(U.therapy.id, "ai_escalation")) === therBefore + 1 && (await noteCount(U.su.id, "ai_escalation")) === suBefore + 1);
+
+    // the old ticket endpoint takes category and priority too
+    r = await call("POST", "/api/support/tickets", T.p1, { type: "general", subject: "Hello", message: "A normal ticket", priority: "P2", category: "billing" });
+    check("P26 the normal ticket endpoint accepts a category and a P1-P4 priority", r.s === 200 && (await q("SELECT category, priority FROM tickets WHERE subject = 'Hello' ORDER BY id DESC LIMIT 1"))[0].category === "billing", "got " + r.s + " " + (r.raw || "").slice(0, 100));
+    r = await call("POST", "/api/support/tickets", T.p1, { type: "general", message: "x", category: "nonsense" });
+    check("P26 ... and refuses an unknown category", r.j && r.j.success === false);
+    r = await call("POST", "/api/support/tickets", T.p1, { type: "general", message: "x", priority: "urgent!!" });
+    check("P26 ... and an unknown priority", r.j && r.j.success === false);
+  }
+
   // invoices
   r = await call("GET", "/api/invoices/list", T.su);
   const allInv = (await q("SELECT COUNT(*)::int AS n FROM invoices"))[0].n;
