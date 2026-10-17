@@ -41,7 +41,7 @@ class FakeRazorpay {
   }
 }
 const mails = [], pushes = [];
-const firebaseTokens = { good: { phone_number: "+919000000001" }, unknown: { phone_number: "+910000000000" }, nophone: { uid: "x" } };
+const firebaseTokens = { caregiver: { phone_number: "+919000000077" }, good: { phone_number: "+919000000001" }, unknown: { phone_number: "+910000000000" }, nophone: { uid: "x" } };
 const orig = Module._load;
 Module._load = function (r, parent, ...a) {
   if (r === "razorpay") return FakeRazorpay;
@@ -767,6 +767,204 @@ async function seed() {
   check("P15 the patient reads their own series", r.s === 200 && r.j.data.some((x) => x.functionalScore === 6 && x.painVas === 4), "got " + r.s + " " + (r.raw || "").slice(0, 150));
   r = await call("GET", "/api/patients/" + U.p1.id + "/progress", T.p2);
   check("P15 another patient cannot (403)", r.s === 403);
+
+  // ---- P16: treatment plans, goals, outcome measures, progress, reports, caregivers
+  {
+  const mid = Object.fromEntries((await q("SELECT id, code FROM outcome_measures")).map((m) => [m.code, m.id]));
+  check("P16 the free-to-use measure library is seeded (20 scales, none of the licensed ones)", Object.keys(mid).length === 20 && !mid.FIM && !mid.WAB && !mid.ODI, Object.keys(mid).length + " found");
+  let sessN = 0;
+  const mkSess = async (patientId, serviceTypeId) => {
+    sessN += 1;
+    const id = (await q(`INSERT INTO appointments(patient_id, patient_name, therapist_id, therapist_name, service_type_id, service_amount, total_amount, date, time, status, payment_status, payment_method)
+      VALUES ($1,'Test Patient',$2,'Dr One',$3,1500,1500,$4,'10:00','pcr_pending','Paid','razorpay') RETURNING id`, [patientId, U.t1.id, serviceTypeId, day(-(500 - sessN))]))[0].id;
+    await q("INSERT INTO pcr(appointment_id, patient_id, therapist_id, service_type_id, status, version) VALUES ($1,$2,$3,$4,'not_started',1)", [id, patientId, U.t1.id, serviceTypeId]);
+    return id;
+  };
+  const submit = (apptId, body) => call("PATCH", "/api/appointments/pcr/" + apptId, T.t1, { ...fullPcr, status: "submitted", ...body });
+  const ov = (code, value, extra = {}) => ({ measureId: mid[code], value, ...extra });
+
+  // --- measure library admin
+  r = await call("GET", "/api/clinical/measures", T.t1);
+  check("P16 any signed-in user can read the library", r.s === 200 && r.j.data.length === 20);
+  r = await call("POST", "/api/clinical/measures", T.t1, { code: "ODI2", name: "x", scaleType: "numeric", frequency: "review", licenceNote: "x" });
+  check("P16 a therapist cannot add measures (403)", r.s === 403, "got " + r.s);
+  r = await call("POST", "/api/clinical/measures", T.therapy, { code: "TEST_SCALE", name: "Test scale", scaleType: "numeric", minValue: 0, maxValue: 10, frequency: "review" });
+  check("P16 a new measure needs a licence note (400)", r.s === 400, "got " + r.s);
+  r = await call("POST", "/api/clinical/measures", T.therapy, { code: "TEST_SCALE", name: "Test scale", scaleType: "numeric", minValue: 0, maxValue: 10, frequency: "review", licenceNote: "Curevan own scale" });
+  const newMeasureId = r.j && r.j.data && r.j.data.id;
+  check("P16 Therapy Admin adds a measure with its licence note", r.s === 201 && newMeasureId);
+  r = await call("POST", "/api/clinical/measures", T.su, { code: "TEST_SCALE", name: "Dup", scaleType: "numeric", frequency: "review", licenceNote: "x" });
+  check("P16 a duplicate code is refused (409)", r.s === 409, "got " + r.s);
+  r = await call("PATCH", "/api/clinical/measures/" + newMeasureId, T.su, { active: false });
+  check("P16 a measure can be deactivated", r.s === 200 && r.j.data.active === false);
+
+  // --- plan creation rules
+  const goalsA = [
+    { description: "Walk 10 m with quad cane independently in 6 weeks", measureCode: "10MWT", baselineValue: 0.1, targetValue: 0.4, targetDate: day(20) },
+    { description: "Feed self with left hand", measureCode: "FMA_UE", baselineValue: 20, targetValue: 30, targetDate: day(25) },
+  ];
+  const measuresA = [{ code: "10MWT" }, { code: "BBS" }, { code: "FMA_UE", side: "left" }, { code: "MMT", side: "left", item: "quadriceps" }, { code: "NPRS" }];
+  const a1 = await mkSess(U.p2.id, 1);
+  const planBody = { patientId: U.p2.id, serviceTypeId: 1, condition: "Left hemiplegia after stroke", affectedSide: "left", bodyRegion: "left side", onsetDate: "2026-08-01", plannedSessions: 10, frequencyPerWeek: 3, reviewEverySessions: 5, goals: goalsA, measures: measuresA, appointmentId: a1 };
+  r = await call("POST", "/api/clinical/plans", T.p2, planBody);
+  check("P16 a patient cannot create a plan (403)", r.s === 403, "got " + r.s);
+  const [stranger] = await q("INSERT INTO users(uid, email, name, phone, role, is_verified) VALUES ('stranger-1','stranger1@x.com','Stranger','9000000044','patient',true) RETURNING id");
+  r = await call("POST", "/api/clinical/plans", T.t2, { ...planBody, patientId: stranger.id, appointmentId: undefined });
+  check("P16 a therapist with no booking for the patient cannot (403)", r.s === 403, "got " + r.s);
+  r = await call("POST", "/api/clinical/plans", T.t1, { ...planBody, goals: [] });
+  check("P16 a plan needs at least 1 goal (400)", r.s === 400);
+  r = await call("POST", "/api/clinical/plans", T.t1, { ...planBody, goals: Array.from({ length: 6 }, (_, i) => ({ description: "goal " + i })) });
+  check("P16 and at most 5 goals (400)", r.s === 400);
+  r = await call("POST", "/api/clinical/plans", T.t1, { ...planBody, measures: [{ code: "TEST_SCALE" }] });
+  check("P16 an inactive measure cannot be put in a plan (400)", r.s === 400, "got " + r.s + " " + (r.raw || "").slice(0, 100));
+  r = await call("POST", "/api/clinical/plans", T.t1, planBody);
+  const planA = r.j && r.j.data && r.j.data.id;
+  check("P16 Example A: neuro-physio plan with 2 goals and 5 measures is created", r.s === 201 && planA);
+
+  // --- baseline visit: initial assessment must record every measure
+  const baseA = [ov("10MWT", 0.1), ov("BBS", 20), ov("FMA_UE", 20, { side: "left" }), ov("MMT", 2, { side: "left", item: "quadriceps" }), ov("NPRS", 6)];
+  r = await submit(a1, { sessionType: "initial_assessment", outcomeValues: baseA.slice(0, 3) });
+  check("P16 due measures are enforced on submit (400 names what is missing)", r.s === 400 && r.j.missingMeasures && r.j.missingMeasures.length === 2, "got " + r.s + " " + (r.raw || "").slice(0, 160));
+  r = await submit(a1, { sessionType: "initial_assessment", outcomeValues: [...baseA.slice(0, 4), { measureId: mid.NPRS, couldNotAssess: true }] });
+  check("P16 'Could not assess' needs a reason (400)", r.s === 400, "got " + r.s);
+  r = await submit(a1, { sessionType: "initial_assessment", outcomeValues: [...baseA.slice(0, 4), ov("NPRS", 99)] });
+  check("P16 a value outside the scale range is refused (400)", r.s === 400 && /between/.test(r.raw || ""), "got " + r.s + " " + (r.raw || "").slice(0, 120));
+  r = await submit(a1, { sessionType: "initial_assessment", outcomeValues: baseA });
+  check("P16 baseline recorded: 5 results saved as 'baseline'", r.s === 200 && (await q("SELECT COUNT(*)::int AS n FROM outcome_results WHERE plan_id = $1 AND assessment_point = 'baseline'", [planA]))[0].n === 5, "got " + r.s + " " + (r.raw || "").slice(0, 160));
+  check("P16 the booking joined the plan", (await q("SELECT treatment_plan_id FROM appointments WHERE id = $1", [a1]))[0].treatment_plan_id === planA);
+
+  // --- sessions 2..10 (review at 5 and 10)
+  const sessionsA = [a1];
+  for (let n = 2; n <= 10; n++) {
+    const id = await mkSess(U.p2.id, 1); sessionsA.push(id);
+    if (n === 5 || n === 10) {
+      const k = n === 5 ? 1 : 2;
+      const vals = [ov("10MWT", [0.3, 0.45][k - 1]), ov("BBS", [30, 40][k - 1]), ov("FMA_UE", [26, 31][k - 1], { side: "left" }), ov("MMT", [3, 4][k - 1], { side: "left", item: "quadriceps" }), ov("NPRS", [4, 2][k - 1])];
+      r = await submit(id, { sessionType: "review", outcomeValues: vals });
+      check("P16 review session " + n + " needs the progress summary (400)", r.s === 400 && /progress summary/i.test(r.raw || ""), "got " + r.s + " " + (r.raw || "").slice(0, 120));
+      r = await submit(id, { sessionType: "review", outcomeValues: vals, progressSummary: "Walking and balance are improving steadily; continue the plan.", goalStatuses: [] });
+    } else {
+      r = await submit(id, { sessionType: "follow_up", outcomeValues: [ov("NPRS", Math.max(1, 6 - Math.floor(n / 2)))] });
+    }
+    if (r.s !== 200) check("P16 session " + n + " submitted", false, "got " + r.s + " " + (r.raw || "").slice(0, 200));
+  }
+  check("P16 10 sessions submitted; session numbers run 1..10", (await q("SELECT array_agg(session_number ORDER BY session_number) AS s FROM pcr WHERE treatment_plan_id = $1", [planA]))[0].s.join(",") === "1,2,3,4,5,6,7,8,9,10", (await q("SELECT array_agg(session_number ORDER BY id) AS s FROM pcr WHERE treatment_plan_id = $1", [planA]))[0].s.join(","));
+  await q("UPDATE appointments SET status = 'completed' WHERE id = ANY($1)", [sessionsA]);
+
+  r = await call("GET", "/api/clinical/plans/" + planA + "/progress", T.p2);
+  const pr = r.j && r.j.data;
+  const mA = (code, side) => pr.measures.find((m) => m.code === code && (!side || m.side === side));
+  check("P16 the patient sees charts for 10MWT, BBS, FMA_UE (left) and MMT (left): baseline, 2 reviews", r.s === 200 && ["10MWT", "BBS"].every((c) => mA(c).series.length === 3) && mA("FMA_UE", "left").series.length === 3 && mA("MMT", "left").series.length === 3, "got " + r.s + " " + JSON.stringify(pr && pr.measures.map((m) => m.code + ":" + m.series.length)));
+  check("P16 % progress toward the goal: gait speed 0.1 -> 0.45 with target 0.4 = 116.67%, FMA_UE 20 -> 31 with target 30 = 110%", mA("10MWT").percentTowardTarget === 116.67 && mA("FMA_UE", "left").percentTowardTarget === 110 && mA("10MWT").absoluteChange === 0.35, JSON.stringify([mA("10MWT").percentTowardTarget, mA("FMA_UE", "left").percentTowardTarget]));
+  check("P16 trend says improving for gait speed; NPRS (lower is better) fell from 6 to 2 with one point per session", mA("10MWT").status === "improving" && mA("NPRS").series.length === 10 && mA("NPRS").latest < mA("NPRS").baseline);
+  check("P16 plan numbers: 10 of 10 sessions, adherence ratio 1, goals carry their progress", pr.sessionsDone === 10 && pr.adherence.attended === 10 && pr.adherence.ratio === 1 && pr.goals.length === 2 && pr.goals[0].percentTowardTarget === 116.67, JSON.stringify(pr.adherence));
+  check("P16 the patient is not shown the clinical 'stalled' flag", !("stalled" in pr));
+  r = await call("GET", "/api/clinical/plans/" + planA + "/reports", T.p2);
+  const repsA = r.j && r.j.data;
+  check("P16 two review reports exist (sessions 5 and 10) and the patient can list them", r.s === 200 && repsA.length === 2 && repsA[0].sessionNumber === 5 && repsA[1].sessionNumber === 10, "got " + r.s + " " + (r.raw || "").slice(0, 150));
+  const pdfR = await fetch(base + "/api/clinical/reports/" + repsA[1].id + "/pdf", { headers: { authorization: "Bearer " + T.p2 } });
+  const pdfRB = Buffer.from(await pdfR.arrayBuffer());
+  check("P16 the progress report is a real PDF the patient can download", pdfR.status === 200 && pdfRB.slice(0, 4).toString() === "%PDF", "got " + pdfR.status);
+
+  // --- access
+  r = await call("GET", "/api/clinical/plans/" + planA + "/progress", T.p1);
+  check("P16 another patient's progress -> 403", r.s === 403);
+  r = await call("GET", "/api/clinical/plans/" + planA + "/progress", T.t2);
+  check("P16 an unrelated therapist -> 403", r.s === 403);
+  r = await call("GET", "/api/clinical/plans/" + planA + "/progress", T.t1);
+  check("P16 the primary therapist reads it, with the stalled flag", r.s === 200 && r.j.data.stalled === false);
+  r = await call("GET", "/api/clinical/plans", T.p1);
+  check("P16 a patient's plan list only has their own plans", r.s === 200 && r.j.data.every((p) => p.patient_id === U.p1.id));
+  r = await call("PATCH", "/api/clinical/plans/" + planA, T.p2, { status: "on_hold" });
+  check("P16 the patient cannot edit the plan (403)", r.s === 403);
+
+  // --- an 11th visit: every-session measure missing / could-not-assess
+  const a11 = await mkSess(U.p2.id, 1);
+  r = await submit(a11, { sessionType: "follow_up", outcomeValues: [] });
+  check("P16 a normal visit still needs the every-session measure (NPRS)", r.s === 400 && /NPRS|Pain/.test(r.raw || ""), "got " + r.s + " " + (r.raw || "").slice(0, 140));
+  r = await submit(a11, { sessionType: "follow_up", outcomeValues: [ov("NPRS", null, { couldNotAssess: true, reason: "Patient too tired today" })] });
+  check("P16 'Could not assess' with a reason is accepted and kept as a note", r.s === 200 && (await q("SELECT 1 FROM outcome_results r JOIN pcr p ON p.id = r.pcr_id WHERE p.appointment_id = $1 AND r.value IS NULL AND r.note LIKE '%too tired%'", [a11])).length === 1, "got " + r.s + " " + (r.raw || "").slice(0, 140));
+
+  // --- stalled flag after two non-improving reviews
+  const [stallPatient] = await q("INSERT INTO users(uid, email, name, phone, role, is_verified) VALUES ('stall-1','stall1@x.com','Stall Patient','9000000055','patient',true) RETURNING id");
+  const sp = stallPatient.id;
+  const s0 = await mkSess(sp, 1);
+  r = await call("POST", "/api/clinical/plans", T.t1, { patientId: sp, serviceTypeId: 1, condition: "Balance problem", goals: [{ description: "Improve balance", measureCode: "BBS", baselineValue: 30, targetValue: 45 }], measures: [{ code: "BBS" }], plannedSessions: 10, frequencyPerWeek: 2, appointmentId: s0 });
+  const stallPlan = r.j.data.id;
+  r = await submit(s0, { sessionType: "initial_assessment", outcomeValues: [ov("BBS", 30)] });
+  let flat = r.s === 200;
+  for (const n of [5, 10]) {
+    for (let i = 0; i < (n === 5 ? 3 : 4); i++) { const f = await mkSess(sp, 1); const rr = await submit(f, { sessionType: "follow_up", outcomeValues: [] }); flat = flat && rr.s === 200; }
+    const rv = await mkSess(sp, 1);
+    const rr = await submit(rv, { sessionType: "review", outcomeValues: [ov("BBS", 30)], progressSummary: "No change in balance this period; changing approach." });
+    flat = flat && rr.s === 200;
+  }
+  check("P16 stalled setup: baseline + 2 reviews all at 30", flat);
+  r = await call("GET", "/api/clinical/plans?stalled=1", T.therapy);
+  check("P16 the plan with two non-improving reviews is flagged 'stalled' for Therapy Admin", r.s === 200 && r.j.data.some((p) => p.id === stallPlan && p.stalled === true) && !r.j.data.some((p) => p.id === planA), JSON.stringify(r.j && r.j.data && r.j.data.map((p) => p.id + ":" + p.stalled)));
+  r = await call("GET", "/api/clinical/plans?stalled=1", T.p2);
+  check("P16 the stalled list is empty for a patient", r.s === 200 && r.j.data.length === 0);
+
+  // --- Example B: speech after stroke, 20 sessions, discharge
+  const goalsB = [{ description: "Be understood by an unfamiliar listener at 80%", measureCode: "SPEECH_INT", baselineValue: 30, targetValue: 80 }];
+  const measuresB = [{ code: "COMM_FUNC" }, { code: "SPEECH_INT" }, { code: "NAMING" }, { code: "COMM_CONF" }];
+  const b1 = await mkSess(U.p1.id, 2);
+  r = await call("POST", "/api/clinical/plans", T.t1, { patientId: U.p1.id, serviceTypeId: 2, condition: "Aphasia after stroke", affectedSide: "na", plannedSessions: 20, frequencyPerWeek: 3, goals: goalsB, measures: measuresB, appointmentId: b1 });
+  const planB = r.j.data.id;
+  const sessionsB = [b1];
+  let okB = true;
+  for (let n = 1; n <= 20; n++) {
+    const id = n === 1 ? b1 : await mkSess(U.p1.id, 2); if (n > 1) sessionsB.push(id);
+    const rv = n % 5 === 0;
+    const body = n === 1 ? { sessionType: "initial_assessment", outcomeValues: [ov("COMM_FUNC", 2), ov("SPEECH_INT", 30), ov("NAMING", 20), ov("COMM_CONF", 3)] }
+      : n === 20 ? { sessionType: "discharge", outcomeValues: [ov("COMM_FUNC", 7), ov("SPEECH_INT", 78), ov("NAMING", 80), ov("COMM_CONF", 8)], progressSummary: "Clear improvement in speech; independent in routine settings.", dischargeReason: "Goals achieved" }
+      : rv ? { sessionType: "review", outcomeValues: [ov("COMM_FUNC", 2 + Math.floor(n / 5)), ov("SPEECH_INT", 30 + n * 2.5), ov("NAMING", 20 + n * 3), ov("COMM_CONF", 3 + Math.floor(n / 5))], progressSummary: "Steady improvement in speech and naming." }
+      : { sessionType: "follow_up", outcomeValues: [ov("COMM_FUNC", Math.min(6, 2 + Math.floor(n / 4)))] };
+    const rr = await submit(id, body);
+    if (rr.s !== 200) { okB = false; check("P16 Example B session " + n + " submitted", false, "got " + rr.s + " " + (rr.raw || "").slice(0, 200)); break; }
+  }
+  check("P16 Example B: 20 sessions recorded (COMM_FUNC every session, SPEECH_INT/NAMING every 5th)", okB);
+  await q("UPDATE appointments SET status = 'completed' WHERE id = ANY($1)", [sessionsB]);
+  r = await call("GET", "/api/clinical/plans/" + planB + "/progress", T.p1);
+  const pb = r.j && r.j.data;
+  const cf = pb && pb.measures.find((m) => m.code === "COMM_FUNC");
+  check("P16 Example B charts: COMM_FUNC has 20 points trending up; SPEECH_INT 5 points (baseline, 3 reviews, discharge)", r.s === 200 && cf.series.length === 20 && cf.status === "improving" && pb.measures.find((m) => m.code === "SPEECH_INT").series.length === 5, "got " + r.s + " " + JSON.stringify(pb && pb.measures.map((m) => m.code + ":" + m.series.length)));
+  check("P16 discharge closed the plan with its reason", (await q("SELECT status, discharge_reason FROM treatment_plans WHERE id = $1", [planB]))[0].status === "discharged" && (await q("SELECT discharge_reason FROM treatment_plans WHERE id = $1", [planB]))[0].discharge_reason === "Goals achieved");
+  r = await call("GET", "/api/clinical/plans/" + planB + "/reports", T.p1);
+  const dis = r.j.data.find((x) => x.reportType === "discharge");
+  const disPdf = dis && (await fetch(base + "/api/clinical/reports/" + dis.id + "/pdf", { headers: { authorization: "Bearer " + T.p1 } }));
+  const disBytes = disPdf && Buffer.from(await disPdf.arrayBuffer());
+  check("P16 Example B: 3 review reports + a Discharge Summary PDF", r.j.data.filter((x) => x.reportType === "review").length === 3 && disPdf && disPdf.status === 200 && disBytes.slice(0, 4).toString() === "%PDF", "reports " + JSON.stringify(r.j.data.map((x) => x.reportType)));
+  r = await call("GET", "/api/clinical/reports/" + dis.id + "/pdf", T.p2);
+  check("P16 another patient cannot download it (403)", r.s === 403);
+
+  // --- family access: OTP login activates the link; revoke closes it
+  r = await call("POST", "/api/clinical/caregivers", T.p2, { mobile: "9000000077", relation: "Son" });
+  check("P16 sharing needs the patient's consent (400)", r.s === 400);
+  r = await call("POST", "/api/clinical/caregivers", T.p2, { mobile: "9000000077", relation: "Son", consentAccepted: true });
+  const linkId = r.j && r.j.data && r.j.data.id;
+  check("P16 the patient shares with one family member by mobile number; consent is logged", r.s === 201 && linkId && (await q("SELECT 1 FROM consent_logs WHERE user_id = $1 AND consent_type = 'caregiver_share'", [U.p2.id])).length === 1, "got " + r.s + " " + (r.raw || "").slice(0, 120));
+  r = await call("POST", "/api/clinical/caregivers", T.p2, { mobile: "9000000078", consentAccepted: true });
+  check("P16 only one family member at a time (409)", r.s === 409);
+  const cgUser = (await q("SELECT id FROM users WHERE phone = '9000000077'"))[0];
+  const cgToken = token({ id: cgUser.id, uid: "caregiver-9000000077", email: "c@x", role: "caregiver", roleName: "caregiver" });
+  r = await call("GET", "/api/clinical/plans/" + planA + "/progress", cgToken);
+  check("P16 before the OTP login the family link does not work (403)", r.s === 403, "got " + r.s);
+  r = await call("POST", "/api/auth/login-with-mobile", null, { firebaseIdToken: "caregiver" });
+  const cgLive = r.j && r.j.token;
+  check("P16 the family member signs in with an OTP (Firebase-verified phone)", r.s === 200 && cgLive, "got " + r.s);
+  r = await call("GET", "/api/clinical/plans/" + planA + "/progress", cgLive);
+  check("P16 after OTP the family member sees the progress (read-only, no stalled flag)", r.s === 200 && !("stalled" in r.j.data), "got " + r.s);
+  r = await call("PATCH", "/api/clinical/plans/" + planA, cgLive, { status: "on_hold" });
+  check("P16 and cannot change anything (403)", r.s === 403);
+  r = await call("GET", "/api/clinical/plans/" + planB + "/progress", cgLive);
+  check("P16 nor see another patient's plan (403)", r.s === 403);
+  r = await call("DELETE", "/api/clinical/caregivers/" + linkId, T.p2);
+  check("P16 the patient revokes the link", r.s === 200);
+  r = await call("GET", "/api/clinical/plans/" + planA + "/progress", cgLive);
+  check("P16 after revoking, access is closed again (403)", r.s === 403, "got " + r.s);
+
+  }
 
   // invoices
   r = await call("GET", "/api/invoices/list", T.su);

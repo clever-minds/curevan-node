@@ -1019,6 +1019,9 @@ exports.loginWithMobile = async (req, res) => {
 
     const user = users[0];
 
+    // a family member's link (P16) becomes active with their first OTP login
+    await sequelize.query("UPDATE patient_caregivers SET activated_at = NOW() WHERE caregiver_user_id = :id AND activated_at IS NULL AND revoked_at IS NULL", { replacements: { id: user.id }, type: QueryTypes.UPDATE });
+
     const rolesResult = await sequelize.query(
       "SELECT r.name FROM roles r INNER JOIN user_roles ur ON r.id = ur.role_id WHERE ur.user_id = :userId",
       {

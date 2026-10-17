@@ -7,6 +7,7 @@ const otpService = require("../../services/otpService");
 const slotService = require("../../services/slotService");
 const cancellationService = require("../../services/cancellationService");
 const pcrService = require("../../services/pcrService");
+const clinicalService = require("../../services/clinicalService");
 const { generatePcrPdf } = require("../../services/pcrPdfService");
 const { STATUS } = stateMachine;
 const refundService = require("../../services/refundService");
@@ -655,10 +656,28 @@ exports.getPCRByBookingId = async (req, res) => {
     }
     await pcrService.logAccess(pcr.id, req.user.id, "view");
 
+    // P16: the treatment plan this visit belongs to and the outcome measures due today
+    let treatmentPlan = null;
+    let dueMeasures = [];
+    let sessionNumber = pcr.session_number ?? null;
+    const sessionType = pcr.session_type || "follow_up";
+    if (!historyLocked) {
+      const planId = await clinicalService.linkAppointment(appointmentId);
+      if (planId) {
+        [treatmentPlan] = await sequelize.query(`SELECT id, condition, affected_side, planned_sessions, frequency_per_week, review_every_sessions, status FROM treatment_plans WHERE id = :id`, { replacements: { id: planId }, type: QueryTypes.SELECT });
+        sessionNumber = await clinicalService.sessionNumberFor(planId, pcr.id);
+        dueMeasures = await clinicalService.dueMeasures({ id: planId, review_every_sessions: treatmentPlan.review_every_sessions }, sessionType, sessionNumber);
+      }
+    }
+
     const response = {
       ...pcr,
       baseline,
       historyLocked,
+      sessionType,
+      sessionNumber,
+      treatmentPlan: treatmentPlan || null,
+      dueMeasures: dueMeasures.map((m) => ({ planMeasureId: m.plan_measure_id, measureId: m.measure_id, code: m.code, name: m.name, side: m.side, item: m.item, scaleType: m.scale_type, min: m.min_value === null ? null : Number(m.min_value), max: m.max_value === null ? null : Number(m.max_value), unit: m.unit, instructions: m.instructions, subItems: m.sub_items, lastValue: m.last_value })),
       functionalScore: pcr.functional_score ?? null,
       painVas: pcr.pain_vas ?? null,
       functionalMeasure: pcr.functional_measure ?? '',
@@ -1015,6 +1034,12 @@ exports.updatePcr = async (req, res) => {
       }
     );
 
+    // P16: session type / plan link, due outcome measures on submit
+    const clinical = await clinicalService.onPcrSave({
+      t, pcr: existing, userId: req.user.id, data, submitting: requestedStatus === "submitted",
+      appointment: { id: appointmentId, therapist_id: owner.therapist_id, patient_id: owner.patient_id },
+    });
+
     // 6️⃣ Update appointments table
     await sequelize.query(
       `UPDATE appointments SET pcr_status = :pcr_status WHERE id = :appointmentId`,
@@ -1026,6 +1051,11 @@ exports.updatePcr = async (req, res) => {
 
     // 7️⃣ Commit transaction
     await t.commit();
+
+    if (clinical.reportToMake) {
+      try { await clinicalService.createReport(clinical.reportToMake); }
+      catch (reportErr) { console.error("progress report failed:", reportErr.message); }
+    }
 
     // P15: access log, and on lock the content hash + the PDF summary
     const logAction = requestedStatus === "locked" ? "lock" : requestedStatus === "submitted" ? "submit" : reopening ? (requestedStatus === "returned" ? "return" : "unlock") : "edit";
@@ -1075,6 +1105,7 @@ exports.updatePcr = async (req, res) => {
 
   } catch (error) {
     await t.rollback();
+    if (error instanceof clinicalService.ClinicalError) return res.status(error.httpStatus).json({ success: false, error: error.message, ...error.extra });
     if (error instanceof stateMachine.TransitionError) return res.status(error.httpStatus).json({ success: false, error: error.message });
     console.error("Error updating PCR:", error);
     return res.status(500).json({ success: false, error: "Failed to update PCR" });
