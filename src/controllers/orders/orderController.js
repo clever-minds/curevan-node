@@ -1200,10 +1200,10 @@ exports.createOrderFromCart = async (req, res) => {
     sgst = r2(sgst);
     igst = r2(igst);
 
-    // Shipping fee (owner decision D3): free at or above the threshold, otherwise a flat fee. The threshold is checked on the goods value
-    // after discounts (what the customer pays for the products, tax included). Shiprocket's rate is only used later to pick the courier.
-    const goodsValue = r2(taxableValue + totalTax);
-    const shippingChargeAmt = goodsValue >= rules.shop.freeShippingThresholdInr ? 0 : rules.shop.flatShippingFeeInr;
+    // Shipping fee (owner decision D3): free at or above the threshold, otherwise a flat fee. The threshold is checked
+    // on the subtotal after discounts (pack P19). Shiprocket's rate is only used later to pick the courier.
+    const subtotalAfterDiscounts = r2(lines.reduce((s, l, i) => s + l.amount - (couponResult ? couponResult.allocations[i] : 0), 0));
+    const shippingChargeAmt = subtotalAfterDiscounts >= rules.shop.freeShippingThresholdInr ? 0 : rules.shop.flatShippingFeeInr;
 
     const couponOnlyDiscount = couponResult ? couponResult.discount : 0;
     const appliedCouponDiscount = r2(couponOnlyDiscount + totalOfferDiscount);
