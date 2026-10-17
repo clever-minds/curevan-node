@@ -344,10 +344,73 @@ exports.createBookingAndInvoice = async (req, res) => {
       if (!appointmentId) throw new Error("Failed to get appointmentId");
     }
 
+    // Check if paying with a Care Pack (P28)
+    const payWithPack = bookingData.payWith === "pack" || bookingData.payWith === "care_pack" || Boolean(bookingData.carePackId);
+
     // Therapist approval comes first: nothing to pay yet. The patient pays after the therapist accepts.
-    if (!payForId && rules.booking.directBookingNeedsApproval) {
+    if (!payWithPack && !payForId && rules.booking.directBookingNeedsApproval) {
       await t.commit();
       return res.json({ success: true, appointmentId, requiresApproval: true });
+    }
+
+    if (payWithPack) {
+      const packId = bookingData.carePackId;
+      let packQuery = `SELECT * FROM care_packs WHERE patient_id = :patientId AND status = 'active' AND expires_at > now() AND sessions_used < sessions_total`;
+      const packReplacements = { patientId: req.user.id };
+      if (packId) {
+        packQuery += ` AND id = :packId`;
+        packReplacements.packId = packId;
+      }
+      packQuery += ` ORDER BY expires_at ASC LIMIT 1 FOR UPDATE`;
+
+      const [pack] = await sequelize.query(packQuery, { replacements: packReplacements, type: QueryTypes.SELECT, transaction: t });
+      if (!pack) {
+        await t.rollback();
+        return res.status(400).json({ success: false, error: "No active care pack available with remaining sessions" });
+      }
+
+      // If pack is tied to a specific therapist, ensure therapist matches
+      if (pack.therapist_id && Number(pack.therapist_id) !== Number(bookingData.therapistId)) {
+        await t.rollback();
+        return res.status(400).json({ success: false, error: "This care pack is reserved for a specific therapist" });
+      }
+
+      const nextUsed = pack.sessions_used + 1;
+      const nextStatus = nextUsed >= pack.sessions_total ? "exhausted" : "active";
+      await sequelize.query(
+        `UPDATE care_packs SET sessions_used = :nextUsed, status = :nextStatus, updated_at = now() WHERE id = :packId`,
+        { replacements: { nextUsed, nextStatus, packId: pack.id }, type: QueryTypes.UPDATE, transaction: t }
+      );
+
+      await sequelize.query(
+        `UPDATE appointments 
+         SET care_pack_id = :packId,
+             payment_status = 'Paid',
+             payment_method = 'care_pack',
+             status = 'confirmed',
+             verification_status = 'Verified',
+             paid_at = now()
+         WHERE id = :id`,
+        { replacements: { packId: pack.id, id: appointmentId }, type: QueryTypes.UPDATE, transaction: t }
+      );
+
+      const [finalAppt] = await sequelize.query(`SELECT * FROM appointments WHERE id = :id`, {
+        replacements: { id: appointmentId },
+        type: QueryTypes.SELECT,
+        transaction: t,
+      });
+
+      await exports.finalizePaidBooking(finalAppt, t);
+
+      await t.commit();
+      return res.json({
+        success: true,
+        appointmentId,
+        paidWith: "pack",
+        carePackId: pack.id,
+        sessionsRemaining: pack.sessions_total - nextUsed,
+        message: "Booking confirmed using your Care Pack",
+      });
     }
 
     const amountPaise = Math.round(amount * 100);
@@ -1478,7 +1541,7 @@ exports.rejectBookingRequest = async (req, res) => {
      admin      patient gets everything back (a reason is required)
    The refund goes back through Razorpay first; if Razorpay refuses, nothing is cancelled. */
 const CANCEL_COLUMNS = `id, status, therapist_id, patient_id, patient_name, therapist_name, date, time, start_time, created_at,
-              service_amount, total_amount, payment_status, razorpay_payment_id, payment_method`;
+              service_amount, total_amount, payment_status, razorpay_payment_id, payment_method, care_pack_id`;
 
 function cancelRole(user, appt) {
   if (access.isClinicalAdmin(user)) return "admin";
@@ -1529,6 +1592,7 @@ exports.cancelAppointment = async (req, res) => {
     }
 
     const q = cancellationService.quote(appt, role);
+    const isCarePack = Boolean(appt.care_pack_id);
 
     // the patient confirmed a specific charge: if the clock moved it, show the new number instead of charging a different one
     const accepted = (req.body || {}).acceptedChargeInr;
@@ -1536,9 +1600,9 @@ exports.cancelAppointment = async (req, res) => {
       return res.status(409).json({ success: false, error: "The cancellation charge has changed. Please check the new amount.", message: "The cancellation charge has changed", quote: q });
     }
 
-    // refund first; if Razorpay refuses (or there is no online payment to refund) nothing is cancelled
+    // refund first; if Razorpay refuses (or there is no online payment to refund) nothing is cancelled (care pack sessions don't go through Razorpay)
     let refund = null;
-    if (q.refundInr > 0) {
+    if (!isCarePack && q.refundInr > 0) {
       try {
         refund = await refundService.refund({
           appointmentId: appt.id,
@@ -1557,9 +1621,25 @@ exports.cancelAppointment = async (req, res) => {
     try {
       await stateMachine.transition(id, target, req.user, { transaction: t, note: reason || `Cancelled by ${role} (${q.band})` });
       await cancellationService.recordOutcome(appt, q, { actorId: userId, reason: reason || null, transaction: t });
+
+      // If booked via care pack: free window returns the session; late cancellation consumes it (P28)
+      if (isCarePack) {
+        const canReturnSession = q.band === "free" || q.band === "grace" || role !== "patient";
+        if (canReturnSession) {
+          await sequelize.query(
+            `UPDATE care_packs 
+             SET sessions_used = GREATEST(0, sessions_used - 1),
+                 status = 'active',
+                 updated_at = now()
+             WHERE id = :carePackId`,
+            { replacements: { carePackId: appt.care_pack_id }, type: QueryTypes.UPDATE, transaction: t }
+          );
+        }
+      }
+
       if (role === "therapist") await cancellationService.reliabilityEvent(appt.therapist_id, appt.id, "cancelled_by_therapist", t);
       await t.commit();
-      if (q.chargeInr > 0) await payoutService.createItemForCancellation(appt.id).catch((e) => console.error("cancellation payout failed:", e.message));
+      if (!isCarePack && q.chargeInr > 0) await payoutService.createItemForCancellation(appt.id).catch((e) => console.error("cancellation payout failed:", e.message));
     } catch (err) {
       await t.rollback();
       throw err;

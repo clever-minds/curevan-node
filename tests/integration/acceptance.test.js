@@ -73,7 +73,8 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 async function seed() {
   await q(`TRUNCATE users, roles, user_roles, therapist_profiles, therapist_availability, therapist_leaves, service_types, order_addresses, appointments, pcr,
     categories, products, product_variants, inventory, cart, offers, coupons, orders, order_items, payment_transactions, invoices, order_refunds,
-    coupon_usages, order_stock_reservations, payment_webhook_events, sos_alerts, consent_logs, notifications, notification_log, audit_logs, tickets, ticket_messages, payout_items, media RESTART IDENTITY`);
+    coupon_usages, order_stock_reservations, payment_webhook_events, sos_alerts, consent_logs, notifications, notification_log, audit_logs, tickets, ticket_messages, payout_items, media,
+    care_packs, care_pack_plans RESTART IDENTITY CASCADE`);
   for (const r of ["patient", "therapist", "admin.super", "admin.ecom", "admin.therapy"]) await q("INSERT INTO roles(name) VALUES ($1)", [r]);
   const mk = async (uid, email, name, phone, role, extra = {}) => {
     // like production: users.role holds the generic 'admin' for every admin, the real role lives in user_roles
@@ -106,6 +107,9 @@ async function seed() {
   const [a2] = await q("INSERT INTO order_addresses(user_id, full_name, email, phone, full_address, city, state, pincode) VALUES ($1,'Patient Two','p2@x.com','9000000002','2 Side St','Mumbai','Maharashtra','400001') RETURNING id", [U.p2.id]);
   U.a1 = a1.id; U.a2 = a2.id;
   await q(`INSERT INTO coupons(code, type, value, status, scope, usage_limit, usage_per_user) VALUES ('SAVE100','flat',100,'Active','Global',1,1), ('OPEN10','percent',10,'Active','Global',NULL,NULL)`);
+  await q(`INSERT INTO care_pack_plans(name, service_type_id, sessions, price, validity_days, active) VALUES
+    ('5-Session Physio Pack', 1, 5, 4500.00, 90, true),
+    ('10-Session Physio Pack', 1, 10, 8500.00, 90, true)`);
   return U;
 }
 
@@ -1650,7 +1654,7 @@ async function seed() {
 
     // --- feature flags for later prompts
     r = await call("GET", "/api/config/public");
-    check("P21 feature flags maskedCall and carePacks are false in public config", r.s === 200 && r.j.data.features.maskedCall === false && r.j.data.features.carePacks === false);
+    check("P21 feature flags maskedCall and carePacks are configured in public config", r.s === 200 && typeof r.j.data.features.maskedCall === "boolean" && typeof r.j.data.features.carePacks === "boolean");
   }
 
   // P22 therapist dashboard on real data & therapy admin queues
@@ -2413,6 +2417,110 @@ async function seed() {
 
     check("P27 the number mask keeps only 4 digits for logs", telephony.mask("+919810000001") === "******0001");
     delete process.env.TELEPHONY_PROVIDER;
+  }
+
+  // ============================================================ P28 Care packs (5-session and 10-session)
+  {
+    // 1. Public config exposes carePacks feature
+    r = await call("GET", "/api/config/public");
+    check("P28 feature flag carePacks is true in public config", r.s === 200 && r.j.data.features.carePacks === true);
+
+    // 2. Listing plans
+    r = await call("GET", "/api/care-packs/plans");
+    check("P28 care pack plans list returns available plans", r.s === 200 && Array.isArray(r.j.data) && r.j.data.length >= 2);
+    const plan10 = r.j.data.find((p) => p.sessions === 10) || r.j.data[0];
+
+    // 3. Purchase order creation
+    r = await call("POST", "/api/care-packs/purchase/order", T.p1, { planId: plan10.id });
+    check("P28 creating a purchase order returns Razorpay order and amount in paise", r.s === 200 && r.j.data.razorpayOrderId && r.j.data.amountPaise === Math.round(Number(plan10.price) * 100));
+    const rzpOrderId = r.j.data.razorpayOrderId;
+    const rzpPaymentId = "pay_cp_" + Date.now();
+    const signature = crypto.createHmac("sha256", process.env.RAZORPAY_KEY_SECRET).update(`${rzpOrderId}|${rzpPaymentId}`).digest("hex");
+
+    // 4. Verification & activation
+    r = await call("POST", "/api/care-packs/purchase/verify", T.p1, {
+      planId: plan10.id,
+      razorpayOrderId: rzpOrderId,
+      razorpayPaymentId: rzpPaymentId,
+      razorpaySignature: signature,
+    });
+    const cpId = r.j && r.j.data && r.j.data.id;
+    check("P28 verifying purchase activates the care pack with 90-day expiry", r.s === 201 && cpId && r.j.data.status === "active" && r.j.data.sessions_total === plan10.sessions && r.j.data.sessions_used === 0);
+
+    // 5. Patient lists their own packs
+    r = await call("GET", "/api/care-packs/my-packs", T.p1);
+    const myPack = (r.j.data || []).find((p) => p.id === cpId);
+    check("P28 patient can list their active packs showing remaining sessions", r.s === 200 && myPack && myPack.sessions_remaining === plan10.sessions);
+
+    // 6. Book 3 sessions using the pack
+    const tomorrowD = new Date(Date.now() + 86400e3 * 2);
+    const dStr = tomorrowD.toISOString().slice(0, 10);
+    const slotTimes = ["10:00", "11:30", "14:00"];
+    const bookedAppts = [];
+    for (const time of slotTimes) {
+      r = await call("POST", "/api/appointments/create-appointment", T.p1, {
+        bookingData: {
+          therapistId: U.t1.id,
+          date: dStr,
+          time,
+          mode: "home",
+          serviceTypeId: 1,
+          therapyType: "Physiotherapy",
+          payWith: "pack",
+          carePackId: cpId,
+        },
+      });
+      if (r.s === 200) bookedAppts.push(r.j.appointmentId);
+    }
+    check("P28 booking 3 sessions using the 10-pack succeeds without payment", bookedAppts.length === 3);
+
+    // Check sessions remaining: 10 - 3 = 7
+    r = await call("GET", "/api/care-packs/my-packs", T.p1);
+    const packAfter3 = (r.j.data || []).find((p) => p.id === cpId);
+    check("P28 booking 3 sessions on a 10-pack leaves exactly 7 sessions remaining", packAfter3 && packAfter3.sessions_used === 3 && packAfter3.sessions_remaining === 7);
+
+    // 7. Cancellation: free window returns the session
+    r = await call("PATCH", `/api/appointments/${bookedAppts[0]}/cancel`, T.p1, { reason: "Need to reschedule" });
+    check("P28 cancelling within the free window succeeds", r.s === 200);
+    r = await call("GET", "/api/care-packs/my-packs", T.p1);
+    const packAfterCancel = (r.j.data || []).find((p) => p.id === cpId);
+    check("P28 cancellation inside free window returns the session (now 8 left)", packAfterCancel && packAfterCancel.sessions_used === 2 && packAfterCancel.sessions_remaining === 8);
+
+    // 8. Expired pack cannot be used
+    const expDate = new Date(Date.now() - 86400e3);
+    await q("UPDATE care_packs SET expires_at = $1 WHERE id = $2", [expDate, cpId]);
+    r = await call("POST", "/api/appointments/create-appointment", T.p1, {
+      bookingData: {
+        therapistId: U.t1.id,
+        date: dStr,
+        time: "09:00",
+        mode: "home",
+        serviceTypeId: 1,
+        therapyType: "Physiotherapy",
+        payWith: "pack",
+        carePackId: cpId,
+      },
+    });
+    check("P28 an expired pack cannot be used to book a session (400)", r.s === 400);
+
+    // Restore expiry for refund test
+    await q("UPDATE care_packs SET expires_at = now() + interval '80 days', status = 'active' WHERE id = $1", [cpId]);
+
+    // 9. Admin pro-rata refund for unused sessions
+    // Total: 10, Used: 2, Unused: 8.
+    // Price = plan10.price. Per session = price / 10. Gross = (price / 10) * 8. Net = Gross * 0.90 (10% fee).
+    const singlePrice = Number(plan10.price) / 10;
+    const expectedGross = singlePrice * 8;
+    const expectedNet = Math.round(expectedGross * 0.9 * 100) / 100;
+
+    r = await call("POST", `/api/care-packs/admin/${cpId}/refund`, T.su, { reason: "Patient relocating" });
+    check("P28 admin refund of unused sessions matches pro-rata formula minus 10% fee", r.s === 200 && r.j.data.sessionsRefunded === 8 && Math.abs(r.j.data.netRefundInr - expectedNet) < 0.05, "got " + r.s + " " + JSON.stringify(r.j));
+    const refundedPack = (await q("SELECT status, refunded_amount FROM care_packs WHERE id = $1", [cpId]))[0];
+    check("P28 pack status is marked 'refunded' in database", refundedPack && refundedPack.status === "refunded" && Number(refundedPack.refunded_amount) === expectedNet);
+
+    // Cannot refund an already refunded pack
+    r = await call("POST", `/api/care-packs/admin/${cpId}/refund`, T.su, { reason: "duplicate" });
+    check("P28 an already refunded pack cannot be refunded again (409)", r.s === 409);
   }
 
   // invoices
