@@ -18,7 +18,7 @@ exports.listMine = async (req, res) => {
   try {
     const asTherapist = req.user.role === "therapist";
     const rows = await q(
-      `SELECT fp.id, fp.appointment_id AS "appointmentId", fp.series_id AS "seriesId", fp.status, a.status AS "apptStatus", a.payment_status AS "paymentStatus",
+      `SELECT fp.id, fp.therapist_id AS "therapistId", fp.appointment_id AS "appointmentId", fp.series_id AS "seriesId", fp.status, a.status AS "apptStatus", a.payment_status AS "paymentStatus",
               to_char(a.date, 'YYYY-MM-DD') AS date, a.time, a.therapist_name AS "therapistName", a.patient_name AS "patientName",
               fp.hold_expires_at AS "holdExpiresAt", a.service_amount AS amount
        FROM followup_proposals fp LEFT JOIN appointments a ON a.id = fp.appointment_id

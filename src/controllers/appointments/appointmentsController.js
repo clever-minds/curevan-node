@@ -8,6 +8,7 @@ const slotService = require("../../services/slotService");
 const cancellationService = require("../../services/cancellationService");
 const pcrService = require("../../services/pcrService");
 const clinicalService = require("../../services/clinicalService");
+const payoutService = require("../../services/payoutService");
 const { generatePcrPdf } = require("../../services/pcrPdfService");
 const { STATUS } = stateMachine;
 const refundService = require("../../services/refundService");
@@ -1074,6 +1075,9 @@ exports.updatePcr = async (req, res) => {
       } catch (pdfErr) {
         console.error("PCR lock: hash/PDF failed:", pdfErr.message);   // the lock itself stands; the PDF can be regenerated on download
       }
+      // P18: a locked PCR makes the session payable (payment, start code and lock are all checked there)
+      try { await payoutService.createItemForAppointment(appointmentId); }
+      catch (payErr) { if (!(payErr instanceof payoutService.PayoutError)) console.error("payout line failed:", payErr.message); }
     }
 
     // 8️⃣ Send Status Update Email (if status changed)
@@ -1534,6 +1538,7 @@ exports.cancelAppointment = async (req, res) => {
       await cancellationService.recordOutcome(appt, q, { actorId: userId, reason: reason || null, transaction: t });
       if (role === "therapist") await cancellationService.reliabilityEvent(appt.therapist_id, appt.id, "cancelled_by_therapist", t);
       await t.commit();
+      if (q.chargeInr > 0) await payoutService.createItemForCancellation(appt.id).catch((e) => console.error("cancellation payout failed:", e.message));
     } catch (err) {
       await t.rollback();
       throw err;
@@ -1594,6 +1599,7 @@ async function settleNoShow(id, user) {
     }
   }
   await cancellationService.recordOutcome(appt, q, { actorId: user.id, reason: "No-show" });
+  if (q.chargeInr > 0) await payoutService.createItemForCancellation(appt.id).catch((e) => console.error("no-show payout failed:", e.message));
   return { band: q.band, chargeInr: q.chargeInr, refundInr: q.refundInr, refundStarted: !!refund };
 }
 

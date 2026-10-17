@@ -291,13 +291,16 @@ exports.registerTherapist = async (req, res) => {
     const profileResult = await sequelize.query(
       `INSERT INTO therapist_profiles\n      (user_id,bio,qualification,registration_no,\n       experience_years,hourly_rate,membership_plan,\n       pan_number,bank_account_number,bank_ifsc_code,\n       service_radius_km,specialty,\n       address_line1,address_line2,city,state,pin,\n       full_address,latitude,longitude)\n      VALUES\n      (:user_id,:bio,:qualification,:registration_no,\n       :experience_years,:hourly_rate,:membership_plan,\n       :pan_number,:bank_account_number,:bank_ifsc_code,\n       :service_radius_km,:specialty,\n       :line1,:line2,:city,:state,:pin,\n       :fullAddress,:lat,:lng)\n      RETURNING *`,
       {
-        replacements: { user_id: user.id, bio: bio || null, qualification: qualification || null, registration_no: registrationNo || null, experience_years: experienceYears || null, hourly_rate: hourlyRate || null, membership_plan: membershipPlan || null, pan_number: panNumber || null, bank_account_number: bankAccountNumber || null, bank_ifsc_code: bankIfscCode || null, service_radius_km: serviceRadiusKm || 10, specialty: pgSpecialty || null, line1: line1 || null, line2: line2 || null, city: city || null, state: state || null, pin: pin || null, fullAddress: fullAddress || null, lat: lat || null, lng: lng || null },
+        replacements: { user_id: user.id, bio: bio || null, qualification: qualification || null, registration_no: registrationNo || null, experience_years: experienceYears || null, hourly_rate: hourlyRate || null, membership_plan: 'standard', pan_number: panNumber || null, bank_account_number: bankAccountNumber || null, bank_ifsc_code: bankIfscCode || null, service_radius_km: serviceRadiusKm || 10, specialty: pgSpecialty || null, line1: line1 || null, line2: line2 || null, city: city || null, state: state || null, pin: pin || null, fullAddress: fullAddress || null, lat: lat || null, lng: lng || null },
         type: QueryTypes.INSERT,
         transaction: t
       }
     );
 
     const therapist = profileResult[0][0];
+    if (membershipPlan === "premium") {   // premium is a request; an admin approves it in the profile approvals
+      await sequelize.query(`UPDATE therapist_profiles SET premium_requested_at = NOW() WHERE id = :id`, { replacements: { id: therapist.id }, type: QueryTypes.UPDATE, transaction: t });
+    }
 
     /* ---------- CREATE INITIAL APPROVAL REQUEST ---------- */
     const initialChanges = JSON.stringify({
@@ -662,7 +665,6 @@ exports.updateProfile = async (req, res) => {
         registration_no=:registrationNo,
         experience_years=:experienceYears,
         hourly_rate=:hourlyRate,
-        membership_plan=:membershipPlan,
         pan_number=:panNumber,
         bank_account_number=:bankAccountNumber,
         bank_ifsc_code=:bankIfscCode,
@@ -678,7 +680,6 @@ exports.updateProfile = async (req, res) => {
           registrationNo,
           experienceYears,
           hourlyRate,
-          membershipPlan,
           panNumber,
           bankAccountNumber,
           bankIfscCode,
@@ -1527,13 +1528,12 @@ exports.getDashboardStats = async (req, res) => {
     );
     const avgRating = parseFloat(avgRatingRow.avg_rating || 0).toFixed(1);
 
-    // Net Payout (Estimate based on 90% of service_amount)
+    // Net payout = what the payout engine worked out for this therapist (fee, GST on the fee and TDS already taken off)
     const [[netPayoutRow]] = await sequelize.query(
-      `SELECT SUM(service_amount) as total FROM appointments WHERE therapist_id = :id AND status = 'completed'`,
+      `SELECT COALESCE(SUM(net_amount), 0) as total FROM payout_items WHERE therapist_id = :id`,
       { replacements: { id: therapistId } }
     );
-    const grossPayout = parseFloat(netPayoutRow.total || 0);
-    const netPayout = grossPayout * 0.9; // 10% platform fee assumed for now
+    const netPayout = parseFloat(netPayoutRow.total || 0);
 
     // Product Commissions (Estimate - 0 for now unless there's a products table)
     const productCommissions = 0;
@@ -1568,9 +1568,9 @@ exports.getDashboardStats = async (req, res) => {
 
     // Weekly Earnings Data (Last 4 weeks)
     const weeklyEarningsQuery = await sequelize.query(
-      `SELECT to_char(date, 'WW') as week_num, MIN(date) as week_start, SUM(service_amount) * 0.9 as "Service"
-       FROM appointments 
-       WHERE therapist_id = :id AND status = 'completed' AND date >= current_date - interval '28 days'
+      `SELECT to_char(week_start, 'IYYY-IW') as week_num, MIN(week_start) as week_start, SUM(net_amount) as "Service"
+       FROM payout_items
+       WHERE therapist_id = :id AND week_start >= current_date - interval '28 days'
        GROUP BY week_num ORDER BY week_num ASC`,
       { replacements: { id: therapistId }, type: QueryTypes.SELECT }
     );
@@ -1617,23 +1617,22 @@ exports.getEarnings = async (req, res) => {
 
     // Fetch payout history (summarized by week)
     const payoutHistoryQuery = await sequelize.query(
-      `SELECT 
-         week_start,
-         SUM(net_amount) as total_amount,
-         COUNT(source_id) as number_of_sessions
-       FROM payout_items
-       WHERE therapist_id = :id AND state = 'Paid'
-       GROUP BY week_start
-       ORDER BY week_start DESC`,
+      `SELECT b.id, b.week_start, b.week_end, b.net, b.status, b.paid_at, b.utr,
+              (SELECT COUNT(*) FROM payout_items i WHERE i.batch_id = b.id) AS number_of_sessions
+       FROM payout_batches b
+       WHERE b.therapist_id = :id
+       ORDER BY b.week_start DESC`,
       { replacements: { id: therapistId }, type: QueryTypes.SELECT }
     );
 
     const payoutHistory = payoutHistoryQuery.map(row => ({
-      payoutId: 'PO-' + new Date(row.week_start).getTime(),
+      payoutId: 'PO-' + row.id,
+      batchId: row.id,
       period: `Week of ${new Date(row.week_start).toLocaleDateString()}`,
-      payoutDate: row.week_start,
-      totalAmount: parseFloat(row.total_amount || 0),
-      status: 'Paid',
+      payoutDate: row.paid_at || row.week_end,
+      totalAmount: parseFloat(row.net || 0),
+      status: row.status === 'paid' ? 'Paid' : row.status === 'on_hold' ? 'On-Hold' : row.status === 'approved' ? 'Approved' : 'Scheduled',
+      utr: row.utr || undefined,
       numberOfSessions: parseInt(row.number_of_sessions || 0)
     }));
 
@@ -1661,10 +1660,10 @@ exports.getEarnings = async (req, res) => {
       preTdsPayable: parseFloat(row.pre_tds_payable || 0),
       tdsDeducted: parseFloat(row.tds_deducted || 0),
       netPayable: parseFloat(row.net_amount || 0),
-      status: row.state === 'Paid' ? 'Paid' : (row.state === 'onHold' ? 'On-Hold' : 'Payout Scheduled'),
+      status: String(row.state).toLowerCase() === 'paid' ? 'Paid' : (row.state === 'onHold' ? 'On-Hold' : 'Payout Scheduled'),
       type: row.type,
       mode: row.appointment_mode || 'Clinic',
-      reason: row.state === 'onHold' ? 'Awaiting verification' : undefined
+      reason: row.state === 'onHold' ? 'On hold - bank details or an admin check are pending' : undefined
     }));
 
     // Daily Net Earnings (Last 30 days)

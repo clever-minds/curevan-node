@@ -52,6 +52,9 @@ exports.addAuditLog = async (req, res) => {
 
 
 exports.addPayoutItem = async (req, res) => {
+  // P18: payout lines are made by the server when a PCR is locked (services/payoutService.js); a client can no longer write amounts
+  return res.status(410).json({ message: "Payout lines are created automatically when the PCR is locked" });
+  // eslint-disable-next-line no-unreachable
   try {
     const {
       type,

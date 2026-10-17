@@ -1141,6 +1141,151 @@ async function seed() {
     check("P17 booking a next session clears the flag", (await q("SELECT follow_up_overdue FROM treatment_plans WHERE id = $1", [odPlan.id]))[0].follow_up_overdue === false);
   }
 
+  // ---- P18: payout engine, weekly batches, approval and payment
+  {
+    const payoutService = require("../../src/services/payoutService");
+    const fs = require("fs");
+    const pathMod = require("path");
+
+    // --- the maths
+    const prem = payoutService.computeLine({ gross: 1000, plan: "premium", ytdGrossBefore: 0 });
+    const std = payoutService.computeLine({ gross: 1000, plan: "standard", ytdGrossBefore: 0 });
+    check("P18 premium gross 1,000 -> fee 100, GST on fee 18, TDS 0, net 882", prem.fee === 100 && prem.gst === 18 && prem.tds === 0 && prem.net === 882, JSON.stringify(prem));
+    check("P18 standard gross 1,000 -> fee 0, net 1,000", std.fee === 0 && std.gst === 0 && std.net === 1000, JSON.stringify(std));
+    const edge = payoutService.computeLine({ gross: 1000, plan: "standard", ytdGrossBefore: 499500 });
+    const over = payoutService.computeLine({ gross: 1000, plan: "standard", ytdGrossBefore: 600000 });
+    check("P18 TDS counts only the part above the yearly threshold: 500 above -> 0.50, fully above -> 1.00", edge.tds === 0.5 && over.tds === 1 && over.net === 999, JSON.stringify([edge.tds, over.tds]));
+    check("P18 the financial year runs April to March", payoutService.financialYear("2026-03-31").start === "2025-04-01" && payoutService.financialYear("2026-04-01").start === "2026-04-01");
+
+    // --- when a line is made
+    await q("UPDATE therapist_profiles SET membership_plan = 'premium' WHERE user_id = $1", [U.t2.id]);
+    let pn = 0;
+    const mkPayable = async (therapist, { paid = true, otp = true, pcr = "locked", amount = 1000, pid = true } = {}) => {
+      pn += 1;
+      const id = (await q(`INSERT INTO appointments(patient_id, patient_name, therapist_id, therapist_name, service_type_id, service_amount, total_amount, date, time, status, payment_status, payment_method, razorpay_payment_id, otp_verified_at)
+        VALUES ($1,'Pay Patient',$2,'Dr',1,$3,$3,$4,'09:00','completed',$5,'razorpay',$6,$7) RETURNING id`, [U.p1.id, therapist, amount, day(-(900 - pn * 8)), paid ? "Paid" : "Pending", pid ? "pay_p18_" + pn : null, otp ? new Date() : null]))[0].id;
+      await q("INSERT INTO pcr(appointment_id, patient_id, therapist_id, service_type_id, status, version, submitted_at) VALUES ($1,$2,$3,1,$4,1, now())", [id, U.p1.id, therapist, pcr]);
+      return id;
+    };
+    const tryMake = async (id) => { try { return await payoutService.createItemForAppointment(id); } catch (e) { return { error: e.message, status: e.httpStatus }; } };
+    check("P18 not payable while the payment is unconfirmed (409)", (await tryMake(await mkPayable(U.t1.id, { paid: false }))).status === 409);
+    check("P18 not payable while the start code was never verified (409)", (await tryMake(await mkPayable(U.t1.id, { otp: false }))).status === 409);
+    check("P18 not payable while the PCR is not locked (409)", (await tryMake(await mkPayable(U.t1.id, { pcr: "submitted" }))).status === 409);
+    const okId = await mkPayable(U.t1.id);
+    const made = await tryMake(okId);
+    check("P18 payable once payment, start code and lock are all in place: standard 1,000 -> net 1,000, snapshot standard", made.created === true && made.item.net === 1000 && (await q("SELECT membership_plan_snapshot, state, platform_fee_pct FROM payout_items WHERE source_id = $1 AND type = 'service'", [okId]))[0].membership_plan_snapshot === "standard");
+    check("P18 asking again does not duplicate the line", (await tryMake(okId)).created === false && (await q("SELECT COUNT(*)::int AS n FROM payout_items WHERE source_id = $1 AND type = 'service'", [okId]))[0].n === 1);
+    const premId = await mkPayable(U.t2.id);
+    await payoutService.createItemForAppointment(premId);
+    const premRow = (await q("SELECT * FROM payout_items WHERE source_id = $1 AND type = 'service'", [premId]))[0];
+    check("P18 a premium therapist's line: fee 100, GST 18, net 882 stored", Number(premRow.platform_fee_amount) === 100 && Number(premRow.gst_on_platform_fee) === 18 && Number(premRow.net_amount) === 882 && premRow.membership_plan_snapshot === "premium");
+
+    // locking the PCR through the API creates the line by itself
+    const lockId = await mkPayable(U.t1.id, { pcr: "submitted" });
+    r = await call("PATCH", "/api/appointments/pcr/" + lockId, T.therapy, { status: "locked" });
+    check("P18 an admin locking the PCR creates the payout line without any client call", r.s === 200 && (await q("SELECT COUNT(*)::int AS n FROM payout_items WHERE source_id = $1 AND type = 'service'", [lockId]))[0].n === 1, "got " + r.s + " " + (r.raw || "").slice(0, 120));
+    r = await call("POST", "/api/general/payout-items/add", T.therapy, { type: "service", sourceId: 1, therapistId: U.t1.id, patientId: 1, grossAmount: 99999, platformFeePct: 0, platformFeeAmount: 0, netAmount: 99999, state: "Paid", weekStart: day(0), membershipPlanSnapshot: "premium" });
+    check("P18 the old client-written payout endpoint is switched off (410)", r.s === 410, "got " + r.s);
+    check("P18 cancellation charges became payout lines (type 'cancellation')", (await q("SELECT COUNT(*)::int AS n FROM payout_items WHERE type = 'cancellation'"))[0].n >= 1);
+
+    // --- weekly batches
+    const before = (await q("SELECT COUNT(*)::int AS n FROM payout_items WHERE batch_id IS NULL AND state = 'Pending'"))[0].n;
+    const dowToday = new Date(day(0) + "T00:00:00Z").getUTCDay();   // 0 = Sunday; run "as of" the coming Sunday 23:59 IST
+    const runAt = new Date(day(0) + "T23:59:00+05:30").getTime() + ((7 - dowToday) % 7) * 86400000;
+    const jr = await payoutService.runWeeklyBatches(runAt);
+    const batches = await q("SELECT * FROM payout_batches ORDER BY id");
+    check("P18 the Sunday job made batches from the waiting lines (" + before + " lines -> " + batches.length + " batches)", before > 0 && jr.created > 0 && batches.length === jr.created && (await q("SELECT COUNT(*)::int AS n FROM payout_items WHERE batch_id IS NULL AND state = 'Pending'"))[0].n === 0);
+    const perKey = await q("SELECT therapist_id, week_start, COUNT(*)::int AS n FROM payout_batches GROUP BY 1, 2 HAVING COUNT(*) > 1");
+    check("P18 exactly one batch per therapist per week", perKey.length === 0);
+    const sums = await q("SELECT b.id, b.gross, b.net, COALESCE(SUM(i.gross_amount),0) AS g, COALESCE(SUM(i.net_amount),0) AS n FROM payout_batches b JOIN payout_items i ON i.batch_id = b.id GROUP BY b.id");
+    check("P18 each batch total equals the sum of its lines", sums.length > 0 && sums.every((x) => Number(x.gross) === Number(x.g) && Number(x.net) === Number(x.n)));
+    const jr2 = await payoutService.runWeeklyBatches(runAt);
+    check("P18 running the job again changes nothing", jr2.created === 0 && jr2.attached === 0);
+    const t1Batch = (await q("SELECT * FROM payout_batches WHERE therapist_id = $1 AND status = 'scheduled' ORDER BY id LIMIT 1", [U.t1.id]))[0];
+    const t2Batch = (await q("SELECT * FROM payout_batches WHERE therapist_id = $1 ORDER BY id LIMIT 1", [U.t2.id]))[0];
+    check("P18 a therapist without bank details gets a batch 'on_hold' with the reason; one with details is 'scheduled'", t1Batch && t2Batch.status === "on_hold" && /bank/i.test(t2Batch.hold_reason) && (await q("SELECT COUNT(*)::int AS n FROM payout_items WHERE batch_id = $1 AND state = 'onHold'", [t2Batch.id]))[0].n > 0);
+
+    // --- API access
+    r = await call("GET", "/api/payout-batches/list", T.su);
+    check("P18 admins list all batches", r.s === 200 && r.j.data.length === batches.length);
+    r = await call("GET", "/api/payout-batches/list", T.t1);
+    check("P18 a therapist lists only their own", r.s === 200 && r.j.data.length > 0 && r.j.data.every((b) => b.therapistId === U.t1.id));
+    r = await call("GET", "/api/payout-batches/list", T.p1);
+    check("P18 a patient cannot (403)", r.s === 403);
+    r = await call("GET", "/api/payout-batches/" + t1Batch.id, T.t2);
+    check("P18 another therapist cannot open the batch (403)", r.s === 403);
+    r = await call("GET", "/api/payout-batches/" + t1Batch.id, T.t1);
+    check("P18 the owner sees the lines, never the bank number", r.s === 200 && r.j.data.items.length > 0 && !/bank_account|ifsc/i.test(r.raw || ""));
+
+    // --- approval
+    r = await call("POST", "/api/payout-batches/" + t1Batch.id + "/approve", T.therapy);
+    check("P18 only the Super Admin approves (Therapy Admin gets 403)", r.s === 403);
+    r = await call("POST", "/api/payout-batches/" + t2Batch.id + "/approve", T.su);
+    check("P18 an on-hold batch cannot be approved (409)", r.s === 409);
+    r = await call("POST", "/api/payout-batches/" + t1Batch.id + "/hold", T.therapy, {});
+    check("P18 holding needs a reason (400)", r.s === 400);
+    r = await call("POST", "/api/payout-batches/" + t1Batch.id + "/hold", T.therapy, { reason: "Check the PCR" });
+    check("P18 Therapy Admin can hold with a reason; the lines go on hold too", r.s === 200 && (await q("SELECT status FROM payout_batches WHERE id = $1", [t1Batch.id]))[0].status === "on_hold" && (await q("SELECT COUNT(*)::int AS n FROM payout_items WHERE batch_id = $1 AND state <> 'onHold'", [t1Batch.id]))[0].n === 0);
+    r = await call("POST", "/api/payout-batches/" + t2Batch.id + "/release", T.therapy);
+    check("P18 a batch with missing bank details cannot be released (409)", r.s === 409);
+    r = await call("POST", "/api/payout-batches/" + t1Batch.id + "/release", T.therapy);
+    check("P18 a held batch with bank details is released back to 'scheduled'", r.s === 200 && (await q("SELECT status FROM payout_batches WHERE id = $1", [t1Batch.id]))[0].status === "scheduled");
+    r = await call("POST", "/api/payout-batches/" + t1Batch.id + "/mark-paid", T.su, { utr: "UTR123456" });
+    check("P18 a batch must be approved before it can be marked paid (409)", r.s === 409);
+    r = await call("POST", "/api/payout-batches/" + t1Batch.id + "/approve", T.su);
+    check("P18 the Super Admin approves a scheduled batch", r.s === 200 && (await q("SELECT status, approved_by FROM payout_batches WHERE id = $1", [t1Batch.id]))[0].approved_by === U.su.id);
+
+    // --- CSV export
+    const wk = (await q("SELECT to_char(week_start, 'YYYY-MM-DD') AS w FROM payout_batches WHERE id = $1", [t1Batch.id]))[0].w;
+    await q("UPDATE users SET name = '=HYPERLINK(1)' WHERE id = $1", [U.t1.id]);
+    const csvRes = await fetch(base + "/api/payout-batches/export.csv?week=" + wk, { headers: { authorization: "Bearer " + T.su } });
+    const csv = await csvRes.text();
+    await q("UPDATE users SET name = 'Dr One' WHERE id = $1", [U.t1.id]);
+    check("P18 the CSV has beneficiary, account, IFSC, amount and batch id for approved batches", csvRes.status === 200 && /Beneficiary name,Account number,IFSC,Amount \(INR\),Batch id/.test(csv) && new RegExp(`,${t1Batch.id}\\r?\\n`).test(csv) && /HDFC0001/.test(csv), csv.slice(0, 250));
+    check("P18 spreadsheet formulas in names are neutralised ('=HYPERLINK' -> text)", !/(^|,)=HYPERLINK/m.test(csv) && /'=HYPERLINK/.test(csv));
+    r = await call("GET", "/api/payout-batches/export.csv?week=" + wk, T.t1);
+    check("P18 a therapist cannot export (403)", r.s === 403);
+
+    // --- payment with UTR
+    r = await call("POST", "/api/payout-batches/" + t1Batch.id + "/mark-paid", T.su, { utr: "x" });
+    check("P18 a bad UTR is refused (400)", r.s === 400);
+    r = await call("POST", "/api/payout-batches/" + t1Batch.id + "/mark-paid", T.therapy, { utr: "UTR123456" });
+    check("P18 Therapy Admin cannot mark paid (403)", r.s === 403);
+    const notesBefore = (await q("SELECT COUNT(*)::int AS n FROM notifications WHERE user_uid = $1 AND title = 'Your payout was sent'", [String(U.t1.id)]))[0].n;
+    r = await call("POST", "/api/payout-batches/" + t1Batch.id + "/mark-paid", T.su, { utr: "UTR123456", paidAt: new Date().toISOString() });
+    check("P18 the Super Admin enters the UTR: batch paid, lines paid, therapist told", r.s === 200 && (await q("SELECT status, utr FROM payout_batches WHERE id = $1", [t1Batch.id]))[0].utr === "UTR123456" && (await q("SELECT COUNT(*)::int AS n FROM payout_items WHERE batch_id = $1 AND state <> 'Paid'", [t1Batch.id]))[0].n === 0 && (await q("SELECT COUNT(*)::int AS n FROM notifications WHERE user_uid = $1 AND title = 'Your payout was sent'", [String(U.t1.id)]))[0].n === notesBefore + 1, "got " + r.s + " " + (r.raw || "").slice(0, 120));
+    r = await call("POST", "/api/payout-batches/" + t1Batch.id + "/mark-paid", T.su, { utr: "UTR999999" });
+    check("P18 a paid batch cannot be paid again (409)", r.s === 409);
+    r = await call("POST", "/api/payout-batches/" + t1Batch.id + "/hold", T.su, { reason: "oops" });
+    check("P18 a paid batch cannot be put on hold (409)", r.s === 409);
+
+    // --- the therapist's own view
+    const pdfRes = await fetch(base + "/api/payout-batches/" + t1Batch.id + "/statement.pdf", { headers: { authorization: "Bearer " + T.t1 } });
+    const pdfB = Buffer.from(await pdfRes.arrayBuffer());
+    check("P18 the therapist downloads the payout statement (PDF)", pdfRes.status === 200 && pdfB.slice(0, 4).toString() === "%PDF");
+    check("P18 another therapist cannot (403)", (await fetch(base + "/api/payout-batches/" + t1Batch.id + "/statement.pdf", { headers: { authorization: "Bearer " + T.t2 } })).status === 403);
+    r = await call("GET", "/api/therapists/earnings/" + U.t1.id, T.t1);
+    check("P18 earnings page data: the paid batch shows with its bank reference", r.s === 200 && r.j.data.payoutHistory.some((p) => p.status === "Paid" && p.utr === "UTR123456" && p.batchId === t1Batch.id), "got " + r.s + " " + (r.raw || "").slice(0, 200));
+    r = await call("GET", "/api/therapists/dashboard-stats/" + U.t1.id, T.t1);
+    const sumNet = Number((await q("SELECT COALESCE(SUM(net_amount),0) AS s FROM payout_items WHERE therapist_id = $1", [U.t1.id]))[0].s);
+    check("P18 dashboard net payout = sum of payout lines (no fixed percentage)", r.s === 200 && Number(r.j.data.kpis.netPayout) === sumNet, "got " + r.s + " " + (r.j && r.j.data && r.j.data.kpis.netPayout) + " vs " + sumNet);
+    const srcFiles = [];
+    const walk = (d) => { for (const f of fs.readdirSync(d, { withFileTypes: true })) { const p = pathMod.join(d, f.name); if (f.isDirectory()) walk(p); else if (p.endsWith(".js")) srcFiles.push(p); } };
+    walk(pathMod.join(root, "src"));
+    const bad = srcFiles.filter((f) => /\*\s*0\.9\b/.test(fs.readFileSync(f, "utf8").split("\n").filter((l) => !l.trim().startsWith("//")).join("\n")));
+    check("P18 no hard-coded 0.9 earnings maths is left in the backend", bad.length === 0, bad.join(", "));
+
+    // --- premium tier needs an approval
+    await q("UPDATE therapist_profiles SET membership_plan = 'standard' WHERE user_id = $1", [U.t1.id]);
+    await call("PUT", "/api/therapists/profile/" + U.t1.id, T.t1, { membershipPlan: "premium", bio: "x", fullName: "Dr One", email: "t1@x.com", mobile: "9000000011", experienceYears: 3, hourlyRate: 1500, specialty: "1" });
+    check("P18 a therapist cannot make themselves premium through the profile update", (await q("SELECT membership_plan FROM therapist_profiles WHERE user_id = $1", [U.t1.id]))[0].membership_plan === "standard");
+    const [cr] = await q(`INSERT INTO change_requests(user_id, role, entity_id, section, changes, status) VALUES ($1,'therapist',$2,'profile',$3::jsonb,'pending') RETURNING id`, [U.t1.id, String(U.tp1), JSON.stringify({ membershipPlan: { old: "standard", new: "premium" } })]);
+    r = await call("PUT", "/api/users/change-request/approve/" + cr.id, T.therapy);
+    const prof = (await q("SELECT membership_plan, premium_approved_by FROM therapist_profiles WHERE user_id = $1", [U.t1.id]))[0];
+    check("P18 an approved request makes the therapist premium and records who approved it", r.s === 200 && prof.membership_plan === "premium" && prof.premium_approved_by === U.therapy.id, "got " + r.s + " " + JSON.stringify(prof) + " " + (r.raw || "").slice(0, 100));
+    await q("UPDATE therapist_profiles SET membership_plan = 'standard' WHERE user_id IN ($1, $2)", [U.t1.id, U.t2.id]);
+  }
+
   // invoices
   r = await call("GET", "/api/invoices/list", T.su);
   const allInv = (await q("SELECT COUNT(*)::int AS n FROM invoices"))[0].n;

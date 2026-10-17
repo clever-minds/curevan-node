@@ -918,6 +918,7 @@ exports.approveChangeRequest = async (req, res) => {
         }
       }
 
+      if (dbField === "membership_plan") value = value === "premium" ? "premium" : "standard";   // only an approved change can make a therapist premium
       if (dbField === "experience_years" || dbField === "hourly_rate" || dbField === "service_radius_km") {
         if (value === "N/A" || value === "" || isNaN(Number(value))) {
           value = null;
@@ -977,6 +978,11 @@ exports.approveChangeRequest = async (req, res) => {
        WHERE id=:id`,
       { replacements: { id: requestId, admin: req.user.id }, transaction: t }
     );
+
+    // approving a move to premium records who approved it and closes the request
+    if (profileId && changesObj.membershipPlan?.new === "premium") {
+      await sequelize.query(`UPDATE therapist_profiles SET premium_approved_by = :admin, premium_requested_at = NULL WHERE id = :profileId`, { replacements: { admin: req.user.id, profileId }, transaction: t });
+    }
 
     /* ---------- MARK PROFILE AS APPROVED ---------- */
     if (profileId) {

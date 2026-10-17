@@ -56,6 +56,7 @@ app.use('/api/pcr', require('./routes/pcr.routes'));
 app.use('/api/patients', require('./routes/patients.routes'));
 app.use('/api/clinical', require('./routes/clinical.routes'));
 app.use('/api/calendar', require('./routes/calendar.routes'));
+app.use('/api/payout-batches', require('./routes/payouts.routes'));
 app.use('/api/invoices', require('./routes/invoices.routes'));
 app.use('/api/therapists', require('./routes/therapist.routes'));
 app.use('/api/notifications', require('./routes/notifications.routes'));
