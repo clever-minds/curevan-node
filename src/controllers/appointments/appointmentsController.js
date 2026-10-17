@@ -6,6 +6,8 @@ const stateMachine = require("../../services/appointmentStateMachine");
 const otpService = require("../../services/otpService");
 const slotService = require("../../services/slotService");
 const cancellationService = require("../../services/cancellationService");
+const pcrService = require("../../services/pcrService");
+const { generatePcrPdf } = require("../../services/pcrPdfService");
 const { STATUS } = stateMachine;
 const refundService = require("../../services/refundService");
 const notificationStore = require("../../services/notificationStore");
@@ -592,7 +594,7 @@ exports.getPCRByBookingId = async (req, res) => {
 
   try {
     const [owner] = await sequelize.query(
-      `SELECT patient_id, therapist_id FROM appointments WHERE id = :appointmentId`,
+      `SELECT patient_id, therapist_id, status, date, time, start_time FROM appointments WHERE id = :appointmentId`,
       { replacements: { appointmentId }, type: QueryTypes.SELECT }
     );
     if (!owner) return res.error("PCR not found", 404);
@@ -636,8 +638,34 @@ exports.getPCRByBookingId = async (req, res) => {
 
     const pcr = rows[0];
 
+    // P15: the treating therapist sees clinical history only from 4 hours before the session
+    const asTherapist = !access.isClinicalAdmin(req.user) && access.same(owner.therapist_id, req.user.id);
+    let baseline = pcr.baseline;
+    let historyLocked = false;
+    if (asTherapist) {
+      if (!pcrService.historyOpen(owner)) {
+        baseline = null;
+        historyLocked = true;
+      } else if (!baseline) {
+        baseline = await pcrService.carryForwardBaseline(owner.patient_id, appointmentId);
+        if (baseline) {
+          await sequelize.query(`UPDATE pcr SET baseline = :baseline::jsonb WHERE id = :id`, { replacements: { baseline: JSON.stringify(baseline), id: pcr.id }, type: QueryTypes.UPDATE });
+        }
+      }
+    }
+    await pcrService.logAccess(pcr.id, req.user.id, "view");
+
     const response = {
       ...pcr,
+      baseline,
+      historyLocked,
+      functionalScore: pcr.functional_score ?? null,
+      painVas: pcr.pain_vas ?? null,
+      functionalMeasure: pcr.functional_measure ?? '',
+      hep: pcr.hep ?? '',
+      contentHash: undefined,
+      pdf_path: undefined,
+      content_hash: undefined,
       bp:   pcr.bp   ?? '',
       hr:   pcr.hr   ?? '',
       rr:   pcr.rr   ?? '',
@@ -796,7 +824,7 @@ exports.updatePcr = async (req, res) => {
 
   // Ownership: assigned therapist (while not locked) or clinical admin (lock / unlock / return).
   const [owner] = await sequelize.query(
-    `SELECT patient_id, therapist_id FROM appointments WHERE id = :appointmentId`,
+    `SELECT patient_id, therapist_id, status, date, time, start_time FROM appointments WHERE id = :appointmentId`,
     { replacements: { appointmentId }, type: QueryTypes.SELECT }
   );
   if (!owner) return res.status(404).json({ success: false, error: "PCR not found" });
@@ -804,6 +832,10 @@ exports.updatePcr = async (req, res) => {
   const assignedTherapist = access.same(owner.therapist_id, req.user.id);
   if (!clinicalAdmin && !assignedTherapist) {
     return res.status(403).json({ success: false, error: "Forbidden" });
+  }
+  // P15: the therapist can write the PCR only after the start code was verified
+  if (!clinicalAdmin && !pcrService.therapistCanEdit(owner)) {
+    return res.status(403).json({ success: false, error: "You can edit the PCR once the session has started (start code verified)" });
   }
 
   const t = await sequelize.transaction();
@@ -839,6 +871,27 @@ exports.updatePcr = async (req, res) => {
       // a therapist cannot set lock metadata
       delete data.lockedBy;
       delete data.lockedAt;
+    }
+
+    // P15: required fields on submit; a reason when an admin returns or unlocks a PCR
+    const requestedStatus = String(data.status || "").toLowerCase();
+    const merged = {
+      bp: data.bp ?? existing.bp, hr: data.hr ?? existing.hr, rr: data.rr ?? existing.rr, temp: data.temp ?? existing.temp,
+      assessment: data.assessment ?? existing.assessment, treatment_provided: data.treatmentProvided ?? existing.treatment_provided,
+      hep: data.hep ?? existing.hep,
+      functional_score: data.functionalScore ?? existing.functional_score, pain_vas: data.painVas ?? existing.pain_vas,
+    };
+    if (requestedStatus === "submitted" || (requestedStatus === "locked" && !existing.submitted_at && String(existing.status).toLowerCase() !== "submitted")) {
+      const missing = pcrService.missingForSubmit(merged);
+      if (missing.length) {
+        await t.rollback();
+        return res.status(400).json({ success: false, error: `Please complete: ${missing.join(", ")}`, missing });
+      }
+    }
+    const reopening = requestedStatus === "returned" || (String(existing.status).toLowerCase() === "locked" && requestedStatus && requestedStatus !== "locked");
+    if (reopening && String(data.reason || "").trim().length < 3) {
+      await t.rollback();
+      return res.status(400).json({ success: false, error: "Please give a reason for returning or unlocking this PCR" });
     }
 
     // 2️⃣ Submitting (or locking) the PCR is what completes the visit: pcr_pending -> completed
@@ -938,6 +991,30 @@ exports.updatePcr = async (req, res) => {
       }
     );
 
+    // P15 columns: scores, HEP, baseline, timestamps
+    const num = (v) => (v === undefined || v === null || v === "" ? null : Number(v));
+    await sequelize.query(
+      `UPDATE pcr SET
+         functional_score = COALESCE(:fs, functional_score),
+         pain_vas = COALESCE(:pv, pain_vas),
+         functional_measure = COALESCE(:fm, functional_measure),
+         hep = COALESCE(:hep, hep),
+         baseline = COALESCE(:baseline::jsonb, baseline),
+         submitted_at = CASE WHEN :isSubmit AND submitted_at IS NULL THEN NOW() ELSE submitted_at END,
+         locked_at = CASE WHEN :isLock THEN NOW() WHEN :reopening THEN NULL ELSE locked_at END
+       WHERE appointment_id = :appointmentId`,
+      {
+        replacements: {
+          fs: num(data.functionalScore), pv: num(data.painVas), fm: data.functionalMeasure ?? null, hep: data.hep ?? null,
+          baseline: data.baseline ? JSON.stringify(data.baseline) : null,
+          isSubmit: requestedStatus === "submitted" || requestedStatus === "locked", isLock: requestedStatus === "locked", reopening,
+          appointmentId,
+        },
+        type: QueryTypes.UPDATE,
+        transaction: t,
+      }
+    );
+
     // 6️⃣ Update appointments table
     await sequelize.query(
       `UPDATE appointments SET pcr_status = :pcr_status WHERE id = :appointmentId`,
@@ -949,6 +1026,21 @@ exports.updatePcr = async (req, res) => {
 
     // 7️⃣ Commit transaction
     await t.commit();
+
+    // P15: access log, and on lock the content hash + the PDF summary
+    const logAction = requestedStatus === "locked" ? "lock" : requestedStatus === "submitted" ? "submit" : reopening ? (requestedStatus === "returned" ? "return" : "unlock") : "edit";
+    await pcrService.logAccess(existing.id, req.user.id, logAction, reopening ? String(data.reason).trim() : null);
+    if (requestedStatus === "locked") {
+      try {
+        const [fresh] = await sequelize.query(`SELECT * FROM pcr WHERE id = :id`, { replacements: { id: existing.id }, type: QueryTypes.SELECT });
+        const [appt] = await sequelize.query(`SELECT patient_name, therapist_name, date FROM appointments WHERE id = :id`, { replacements: { id: appointmentId }, type: QueryTypes.SELECT });
+        const [therapist] = await sequelize.query(`SELECT u.name, tp.registration_no FROM users u LEFT JOIN therapist_profiles tp ON tp.user_id = u.id WHERE u.id = :id`, { replacements: { id: owner.therapist_id }, type: QueryTypes.SELECT });
+        const pdfPath = await generatePcrPdf({ pcr: fresh, appointment: appt, therapist });
+        await sequelize.query(`UPDATE pcr SET content_hash = :hash, pdf_path = :pdf WHERE id = :id`, { replacements: { hash: pcrService.contentHash(fresh), pdf: pdfPath, id: existing.id }, type: QueryTypes.UPDATE });
+      } catch (pdfErr) {
+        console.error("PCR lock: hash/PDF failed:", pdfErr.message);   // the lock itself stands; the PDF can be regenerated on download
+      }
+    }
 
     // 8️⃣ Send Status Update Email (if status changed)
     try {

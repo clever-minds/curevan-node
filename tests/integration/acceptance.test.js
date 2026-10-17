@@ -522,16 +522,17 @@ async function seed() {
   check("P12 once locked even the right code is refused (423)", r.s === 423 && (await st(lk)).status === "arrived", "got " + r.s);
 
   // session -> PCR -> completed
+  const fullPcr = { chiefComplaint: "knee pain", assessment: "<p>Swelling and reduced flexion of the knee</p>", treatmentProvided: "<p>Manual therapy and stretching</p>", planOfCare: "<p>Daily exercises, review in a week</p>", bp: "120/80", hr: "80", rr: "16", temp: "98.6", hep: "<p>Quadriceps sets 3x10 daily</p>", functionalScore: 6, painVas: 4, functionalMeasure: "ROM" };
   r = await call("PUT", "/api/appointments/status/" + v, T.t1, { status: "completed" });
   check("P12 in_progress -> completed directly is refused (409)", r.s === 409, "got " + r.s);
   await q("INSERT INTO pcr(appointment_id, patient_id, therapist_id, service_type_id, status, version, chief_complaint) VALUES ($1,$2,$3,1,'in_progress',1,'pain')", [v, U.p1.id, U.t1.id]);
-  r = await call("PATCH", "/api/appointments/pcr/" + v, T.t1, { status: "submitted" });
+  r = await call("PATCH", "/api/appointments/pcr/" + v, T.t1, { ...fullPcr, status: "submitted" });
   check("P12 submitting the PCR while still in_progress is refused (409): complete the session first", r.s === 409 && (await st(v)).status === "in_progress", "got " + r.s + " " + (r.raw || "").slice(0, 120));
   r = await call("PUT", "/api/appointments/status/" + v, T.t1, { status: "pcr_pending" });
   check("P12 'Complete session' -> pcr_pending (not completed yet)", r.s === 200 && (await st(v)).status === "pcr_pending" && (await st(v)).session_ended_at, "got " + r.s);
   r = await call("PUT", "/api/appointments/status/" + v, T.t1, { status: "completed" });
   check("P12 the therapist cannot mark it completed by hand (403) - only the PCR does", r.s === 403 && (await st(v)).status === "pcr_pending", "got " + r.s);
-  r = await call("PATCH", "/api/appointments/pcr/" + v, T.t1, { status: "submitted" });
+  r = await call("PATCH", "/api/appointments/pcr/" + v, T.t1, { ...fullPcr, status: "submitted" });
   check("P12 the booking becomes completed only after the PCR is submitted", r.s === 200 && (await st(v)).status === "completed" && (await st(v)).completed_at, "got " + r.s + " " + (r.raw || "").slice(0, 120));
   check("P12 every move is in the history table (" + 5 + "+ rows)", (await q("SELECT COUNT(*)::int AS n FROM appointment_status_history WHERE appointment_id = $1", [v]))[0].n >= 5);
 
@@ -698,6 +699,73 @@ async function seed() {
   check("P14 an unpaid booking costs nothing to cancel", r.s === 200 && r.j.data.chargeInr === 0 && r.j.data.refundInr === 0 && r.j.data.paid === false, (r.raw || "").slice(0, 150));
   r = await call("GET", "/api/config/public");
   check("P14 the public config carries the policy numbers the website page prints", r.s === 200 && r.j.data.cancellation.freeHoursBefore === 12 && r.j.data.cancellation.partialHoursBefore === 2 && r.j.data.cancellation.partialChargePct === 50 && r.j.data.cancellation.lateChargePct === 100 && r.j.data.cancellation.graceMinutesAfterBooking === 10, (r.raw || "").slice(0, 200));
+
+  const base = `http://127.0.0.1:${port}`;
+  // ---- P15: PCR outcomes, access timing, baseline carry-forward, PDF
+  const pcrId = (await q("SELECT id FROM pcr WHERE appointment_id = $1", [v]))[0].id;
+  const pcrOf = async (apptId) => (await q("SELECT * FROM pcr WHERE appointment_id = $1", [apptId]))[0];
+  const mkPcrRow = (apptId) => q("INSERT INTO pcr(appointment_id, patient_id, therapist_id, service_type_id, status, version) VALUES ($1,$2,$3,1,'not_started',1)", [apptId, U.p1.id, U.t1.id]);
+
+  // required fields: build a booking that is in progress and try incomplete submissions
+  const inProg = await mkVisit(240 + 15, "in_progress"); await mkPcrRow(inProg);
+  r = await call("PATCH", "/api/appointments/pcr/" + inProg, T.t1, { status: "submitted", assessment: "<p>Some assessment text</p>", treatmentProvided: "<p>Treatment done today</p>", bp: "120/80", hr: "80", rr: "16", temp: "98" });
+  check("P15 submit is blocked without HEP and both scores (400, lists what is missing)", r.s === 400 && r.j.missing.includes("home exercise programme") && r.j.missing.includes("functional score (1-10)") && r.j.missing.includes("pain score (0-10)"), "got " + r.s + " " + (r.raw || "").slice(0, 200));
+  r = await call("PATCH", "/api/appointments/pcr/" + inProg, T.t1, { ...fullPcr, status: "in_progress", functionalScore: 11 });
+  check("P15 a functional score of 11 is rejected by the database range", r.s >= 400 || (await pcrOf(inProg)).functional_score === null, "got " + r.s);
+  r = await call("PATCH", "/api/appointments/pcr/" + inProg, T.t1, { ...fullPcr, status: "in_progress", painVas: 0, functionalScore: 1 });
+  check("P15 the edge scores (pain 0, function 1) are accepted", r.s === 200 && (await pcrOf(inProg)).pain_vas === 0 && (await pcrOf(inProg)).functional_score === 1, "got " + r.s + " " + (r.raw || "").slice(0, 120));
+
+  // therapist cannot write before the start code was verified
+  const notStarted = await mkVisit(240 + 20, "confirmed"); await mkPcrRow(notStarted);
+  r = await call("PATCH", "/api/appointments/pcr/" + notStarted, T.t1, { chiefComplaint: "x" });
+  check("P15 the therapist cannot edit the PCR before the session starts (403)", r.s === 403, "got " + r.s);
+
+  // lock the first visit's PCR: hash + PDF + access log
+  await call("PATCH", "/api/appointments/pcr/" + v, T.therapy, { baseline: { chiefComplaint: "knee pain", diagnosis: "OA", medicalHistory: "diabetes", allergies: "none", longTermGoal: "walk 1 km" } });
+  r = await call("PATCH", "/api/appointments/pcr/" + v, T.therapy, { status: "locked" });
+  const locked = await pcrOf(v);
+  check("P15 Lock & Finalize stores a SHA-256 content hash, the PDF path and locked_at", r.s === 200 && /^[0-9a-f]{64}$/.test(locked.content_hash || "") && locked.pdf_path && locked.locked_at, "got " + r.s + " " + (r.raw || "").slice(0, 150));
+  const pdfPatient = await fetch(base + "/api/pcr/" + locked.id + "/pdf", { headers: { authorization: "Bearer " + T.p1 } });
+  const pdfBytes = Buffer.from(await pdfPatient.arrayBuffer());
+  check("P15 the patient downloads the PDF (application/pdf, starts with %PDF)", pdfPatient.status === 200 && /application\/pdf/.test(pdfPatient.headers.get("content-type")) && pdfBytes.slice(0, 4).toString() === "%PDF", "got " + pdfPatient.status);
+  const pdfText = pdfBytes.toString("latin1");
+  check("P15 the PDF is private: other patient 403, other therapist 403, anonymous 401", (await fetch(base + "/api/pcr/" + locked.id + "/pdf", { headers: { authorization: "Bearer " + T.p2 } })).status === 403 && (await fetch(base + "/api/pcr/" + locked.id + "/pdf", { headers: { authorization: "Bearer " + T.t2 } })).status === 403 && [401, 403].includes((await fetch(base + "/api/pcr/" + locked.id + "/pdf")).status));
+  check("P15 the therapist and a clinical admin can also download it", (await fetch(base + "/api/pcr/" + locked.id + "/pdf", { headers: { authorization: "Bearer " + T.t1 } })).status === 200 && (await fetch(base + "/api/pcr/" + locked.id + "/pdf", { headers: { authorization: "Bearer " + T.therapy } })).status === 200);
+  const nonLocked = await pcrOf(inProg);
+  check("P15 an unlocked PCR has no PDF yet (409)", (await fetch(base + "/api/pcr/" + nonLocked.id + "/pdf", { headers: { authorization: "Bearer " + T.t1 } })).status === 409);
+  const logs = (await q("SELECT action FROM pcr_access_log WHERE pcr_id = $1", [locked.id])).map((x) => x.action);
+  check("P15 access log has rows for edit, lock and pdf (" + [...new Set(logs)].join(",") + ")", ["edit", "lock", "pdf"].every((a) => logs.includes(a)));
+
+  // unlock needs a reason
+  r = await call("PATCH", "/api/appointments/pcr/" + v, T.therapy, { status: "returned" });
+  check("P15 returning / unlocking a PCR needs a reason (400)", r.s === 400, "got " + r.s);
+  r = await call("PATCH", "/api/appointments/pcr/" + v, T.therapy, { status: "returned", reason: "Missing HEP detail" });
+  check("P15 with a reason it is returned and the reason is logged", r.s === 200 && (await q("SELECT 1 FROM pcr_access_log WHERE pcr_id = $1 AND action = 'return' AND note = 'Missing HEP detail'", [locked.id])).length === 1 && (await pcrOf(v)).locked_at === null, "got " + r.s + " " + (r.raw || "").slice(0, 120));
+  r = await call("PATCH", "/api/appointments/pcr/" + v, T.therapy, { status: "locked" });
+  check("P15 it can be locked again", r.s === 200 && (await pcrOf(v)).status === "locked");
+
+  // baseline carry-forward for the next visit of the same patient
+  const visit2 = await mkVisit(30, "in_progress"); await mkPcrRow(visit2);
+  r = await call("GET", "/api/appointments/pcr/" + visit2, T.t1);
+  const g = r.j && r.j.data;
+  check("P15 second-visit PCR opens with the baseline prefilled from the last locked PCR; vitals, HEP and scores start empty", r.s === 200 && g.baseline && g.baseline.chiefComplaint === "knee pain" && g.baseline.allergies === "none" && g.bp === "" && g.hep === "" && g.functionalScore === null && g.painVas === null, "got " + r.s + " " + JSON.stringify(g && { b: g.baseline, bp: g.bp, hep: g.hep }));
+
+  // T-4h rule: history stays closed until 4 hours before the session
+  const later = await mkVisit(60 * 9, "confirmed"); await mkPcrRow(later);
+  r = await call("GET", "/api/appointments/pcr/" + later, T.t1);
+  check("P15 more than 4 h before the session the therapist gets no clinical history", r.s === 200 && r.j.data.baseline === null && r.j.data.historyLocked === true, "got " + r.s + " " + JSON.stringify(r.j && r.j.data && { b: r.j.data.baseline }));
+  const p2Only = await mkVisit(60 * 9 + 7, "confirmed");   // a different patient's far-off booking with therapist 1
+  await q("UPDATE appointments SET patient_id = $1 WHERE id = $2", [U.p2.id, p2Only]);
+  r = await call("GET", "/api/patients/" + U.p2.id + "/progress", T.t1);
+  check("P15 therapist cannot read another patient's progress before T-4 h (403)", r.s === 403, "got " + r.s);
+  r = await call("GET", "/api/patients/" + U.p1.id + "/progress", T.t2);
+  check("P15 an unrelated therapist cannot read progress (403)", r.s === 403, "got " + r.s);
+  r = await call("GET", "/api/patients/" + U.p1.id + "/progress", T.t1);
+  check("P15 the current therapist (session within 4 h) reads the series", r.s === 200 && r.j.data.length >= 1 && "functionalScore" in r.j.data[0] && "painVas" in r.j.data[0] && "sessionDate" in r.j.data[0] && "therapistName" in r.j.data[0], "got " + r.s + " " + (r.raw || "").slice(0, 150));
+  r = await call("GET", "/api/patients/" + U.p1.id + "/progress", T.p1);
+  check("P15 the patient reads their own series", r.s === 200 && r.j.data.some((x) => x.functionalScore === 6 && x.painVas === 4), "got " + r.s + " " + (r.raw || "").slice(0, 150));
+  r = await call("GET", "/api/patients/" + U.p1.id + "/progress", T.p2);
+  check("P15 another patient cannot (403)", r.s === 403);
 
   // invoices
   r = await call("GET", "/api/invoices/list", T.su);

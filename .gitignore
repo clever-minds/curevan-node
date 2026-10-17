@@ -13,3 +13,6 @@ uploads/
 
 # build output
 .next/
+
+# private clinical files (PDFs)
+storage/
