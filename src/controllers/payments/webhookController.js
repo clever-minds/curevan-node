@@ -95,7 +95,7 @@ async function onRefundEvent(refundEntity, finalStatus) {
     `UPDATE ${owner.table} SET payment_status = :ps ${owner.table === "orders" && full ? ", status = 'Refunded'" : ""} WHERE ${owner.idCol} = :id`,
     { replacements: { ps: full ? "Refunded" : "Partially Refunded", id: owner.id }, type: QueryTypes.UPDATE }
   );
-  if (row.return_id && full) {
+  if (row.return_id) {            // the refund for a return went through: close the return
     await sequelize.query(
       `UPDATE order_returns SET status = 'Refunded', updated_at = CURRENT_TIMESTAMP WHERE id = :id`,
       { replacements: { id: row.return_id }, type: QueryTypes.UPDATE }

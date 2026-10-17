@@ -32,7 +32,12 @@ exports.createShipment = async (req, res) => {
       return res.status(404).json({ success: false, message: "Order not found" });
     }
 
-    if (["Shipped", "Delivered", "Cancelled"].includes(order.status)) {
+    if (order.payment_status !== "Paid") {
+      await t.rollback();
+      return res.status(400).json({ success: false, message: "Only paid orders can be shipped" });
+    }
+
+    if (["Shipped", "Delivered", "Cancelled", "awb_generated", "picked_up", "in_transit", "out_for_delivery", "delivered", "rto"].includes(order.status)) {
       await t.rollback();
       return res.status(400).json({ success: false, message: `Order already ${order.status}` });
     }
@@ -169,7 +174,7 @@ exports.createShipment = async (req, res) => {
 
     // 7️⃣ Update Order Status
     await sequelize.query(
-      `UPDATE orders SET status = 'Packed' WHERE id = :orderId`,
+      `UPDATE orders SET status = 'awb_generated' WHERE id = :orderId`,
       { replacements: { orderId: order.id }, type: QueryTypes.UPDATE, transaction: t }
     );
 

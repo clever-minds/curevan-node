@@ -94,7 +94,7 @@ CREATE TABLE reviews (id SERIAL PRIMARY KEY, user_id INT, product_id INT, rating
 CREATE TABLE journal_categories (id SERIAL PRIMARY KEY, name TEXT, slug TEXT, description TEXT, status TEXT DEFAULT 'active', created_at TIMESTAMPTZ DEFAULT now());
 CREATE TABLE journal_tags (id SERIAL PRIMARY KEY, name TEXT, slug TEXT, created_at TIMESTAMPTZ DEFAULT now());
 CREATE TABLE sub_categories (id SERIAL PRIMARY KEY, category_id INT, name TEXT, description TEXT, image_id INT, status TEXT DEFAULT 'active', created_at TIMESTAMPTZ DEFAULT now());
-CREATE TABLE order_return_items (id SERIAL PRIMARY KEY, return_id INT, order_item_id INT, qty INT, reason TEXT);
+CREATE TABLE order_return_items (id SERIAL PRIMARY KEY, return_id INT, order_item_id INT, qty INT, quantity INT, reason TEXT);
 
 -- more columns the admin/shop screens read (found while clicking through the website)
 ALTER TABLE categories ADD COLUMN IF NOT EXISTS slug TEXT, ADD COLUMN IF NOT EXISTS image TEXT, ADD COLUMN IF NOT EXISTS is_active BOOLEAN DEFAULT true, ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ DEFAULT now();

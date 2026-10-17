@@ -11,6 +11,7 @@ router.get("/public", (req, res) => {
       session: { slotMinutes: rules.session.slotMinutes, timerMinutes: rules.session.timerMinutes, minLeadHours: rules.session.minLeadHours, maxAdvanceDays: rules.session.maxAdvanceDays },
       otp: { length: rules.otp.length, validFromHoursBefore: rules.otp.validFromHoursBefore, maxAttempts: rules.otp.maxAttempts },
       visit: { travelFromMinutesBefore: rules.visit.travelFromMinutesBefore },
+      shop: { freeShippingThresholdInr: rules.shop.freeShippingThresholdInr, flatShippingFeeInr: rules.shop.flatShippingFeeInr, returnWindowDays: rules.shop.returnWindowDays },
       cancellation: {
         freeHoursBefore: rules.cancellation.freeHoursBefore,
         partialHoursBefore: rules.cancellation.partialHoursBefore,

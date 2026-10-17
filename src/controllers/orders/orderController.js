@@ -7,7 +7,6 @@ const rules = require("../../config/businessRules");
 const razorpay = require("../../services/razorpayService");
 const refundService = require("../../services/refundService");
 const { calculateCouponDiscount } = require("../coupons/CouponsController");
-const { checkServiceability, getPickupLocations } = require("../../services/shiprocketService");
 
 // exports.createOrderFromCart = async (req, res) => {
 //   const transaction = await sequelize.transaction();
@@ -1199,42 +1198,10 @@ exports.createOrderFromCart = async (req, res) => {
     sgst = r2(sgst);
     igst = r2(igst);
 
-    // Calculate total weight from cart items (fallback to 0.5 kg if total is 0)
-    let totalWeight = cartItems.reduce((acc, item) => {
-      const w = parseFloat(item.weight_kg) || 0;
-      return acc + (w * item.quantity);
-    }, 0);
-    if (totalWeight <= 0) totalWeight = 0.5;
-
-    // Fetch dynamic shipping charge from Shiprocket
-    let shippingChargeAmt = 0;
-    try {
-      if (shippingAddress && shippingAddress.pincode) {
-        const locations = await getPickupLocations();
-        const loc = locations?.data?.shipping_address?.[0];
-        const pickup_postcode = loc?.pin_code;
-        const delivery_postcode = shippingAddress.pincode;
-
-        if (pickup_postcode && delivery_postcode) {
-          const serviceability = await checkServiceability({
-            pickup_postcode,
-            delivery_postcode,
-            weight: totalWeight.toString(), 
-            cod: 0
-          });
-
-          const companies = serviceability?.data?.available_courier_companies || [];
-          if (companies.length > 0) {
-            const recommendedId = serviceability.data.recommended_courier_company_id;
-            const recommendedCourier = companies.find(c => c.courier_company_id === recommendedId) || companies[0];
-            shippingChargeAmt = recommendedCourier.rate;
-            console.log(`✅ Fetched Shiprocket rate: ${shippingChargeAmt} for pin ${delivery_postcode}`);
-          }
-        }
-      }
-    } catch (err) {
-      console.error("❌ Failed to fetch dynamic Shiprocket rate. Using fallback 0.", err.message);
-    }
+    // Shipping fee (owner decision D3): free at or above the threshold, otherwise a flat fee. The threshold is checked on the goods value
+    // after discounts (what the customer pays for the products, tax included). Shiprocket's rate is only used later to pick the courier.
+    const goodsValue = r2(taxableValue + totalTax);
+    const shippingChargeAmt = goodsValue >= rules.shop.freeShippingThresholdInr ? 0 : rules.shop.flatShippingFeeInr;
 
     const couponOnlyDiscount = couponResult ? couponResult.discount : 0;
     const appliedCouponDiscount = r2(couponOnlyDiscount + totalOfferDiscount);

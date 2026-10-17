@@ -18,7 +18,7 @@ process.chdir(root);
 const PAYFIRST = !process.argv.includes("--approval");   // default = the handoff pack flow (pay first)
 Object.assign(process.env, {
   GOOGLE_CLIENT_ID: "x", GOOGLE_CLIENT_SECRET: "y", JWT_SECRET: "integration-secret", JWT_EXPIRE: "1d",
-  RAZORPAY_KEY_ID: "rzp_test_KEY", RAZORPAY_KEY_SECRET: "rzp_secret_123", RAZORPAY_WEBHOOK_SECRET: "whsec_123",
+  SHIPROCKET_WEBHOOK_TOKEN: "hook-token-123", RAZORPAY_KEY_ID: "rzp_test_KEY", RAZORPAY_KEY_SECRET: "rzp_secret_123", RAZORPAY_WEBHOOK_SECRET: "whsec_123",
   NODE_ENV: "test", FRONTEND_URL: "http://localhost:3000",
   DB_HOST: process.env.DB_HOST || "127.0.0.1", DB_PORT: process.env.DB_PORT || "54329",
   DB_NAME: process.env.DB_NAME || "curevan_test", DB_USER: process.env.DB_USER || "curevan", DB_PASSWORD: process.env.DB_PASSWORD || "testpw",
@@ -48,7 +48,7 @@ Module._load = function (r, parent, ...a) {
   if (/config[\\/]mailer(\.js)?$/.test(r)) return { sendMail: async (m) => { mails.push(m); return {}; } };
   if (/config[\\/]firebaseAdmin(\.js)?$/.test(r)) return { getAuth: () => ({ verifyIdToken: async (t) => { if (firebaseTokens[t]) return firebaseTokens[t]; throw new Error("bad token"); } }), getMessaging: () => ({ send: async () => {}, sendEachForMulticast: async () => {} }), isReady: () => true };
   if (/utils[\\/]firebaseNotifier(\.js)?$/.test(r)) return { sendToTherapist: async (tok, title) => { pushes.push({ tok, title }); }, sendToMultipleTherapists: async (tokens, title) => { pushes.push({ tokens, title }); }, sendToAllTherapists: async () => {} };
-  if (/services[\\/]shiprocketService(\.js)?$/.test(r)) return { getPickupLocations: async () => ({ data: { shipping_address: [{ pin_code: "390012" }] } }), checkServiceability: async () => ({ data: { available_courier_companies: [{ courier_company_id: 1, rate: 50 }], recommended_courier_company_id: 1 } }), createOrder() {}, generateAWB() {}, generateLabel() {}, generateManifest() {}, trackShipment() {}, cancelShipment() {}, createReturnOrder() {} };
+  if (/services[\\/]shiprocketService(\.js)?$/.test(r)) return { getPickupLocations: async () => ({ data: { shipping_address: [{ pin_code: "390012" }] } }), checkServiceability: async () => ({ data: { available_courier_companies: [{ courier_company_id: 1, rate: 50 }], recommended_courier_company_id: 1 } }), createOrder() {}, generateAWB() {}, generateLabel() {}, generateManifest() {}, trackShipment() {}, cancelShipment() {}, createReturnOrder: async () => ({ order_id: 7001, shipment_id: 8001 }) };
   return orig.call(this, r, parent, ...a);
 };
 
@@ -1284,6 +1284,153 @@ async function seed() {
     const prof = (await q("SELECT membership_plan, premium_approved_by FROM therapist_profiles WHERE user_id = $1", [U.t1.id]))[0];
     check("P18 an approved request makes the therapist premium and records who approved it", r.s === 200 && prof.membership_plan === "premium" && prof.premium_approved_by === U.therapy.id, "got " + r.s + " " + JSON.stringify(prof) + " " + (r.raw || "").slice(0, 100));
     await q("UPDATE therapist_profiles SET membership_plan = 'standard' WHERE user_id IN ($1, $2)", [U.t1.id, U.t2.id]);
+  }
+
+  // ---- P19: shipping fee rule, courier webhook pipeline, return rules, inspection refund
+  {
+    const hookPost = (body, token) => fetch(base + "/api/hooks/logistics", { method: "POST", headers: { "content-type": "application/json", ...(token === undefined ? {} : { "x-api-key": token }) }, body: JSON.stringify(body) });
+    const waitFor = async (fn, ms = 2000) => { const end = Date.now() + ms; while (Date.now() < end) { if (await fn()) return true; await sleep(40); } return false; };
+    r = await call("GET", "/api/config/public");
+    check("P19 the shop numbers (free from 499, flat 50, 7-day returns) are public config", r.s === 200 && r.j.data.shop.freeShippingThresholdInr === 499 && r.j.data.shop.flatShippingFeeInr === 50 && r.j.data.shop.returnWindowDays === 7);
+
+    // --- shipping fee
+    const [p498, p499] = await q("INSERT INTO products(title, selling_price, mrp, sku, category_id, hsn_code, gst_slab, is_tax_inclusive, weight_kg) VALUES ('Low cart', 498, 498, 'L498', 1, '9021', 18, true, 0.2), ('Edge cart', 499, 499, 'E499', 1, '9021', 18, true, 0.2) RETURNING id");
+    await q("INSERT INTO inventory(product_id, sku, on_hand, reserved) VALUES ($1,'L498',50,0), ($2,'E499',50,0)", [p498.id, p499.id]);
+    await putCart(U.p1.id, [[p498.id, 1]]);
+    r = await call("POST", "/api/orders/create-order", T.p1, { billing_address_id: U.a1, shipping_address_id: U.a1 });
+    const o498 = r.j && r.j.data && r.j.data.orderId;
+    const row498 = o498 && (await q("SELECT shipping_charges, total FROM orders WHERE id = $1", [o498]))[0];
+    check("P19 a ₹498 cart pays ₹50 shipping (total 548)", r.s === 200 && Number(row498.shipping_charges) === 50 && Number(row498.total) === 548, "got " + r.s + " " + JSON.stringify(row498));
+    await putCart(U.p1.id, [[p499.id, 1]]);
+    r = await call("POST", "/api/orders/create-order", T.p1, { billing_address_id: U.a1, shipping_address_id: U.a1 });
+    const o499 = r.j && r.j.data && r.j.data.orderId;
+    const row499 = o499 && (await q("SELECT shipping_charges, total FROM orders WHERE id = $1", [o499]))[0];
+    check("P19 a ₹499 cart ships free (total 499)", r.s === 200 && Number(row499.shipping_charges) === 0 && Number(row499.total) === 499, "got " + r.s + " " + JSON.stringify(row499));
+
+    // --- shipments are only for paid orders
+    r = await call("POST", "/api/shipment/create", T.ecom, { orderId: o498 });
+    check("P19 an unpaid order cannot get a shipment/AWB (400)", r.s === 400 && /paid/i.test(r.raw || ""), "got " + r.s + " " + (r.raw || "").slice(0, 100));
+
+    // --- courier webhook through every stage
+    let on = 0;
+    const mkOrder = async (status = "Placed", extra = {}) => {
+      on += 1;
+      const id = (await q(`INSERT INTO orders(order_number, user_id, customer_name, billing_address_id, shipping_address_id, subtotal, total, shipping_charges, status, payment_status, razorpay_payment_id)
+        VALUES ($1,$2,'Patient One',$3,$3,1000,1180,50,$4,'Paid',$5) RETURNING id`, ["ORD-P19-" + on, U.p1.id, U.a1, status, extra.pay === false ? null : "pay_ord_p19_" + on]))[0].id;
+      await q("INSERT INTO order_items(order_id, sku, name, qty, price, mrp, hsn_code, tax_rate_pct) VALUES ($1,'A1','Band',2,500,600,'9021',18)", [id]);
+      const awb = "AWB" + (1000 + on);
+      await q("INSERT INTO shipments(order_id, awb, carrier, status, provider, shiprocket_shipment_id) VALUES ($1,$2,'Courier','Pending Pickup','shiprocket',$3)", [id, awb, 5000 + on]);
+      return { id, awb, number: "ORD-P19-" + on };
+    };
+    const ord = (id) => q("SELECT status, delivered_at FROM orders WHERE id = $1", [id]).then((x) => x[0]);
+    const A = await mkOrder();
+    let res0 = await hookPost({ awb: A.awb, current_status: "AWB Assigned", current_timestamp: new Date(Date.now() - 5 * 3600e3).toISOString() }, "wrong");
+    check("P19 the webhook refuses a wrong token (401) and stores nothing", res0.status === 401 && (await q("SELECT COUNT(*)::int AS n FROM shipment_events WHERE awb = $1", [A.awb]))[0].n === 0);
+    res0 = await hookPost({ awb: A.awb, current_status: "AWB Assigned" });
+    check("P19 ... and no token at all (401)", res0.status === 401);
+    const stages = [["AWB Assigned", "awb_generated", 5], ["Picked Up", "picked_up", 4], ["In Transit", "in_transit", 3], ["Out For Delivery", "out_for_delivery", 2], ["Delivered", "delivered", 1]];
+    let walked = true;
+    let deliveredStamp;
+    for (const [text, expect, hoursAgo] of stages) {
+      const stamp = new Date(Date.now() - hoursAgo * 3600e3).toISOString();
+      if (expect === "delivered") deliveredStamp = stamp;
+      const hres = await hookPost({ awb: A.awb, current_status: text, current_status_id: 7, current_timestamp: stamp }, "hook-token-123");
+      const ok = hres.status === 200 && (await waitFor(async () => (await ord(A.id)).status === expect));
+      if (!ok) { walked = false; check("P19 webhook stage " + text + " -> " + expect, false, "http " + hres.status + " status now " + (await ord(A.id)).status); break; }
+    }
+    check("P19 simulated courier calls move the order through all five stages", walked);
+    const done = await ord(A.id);
+    check("P19 delivered_at is saved (from the courier's time) on the order and the shipment", done.delivered_at && Math.abs(new Date(done.delivered_at).getTime() - (Date.now() - 3600e3)) < 120000 && (await q("SELECT delivered_at FROM shipments WHERE order_id = $1", [A.id]))[0].delivered_at, JSON.stringify(done));
+    check("P19 the customer was told it was delivered, once", (await q("SELECT COUNT(*)::int AS n FROM notifications WHERE user_uid = $1 AND title = 'Your order was delivered'", [String(U.p1.id)]))[0].n === 1);
+    check("P19 every call is kept as an event (5 rows)", (await q("SELECT COUNT(*)::int AS n FROM shipment_events WHERE awb = $1", [A.awb]))[0].n === 5);
+    await hookPost({ awb: A.awb, current_status: "Delivered", current_status_id: 7, current_timestamp: deliveredStamp }, "hook-token-123"); await sleep(150);
+    check("P19 the same event sent twice is stored once", (await q("SELECT COUNT(*)::int AS n FROM shipment_events WHERE awb = $1", [A.awb]))[0].n === 5);
+    await hookPost({ awb: A.awb, current_status: "In Transit", current_status_id: 6, current_timestamp: new Date(Date.now() - 30 * 60e3).toISOString() }, "hook-token-123"); await sleep(150);
+    check("P19 a late 'In Transit' after delivery is kept as an event but does not move the order backwards", (await ord(A.id)).status === "delivered" && (await q("SELECT COUNT(*)::int AS n FROM shipment_events WHERE awb = $1", [A.awb]))[0].n === 6);
+    res0 = await hookPost({ awb: "NOSUCHAWB", current_status: "Delivered", current_timestamp: new Date().toISOString() }, "hook-token-123"); await sleep(150);
+    check("P19 an unknown AWB is answered 200 and kept (no order touched)", res0.status === 200 && (await q("SELECT COUNT(*)::int AS n FROM shipment_events WHERE awb = 'NOSUCHAWB' AND shipment_id IS NULL"))[0].n === 1);
+    const Rt = await mkOrder();
+    await hookPost({ awb: Rt.awb, current_status: "RTO Initiated", current_timestamp: new Date().toISOString() }, "hook-token-123");
+    check("P19 RTO statuses map to 'rto'", await waitFor(async () => (await ord(Rt.id)).status === "rto"));
+    await hookPost({ awb: Rt.awb, current_status: "Delivered", current_timestamp: new Date(Date.now() + 1000).toISOString() }, "hook-token-123"); await sleep(150);
+    check("P19 and a stray 'Delivered' cannot revive an rto order", (await ord(Rt.id)).status === "rto");
+    const Cn = await mkOrder();
+    await hookPost({ awb: Cn.awb, current_status: "Canceled", current_timestamp: new Date().toISOString() }, "hook-token-123");
+    check("P19 'Canceled' maps to Cancelled", await waitFor(async () => (await ord(Cn.id)).status === "Cancelled"));
+
+    // --- return rules
+    const Und = await mkOrder("in_transit");
+    const itemOf = async (orderId) => (await q("SELECT id FROM order_items WHERE order_id = $1", [orderId]))[0].id;
+    r = await call("POST", "/api/orders/" + Und.id + "/return", T.p1, { reason: "damaged", photos: ["p1"], items: [{ order_item_id: await itemOf(Und.id), quantity: 1 }] });
+    check("P19 a return on an undelivered order is refused (400)", r.s === 400 && /delivered/i.test(r.raw || ""), "got " + r.s + " " + (r.raw || "").slice(0, 100));
+    const Old = await mkOrder("delivered");
+    await q("UPDATE orders SET delivered_at = now() - interval '8 days' WHERE id = $1", [Old.id]);
+    r = await call("POST", "/api/orders/" + Old.id + "/return", T.p1, { reason: "damaged", photos: ["p1"], items: [{ order_item_id: await itemOf(Old.id), quantity: 1 }] });
+    check("P19 a return after 7 days is refused (400)", r.s === 400 && /window/i.test(r.raw || ""), "got " + r.s + " " + (r.raw || "").slice(0, 100));
+    const itA = await itemOf(A.id);
+    r = await call("POST", "/api/orders/" + A.id + "/return", T.p1, { reason: "changed my mind", items: [{ order_item_id: itA, quantity: 1 }] });
+    check("P19 the reason must come from the list (400)", r.s === 400);
+    r = await call("POST", "/api/orders/" + A.id + "/return", T.p1, { reason: "damaged", items: [{ order_item_id: itA, quantity: 1 }] });
+    check("P19 a photo is required for 'damaged' (400)", r.s === 400 && /photo/i.test(r.raw || ""));
+    r = await call("POST", "/api/orders/" + A.id + "/return", T.p1, { reason: "wrong_item", items: [{ order_item_id: await itemOf(Rt.id), quantity: 1 }] });
+    check("P19 an item from another order is refused (400)", r.s === 400);
+    r = await call("POST", "/api/orders/" + A.id + "/return", T.p1, { reason: "wrong_item", items: [{ order_item_id: itA, quantity: 5 }] });
+    check("P19 returning more than was bought is refused (400)", r.s === 400);
+    r = await call("POST", "/api/orders/" + A.id + "/return", T.p2, { reason: "wrong_item", items: [{ order_item_id: itA, quantity: 1 }] });
+    check("P19 another customer cannot return my order (404)", r.s === 404);
+    await q("UPDATE categories SET non_returnable = true WHERE id = 1");
+    r = await call("POST", "/api/orders/" + A.id + "/return", T.p1, { reason: "wrong_item", items: [{ order_item_id: itA, quantity: 1 }] });
+    check("P19 items from a non-returnable category are refused (400)", r.s === 400 && /cannot be returned/i.test(r.raw || ""), "got " + r.s + " " + (r.raw || "").slice(0, 100));
+    await q("UPDATE categories SET non_returnable = false WHERE id = 1");
+    r = await call("POST", "/api/orders/" + A.id + "/return", T.p1, { reason: "damaged", note: "Cracked in the box", photos: ["media-1"], items: [{ order_item_id: itA, quantity: 1 }] });
+    const ret1 = r.j && r.j.returnId;
+    check("P19 a valid return (delivered, in window, with a photo) is accepted", r.s === 201 && ret1 && (await q("SELECT reason_code, status, photos FROM order_returns WHERE id = $1", [ret1]))[0].reason_code === "damaged");
+    r = await call("POST", "/api/orders/" + A.id + "/return", T.p1, { reason: "wrong_item", items: [{ order_item_id: itA, quantity: 2 }] });
+    check("P19 the same item cannot be returned beyond what is left (400)", r.s === 400, "got " + r.s + " " + (r.raw || "").slice(0, 100));
+
+    // --- admin handling
+    r = await call("PUT", "/api/orders/returns/" + ret1 + "/reject", T.ecom, { reason: "" });
+    check("P19 rejecting needs a reason (400)", r.s === 400);
+    r = await call("PUT", "/api/orders/returns/" + ret1 + "/inspect", T.ecom, { result: "pass" });
+    check("P19 inspecting before it was received is refused (409)", r.s === 409);
+    r = await call("PUT", "/api/orders/returns/" + ret1 + "/approve", T.ecom, {});
+    check("P19 admin approves: the reverse pickup is created and remembered", r.s === 200 && (await q("SELECT status, reverse_shipment_id FROM order_returns WHERE id = $1", [ret1]))[0].reverse_shipment_id === 8001, "got " + r.s + " " + (r.raw || "").slice(0, 150));
+    r = await call("PUT", "/api/orders/returns/" + ret1 + "/reject", T.ecom, { reason: "late" });
+    check("P19 an approved return can no longer be rejected (409)", r.s === 409);
+    const noteBefore = (await q("SELECT COUNT(*)::int AS n FROM notifications WHERE title = 'A return arrived'"))[0].n;
+    await hookPost({ awb: "REVAWB1", order_id: `RET-${A.number}-${ret1}`, is_return: 1, current_status: "Picked Up", current_timestamp: new Date().toISOString() }, "hook-token-123");
+    check("P19 the courier's reverse pickup moves the return to 'In Transit'", await waitFor(async () => (await q("SELECT status FROM order_returns WHERE id = $1", [ret1]))[0].status === "In Transit"));
+    await hookPost({ awb: "REVAWB1", order_id: `RET-${A.number}-${ret1}`, is_return: 1, current_status: "Delivered", current_timestamp: new Date(Date.now() + 1000).toISOString() }, "hook-token-123");
+    check("P19 its delivery to the warehouse marks it 'Received' and tells the shop admins", await waitFor(async () => (await q("SELECT status FROM order_returns WHERE id = $1", [ret1]))[0].status === "Received") && (await q("SELECT COUNT(*)::int AS n FROM notifications WHERE title = 'A return arrived'"))[0].n > noteBefore);
+    check("P19 a return shipment never changes the order itself (it stays Return Approved)", (await ord(A.id)).status === "Return Approved", JSON.stringify(await ord(A.id)));
+
+    r = await call("PUT", "/api/orders/returns/" + ret1 + "/inspect", T.ecom, { result: "maybe" });
+    check("P19 the inspection result must be pass or fail (400)", r.s === 400);
+    const refundsBefore = rzpRefunds.length;
+    r = await call("PUT", "/api/orders/returns/" + ret1 + "/inspect", T.ecom, { result: "pass" });
+    const rrow = (await q("SELECT status, inspection_result, inspected_at FROM order_returns WHERE id = $1", [ret1]))[0];
+    check("P19 an inspected-and-passed return triggers a Razorpay refund: 1 of 2 items = 565 of the 1,130 paid for goods", r.s === 200 && rzpRefunds.length === refundsBefore + 1 && rzpRefunds[refundsBefore].amount === 56500 && rzpRefunds[refundsBefore].pid === "pay_ord_p19_1" && rrow.status === "Inspected" && rrow.inspection_result === "pass" && rrow.inspected_at && (await q("SELECT COUNT(*)::int AS n FROM order_refunds WHERE return_id = $1 AND amount = 565", [ret1]))[0].n === 1, "got " + r.s + " " + (r.raw || "").slice(0, 200) + " " + JSON.stringify(rzpRefunds.slice(refundsBefore)));
+    r = await call("PUT", "/api/orders/returns/" + ret1 + "/inspect", T.ecom, { result: "pass" });
+    check("P19 a return cannot be refunded twice (409)", r.s === 409 && rzpRefunds.length === refundsBefore + 1);
+
+    // a second return that fails the check
+    r = await call("POST", "/api/orders/" + A.id + "/return", T.p1, { reason: "missing_part", items: [{ order_item_id: itA, quantity: 1 }] });
+    const ret2 = r.j && r.j.returnId;
+    await call("PUT", "/api/orders/returns/" + ret2 + "/approve", T.ecom, {});
+    r = await call("PUT", "/api/orders/returns/" + ret2 + "/receive", T.ecom);
+    check("P19 admin can mark a return received by hand", r.s === 200 && (await q("SELECT status FROM order_returns WHERE id = $1", [ret2]))[0].status === "Received", "got " + r.s);
+    r = await call("PUT", "/api/orders/returns/" + ret2 + "/inspect", T.ecom, { result: "fail" });
+    check("P19 a failed inspection needs a reason (400)", r.s === 400);
+    r = await call("PUT", "/api/orders/returns/" + ret2 + "/inspect", T.ecom, { result: "fail", note: "Item was used" });
+    check("P19 a failed inspection rejects the return, no refund", r.s === 200 && (await q("SELECT status, inspection_result, rejection_reason FROM order_returns WHERE id = $1", [ret2]))[0].rejection_reason === "Item was used" && rzpRefunds.length === refundsBefore + 1);
+    r = await call("PUT", "/api/orders/returns/" + ret2 + "/inspect", T.p1, { result: "pass" });
+    check("P19 customers cannot inspect (403)", r.s === 403);
+
+    // reject path
+    r = await call("POST", "/api/orders/" + A.id + "/return", T.p1, { reason: "wrong_item", items: [{ order_item_id: itA, quantity: 1 }] });
+    const ret3 = r.j && r.j.returnId;
+    r = await call("PUT", "/api/orders/returns/" + ret3 + "/reject", T.ecom, { reason: "Not eligible: used product" });
+    check("P19 admin rejects a new request with a reason; the customer is told", r.s === 200 && (await q("SELECT status, rejection_reason FROM order_returns WHERE id = $1", [ret3]))[0].rejection_reason === "Not eligible: used product" && (await q("SELECT COUNT(*)::int AS n FROM notifications WHERE user_uid = $1 AND title = 'Your return request was not accepted'", [String(U.p1.id)]))[0].n === 1);
   }
 
   // invoices

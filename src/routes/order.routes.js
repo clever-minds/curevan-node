@@ -23,6 +23,9 @@ router.post("/refunds", auth, requireRole("admin.ecom"), resHandler, refundContr
 router.get("/returns", auth, requireRole("admin.ecom"), resHandler, returnController.listReturns); // Admin
 router.post("/:id/return", auth, resHandler, returnController.requestReturn); // User
 router.put("/returns/:id/approve", auth, requireRole("admin.ecom"), resHandler, returnController.approveReturn); // Admin
+router.put("/returns/:id/reject", auth, requireRole("admin.ecom"), resHandler, returnController.rejectReturn); // Admin
+router.put("/returns/:id/receive", auth, requireRole("admin.ecom"), resHandler, returnController.receiveReturn); // Admin
+router.put("/returns/:id/inspect", auth, requireRole("admin.ecom"), resHandler, returnController.inspectReturn); // Admin
 
 
 // ✅ Invoice
