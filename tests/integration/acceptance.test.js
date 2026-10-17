@@ -1447,6 +1447,8 @@ async function seed() {
     const deliver = (id, daysAgo) => q("UPDATE orders SET status = 'delivered', delivered_at = now() - ($2 || ' days')::interval WHERE id = $1", [id, String(daysAgo)]);
     const comm = (orderId) => q("SELECT * FROM affiliate_commissions WHERE order_id = $1 ORDER BY id", [orderId]);
 
+    r = await call("GET", "/api/config/public");
+    check("P20 the affiliate numbers (10% off, 5% commission, 7 days) are public config", r.s === 200 && r.j.data.affiliate.patientDiscountPct === 10 && r.j.data.affiliate.therapistCommissionPct === 5 && r.j.data.affiliate.eligibleAfterDeliveryDays === 7);
     check("P20 code names: surname in capitals, letters only, first name as fallback",
       affiliate.baseCode("Anita Sharma") === "DRSHARMA" && affiliate.baseCode("Dr. Ravi O'Neil") === "DRONEIL" && affiliate.baseCode("Madonna") === "DRMADONNA" && affiliate.baseCode("Dr One") === "DRONE");
 

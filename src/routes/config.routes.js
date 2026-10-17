@@ -12,6 +12,7 @@ router.get("/public", (req, res) => {
       otp: { length: rules.otp.length, validFromHoursBefore: rules.otp.validFromHoursBefore, maxAttempts: rules.otp.maxAttempts },
       visit: { travelFromMinutesBefore: rules.visit.travelFromMinutesBefore },
       shop: { freeShippingThresholdInr: rules.shop.freeShippingThresholdInr, flatShippingFeeInr: rules.shop.flatShippingFeeInr, returnWindowDays: rules.shop.returnWindowDays },
+      affiliate: { patientDiscountPct: rules.affiliate.patientDiscountPct, therapistCommissionPct: rules.affiliate.therapistCommissionPct, eligibleAfterDeliveryDays: rules.affiliate.eligibleAfterDeliveryDays },
       cancellation: {
         freeHoursBefore: rules.cancellation.freeHoursBefore,
         partialHoursBefore: rules.cancellation.partialHoursBefore,
