@@ -2,6 +2,8 @@
  * Seeds demo data (users with password "Test@1234", products, bookings, orders, refunds...) so the
  * website can be clicked through in a browser. Run after setup_db.js.
  */
+const __db = process.env.DB_NAME || "curevan_test";
+if (!/test/i.test(__db)) { console.error(`Refusing to run: DB_NAME "${__db}" does not look like a test database.`); process.exit(2); }
 const bcrypt = require("bcrypt");
 const { Client } = require("pg");
 

@@ -1,0 +1,23 @@
+[
+  { "id": 1, "title": "Phone login bypass", "where": "api", "all": ["#1 login-with-mobile .* without a Firebase token -> 401", "#1 forged Firebase token -> 401"] },
+  { "id": 2, "title": "Role escalation", "where": "api", "all": ["#2 patient token POST /api/users/update-roles -> 403", "#2 sign-up with roles:\\[admin.super\\] creates a patient only"] },
+  { "id": 3, "title": "Data privacy", "where": "api", "all": ["#3 patient B reads patient A's appointment -> 403", "#3 patient B reads patient A's PCR -> 403", "#3 patient B reads patient A's order -> 403", "#3 patient B reads patient A's address -> 403", "#3 assigned therapist cannot read the address before the window", "#3 \\.\\.\\. and CAN read it inside the window"] },
+  { "id": 4, "title": "Payment (signature, tampering, 20 payments reconcile)", "where": "api", "all": ["#4 forged signature rejected", "#4 tampered coupon_discount and total ignored", "#4 20 test payments reconcile"] },
+  { "id": 5, "title": "Request a therapist", "where": "api", "all": ["#5 'Request a therapist' is saved as 'searching_therapist'"] },
+  { "id": 6, "title": "Broken links / no 404 route errors", "where": "api + frontend", "all": ["#6 every one of the \\d+ website API calls"], "frontend": "npm run check:links (every page link target exists)" },
+  { "id": 7, "title": "Build", "where": "frontend", "frontend": "npm run typecheck and npm run build (CI, with ignoreBuildErrors false)" },
+  { "id": 8, "title": "OTP", "where": "api", "all": ["P12 the right code starts the session", "P12 .*wrong", "P21 another patient cannot read that code"] },
+  { "id": 9, "title": "PCR gate", "where": "api", "all": ["P12 'Complete session' -> pcr_pending", "P12 the therapist cannot mark it completed by hand", "P18 not payable while the PCR is not locked"] },
+  { "id": 10, "title": "Slots", "where": "api", "all": ["P13 the second booking of the same slot -> 409", "P13 two simultaneous bookings for one slot"] },
+  { "id": 11, "title": "Cancellation bands", "where": "api + unit", "all": ["P14 quote 20 h ahead: free", "P14 quote 6 h ahead: 50% charge", "P14 patient cancels 6 h ahead: 750 refunded through Razorpay"], "unit": "tests/unit/cancellation_quote.test.js" },
+  { "id": 12, "title": "Payout", "where": "api", "all": ["P18 premium gross 1,000 -> fee 100, GST on fee 18", "P18 TDS counts only the part above the yearly threshold", "P18 a bad UTR is refused", "P18 the Sunday job made batches"] },
+  { "id": 13, "title": "Shipping", "where": "api", "all": ["P19 a ₹498 cart pays ₹50 shipping", "P19 a ₹499 cart ships free", "P19 delivered_at is saved"] },
+  { "id": 14, "title": "Returns", "where": "api", "all": ["P19 a return on an undelivered order is refused", "P19 a return after 7 days is refused", "P19 an inspected-and-passed return triggers a Razorpay refund"] },
+  { "id": 15, "title": "Affiliate", "where": "api", "all": ["P20 the commission is 5% of 1,800 = 90, pending", "P20 8 days after delivery the commission is eligible", "P20 an approved return makes the commission cancelled_returned"] },
+  { "id": 16, "title": "Notifications", "where": "api", "all": ["P24 booking_confirmed logged attempts for patient channels", "P24 WhatsApp failure on booking_confirmed triggers SMS fallback", "P24 OTP never appears in notification_log"] },
+  { "id": 17, "title": "SOS", "where": "api", "all": ["P10 therapist presses SOS -> alert saved"] },
+  { "id": 18, "title": "Compliance (consent, invoice supplier, policy numbers)", "where": "api", "all": ["P10 accepting a consent form creates a consent_logs row", "P25 GSTIN, CIN and PAN are empty \\(never invented\\)", "P14 the public config carries the policy numbers the website page prints"] },
+  { "id": 19, "title": "Mobile 375 px", "where": "frontend", "frontend": "Playwright project 'Mobile 375' opens every dashboard at 375 px and checks there is no horizontal scroll (e2e/mobile.spec.ts)" },
+  { "id": 20, "title": "Progress tracking", "where": "api", "all": ["P16 baseline recorded", "P16 due measures are enforced on submit", "P15 Lock & Finalize stores a SHA-256 content hash"] },
+  { "id": 21, "title": "Follow-ups and reminders", "where": "api", "all": ["P17 6 'proposed' appointments hold the slots", "P17 at hold expiry the booking is released", "P17 the 24 h reminder is logged exactly once", "P17 the 2 h reminder \\(once\\)"] }
+]

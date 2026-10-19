@@ -1,6 +1,8 @@
 // Adds visit-flow demo bookings for browser testing (run after seed_ui.js):
 //   #A confirmed + paid, slot in ~30 minutes with an address (therapist can start travel, patient sees the start code)
 //   #B confirmed + paid (Razorpay payment), slot in ~6 hours  -> cancel dialog shows the 50% charge
+const __db = process.env.DB_NAME || "curevan_test";
+if (!/test/i.test(__db)) { console.error(`Refusing to run: DB_NAME "${__db}" does not look like a test database.`); process.exit(2); }
 const { Client } = require("pg");
 (async () => {
   const pg = new Client({ host: process.env.DB_HOST || "127.0.0.1", port: Number(process.env.DB_PORT) || 54329, database: process.env.DB_NAME || "curevan_test", user: process.env.DB_USER || "curevan", password: process.env.DB_PASSWORD || "testpw" });

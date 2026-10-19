@@ -6,6 +6,8 @@
  *
  * Connection comes from DB_HOST / DB_PORT / DB_NAME / DB_USER / DB_PASSWORD.
  */
+const __db = process.env.DB_NAME || "curevan_test";
+if (!/test/i.test(__db)) { console.error(`Refusing to run: DB_NAME "${__db}" does not look like a test database.`); process.exit(2); }
 const fs = require("fs");
 const path = require("path");
 const { spawnSync } = require("child_process");
