@@ -14,6 +14,7 @@ module.exports = Object.freeze({
     pin: '',
     phone: '',
     email: 'accounts@curevan.com',
+    bankName: '', bankBranch: '', bankAccountNumber: '', bankIfsc: '',  // printed under Payment Details only when set; owner to fill
   }),
   booking: Object.freeze({ directBookingNeedsApproval: process.env.DIRECT_BOOKING_NEEDS_APPROVAL === 'true' }),   // false (default, as in handoff pack P07) = patient pays immediately; true = optional approval-first flow
   consent: Object.freeze({ policyVersion: '2026-10', adultAge: 18 }),                          // P25: version stored with every consent; below adultAge a guardian must consent

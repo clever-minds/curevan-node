@@ -56,7 +56,7 @@ Real Gemini answer (`AI_MODEL_ID` + key), real Exotel call, Razorpay checkout po
 
 ## Found, not fixed / owner decisions
 - `0000` baseline is a placeholder: production's real schema dump must be added by the owner (the runner expects it).
-- Bank details are hard-coded on the appointment and order invoices.
+- Bank details now come from `businessRules.legalEntity` (bankName, bankBranch, bankAccountNumber, bankIfsc); empty until the owner fills them, and nothing is printed for an empty field.
 - AI summary blocks on admin dashboards are static text.
 - No admin screen to mark a product non-returnable (kept as the pack says).
 - Care packs: price and the 10% cancellation fee are from D14 and must be confirmed; the refund is pro-rata of the price paid per unused session.
