@@ -397,6 +397,8 @@ exports.createBookingAndInvoice = async (req, res) => {
          WHERE id = :id`,
         { replacements: { packId: pack.id, id: appointmentId }, type: QueryTypes.UPDATE, transaction: t }
       );
+      // a pack booking never waits for approval or payment: its first status is the same as a paid-first booking's, then the state machine confirms it
+      await sequelize.query(`UPDATE appointments SET status = 'pending_payment' WHERE id = :id AND status <> 'pending_payment'`, { replacements: { id: appointmentId }, type: QueryTypes.UPDATE, transaction: t });
       // the status moves through the state machine, like every other payment (history row, start code prepared)
       await stateMachine.transition(appointmentId, STATUS.CONFIRMED, { system: true }, { transaction: t, note: `paid with care pack #${pack.id}` });
 
