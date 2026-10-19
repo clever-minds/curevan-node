@@ -31,7 +31,7 @@ async function listImpacted(now = Date.now()) {
   const today = ymdOf(now), last = ymdOf(now + rules.emergency.lookAheadDays * 86400000);
   const rows = await q(
     `SELECT a.id, a.patient_id, a.patient_name, a.patient_phone, a.therapist_id, a.therapist_name, a.service_type_id, a.therapy_type, to_char(a.date, 'YYYY-MM-DD') AS date, a.time, a.start_time,
-            a.status, a.payment_status, a.total_amount, a.service_amount, a.created_at, a.service_address_id,
+            a.status, a.payment_status, a.total_amount, a.service_amount, a.created_at, a.service_address_id, a.care_pack_id,
             oa.full_address, oa.city, oa.state,
             tl.reason AS leave_reason, tl.start_time AS leave_start_time, tl.end_time AS leave_end_time
      FROM appointments a
@@ -90,7 +90,7 @@ async function autoCancelUnassigned(now = Date.now()) {
     if (!start || start.getTime() - now > rules.emergency.autoCancelHoursBefore * 3600000 || start.getTime() < now - 3600000) continue;
     const quote = cancellationService.quote(appt, "admin", now);
     try {
-      if (quote.refundInr > 0) await refundService.refund({ appointmentId: appt.id, amountInr: quote.refundInr, reason: "No replacement therapist found after the therapist's leave", actorId: null });
+      if (quote.refundInr > 0 && !appt.care_pack_id) await refundService.refund({ appointmentId: appt.id, amountInr: quote.refundInr, reason: "No replacement therapist found after the therapist's leave", actorId: null });
     } catch (err) {
       if (err instanceof refundService.RefundError) { result.failed += 1; console.error(`auto-cancel #${appt.id}: refund failed: ${err.message}`); continue; }     // left for support
       throw err;
@@ -99,6 +99,7 @@ async function autoCancelUnassigned(now = Date.now()) {
     try {
       await stateMachine.transition(appt.id, stateMachine.STATUS.CANCELLED_ADMIN, admin, { transaction: t, note: "Therapist on leave and no replacement found 2 hours before the slot" });
       await cancellationService.recordOutcome(appt, quote, { actorId: null, reason: "Therapist on leave, no replacement", transaction: t });
+      if (appt.care_pack_id) await require("./carePackService").returnSession(appt.care_pack_id, t);
       await t.commit();
     } catch (err) {
       await t.rollback();

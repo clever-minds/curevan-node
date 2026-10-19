@@ -3,6 +3,7 @@ const { sequelize } = require("../../config/db");
 const razorpay = require("../../services/razorpayService");
 const rules = require("../../config/businessRules");
 const access = require("../../utils/access");
+const carePackService = require("../../services/carePackService");
 
 const r2 = (n) => Math.round((Number(n) + Number.EPSILON) * 100) / 100;
 
@@ -24,7 +25,7 @@ exports.listPlans = async (req, res) => {
   }
 };
 
-// Create Razorpay payment order for purchasing a pack
+// Create the Razorpay order for a pack and remember what was priced (plan, patient, therapist) BEFORE the customer pays
 exports.createPurchaseOrder = async (req, res) => {
   const { planId, therapistId } = req.body || {};
   if (!planId) return res.status(400).json({ success: false, error: "planId is required" });
@@ -36,10 +37,10 @@ exports.createPurchaseOrder = async (req, res) => {
     );
     if (!plan) return res.status(404).json({ success: false, error: "Care pack plan not found" });
 
-    // If a therapist is chosen, check they are approved
+    // a pack tied to one therapist: that therapist must be approved
     if (therapistId) {
       const [th] = await sequelize.query(
-        `SELECT id FROM users WHERE id = :therapistId AND role = 'therapist'`,
+        `SELECT u.id FROM users u JOIN therapist_profiles tp ON tp.user_id = u.id WHERE u.id = :therapistId AND u.role = 'therapist' AND tp.profile_status = 'approved'`,
         { replacements: { therapistId }, type: QueryTypes.SELECT }
       );
       if (!th) return res.status(404).json({ success: false, error: "Therapist not found" });
@@ -47,14 +48,16 @@ exports.createPurchaseOrder = async (req, res) => {
 
     const price = Number(plan.price);
     const amountPaise = Math.round(price * 100);
+    if (amountPaise < 100) return res.status(400).json({ success: false, error: "This plan has no price yet" });
     const receipt = `cp-${req.user.id}-${Date.now()}`.slice(0, 40);
 
-    const rzpOrder = await razorpay.createOrder(amountPaise, receipt, {
-      type: "care_pack",
-      planId: String(plan.id),
-      patientId: String(req.user.id),
-      therapistId: therapistId ? String(therapistId) : "",
-    });
+    const rzpOrder = await razorpay.createOrder(amountPaise, receipt, { type: "care_pack", planId: String(plan.id), patientId: String(req.user.id) });
+
+    await sequelize.query(
+      `INSERT INTO care_packs (plan_id, patient_id, therapist_id, sessions_total, sessions_used, price_paid, status, razorpay_order_id)
+       VALUES (:planId, :patientId, :therapistId, :sessions, 0, :price, 'pending_payment', :orderId)`,
+      { replacements: { planId: plan.id, patientId: req.user.id, therapistId: therapistId || null, sessions: plan.sessions, price, orderId: rzpOrder.id }, type: QueryTypes.INSERT }
+    );
 
     return res.json({
       success: true,
@@ -62,13 +65,7 @@ exports.createPurchaseOrder = async (req, res) => {
         razorpayOrderId: rzpOrder.id,
         amountPaise,
         currency: "INR",
-        plan: {
-          id: plan.id,
-          name: plan.name,
-          sessions: plan.sessions,
-          price: Number(plan.price),
-          validityDays: plan.validity_days,
-        },
+        plan: { id: plan.id, name: plan.name, sessions: plan.sessions, price, validityDays: plan.validity_days },
         keyId: razorpay.getKeyId(),
       },
     });
@@ -78,87 +75,22 @@ exports.createPurchaseOrder = async (req, res) => {
   }
 };
 
-// Verify payment signature and activate care pack
+// Verify the payment signature and activate the pack that was priced for that order (plan and price come from the server, not from this request)
 exports.verifyPurchase = async (req, res) => {
-  const { planId, therapistId, razorpayOrderId, razorpayPaymentId, razorpaySignature } = req.body || {};
-  if (!planId || !razorpayOrderId || !razorpayPaymentId || !razorpaySignature) {
+  const { razorpayOrderId, razorpayPaymentId, razorpaySignature } = req.body || {};
+  if (!razorpayOrderId || !razorpayPaymentId || !razorpaySignature) {
     return res.status(400).json({ success: false, error: "Missing required payment parameters" });
   }
-
-  const valid = razorpay.verifyPaymentSignature(razorpayOrderId, razorpayPaymentId, razorpaySignature);
-  if (!valid) {
+  if (!razorpay.verifyPaymentSignature(razorpayOrderId, razorpayPaymentId, razorpaySignature)) {
     return res.status(400).json({ success: false, error: "Invalid payment signature" });
   }
 
   const t = await sequelize.transaction();
   try {
-    const [plan] = await sequelize.query(
-      `SELECT * FROM care_pack_plans WHERE id = :planId FOR UPDATE`,
-      { replacements: { planId }, type: QueryTypes.SELECT, transaction: t }
-    );
-    if (!plan) {
-      await t.rollback();
-      return res.status(404).json({ success: false, error: "Care pack plan not found" });
-    }
-
-    // Check if this payment was already processed
-    const [existing] = await sequelize.query(
-      `SELECT * FROM care_packs WHERE razorpay_payment_id = :razorpayPaymentId LIMIT 1`,
-      { replacements: { razorpayPaymentId }, type: QueryTypes.SELECT, transaction: t }
-    );
-    if (existing) {
-      await t.commit();
-      return res.json({ success: true, data: existing, message: "Care pack already active" });
-    }
-
-    const validityDays = plan.validity_days || rules.carePacks?.defaultValidityDays || 90;
-    const expiresAt = new Date(Date.now() + validityDays * 86400 * 1000);
-
-    const [rows] = await sequelize.query(
-      `INSERT INTO care_packs (
-         plan_id, patient_id, therapist_id, sessions_total, sessions_used, price_paid,
-         purchased_at, expires_at, status, razorpay_order_id, razorpay_payment_id, created_at, updated_at
-       ) VALUES (
-         :planId, :patientId, :therapistId, :sessionsTotal, 0, :pricePaid,
-         now(), :expiresAt, 'active', :razorpayOrderId, :razorpayPaymentId, now(), now()
-       ) RETURNING *`,
-      {
-        replacements: {
-          planId: plan.id,
-          patientId: req.user.id,
-          therapistId: therapistId || null,
-          sessionsTotal: plan.sessions,
-          pricePaid: plan.price,
-          expiresAt,
-          razorpayOrderId,
-          razorpayPaymentId,
-        },
-        type: QueryTypes.INSERT,
-        transaction: t,
-      }
-    );
-
-    const pack = rows[0];
-
-    // Issue invoice
-    const invoiceNumber = `INV-CP-${pack.id}`;
-    await sequelize.query(
-      `INSERT INTO invoices (invoice_number, invoice_type, status, user_id, issued_at, total_amount_paise)
-       VALUES (:invoiceNumber, 'care_pack', 'issued', :userId, now(), :paise)
-       ON CONFLICT DO NOTHING`,
-      {
-        replacements: {
-          invoiceNumber,
-          userId: req.user.id,
-          paise: Math.round(Number(plan.price) * 100),
-        },
-        type: QueryTypes.INSERT,
-        transaction: t,
-      }
-    );
-
+    const out = await carePackService.activateByOrder({ razorpayOrderId, paymentId: razorpayPaymentId, userId: req.user.id, transaction: t });
+    if (!out) { await t.rollback(); return res.status(404).json({ success: false, error: "Care pack purchase not found" }); }
     await t.commit();
-    return res.status(201).json({ success: true, data: pack, message: "Care pack purchased successfully" });
+    return res.status(out.already ? 200 : 201).json({ success: true, data: out.pack, message: out.already ? "Care pack already active" : "Care pack purchased successfully" });
   } catch (err) {
     await t.rollback();
     console.error("verifyPurchase error:", err);
@@ -189,7 +121,7 @@ exports.getMyPacks = async (req, res) => {
        JOIN care_pack_plans cpp ON cpp.id = cp.plan_id
        LEFT JOIN service_types st ON st.id = cpp.service_type_id
        LEFT JOIN users u ON u.id = cp.therapist_id
-       WHERE cp.patient_id = :userId
+       WHERE cp.patient_id = :userId AND cp.status <> 'pending_payment'
        ORDER BY 
          CASE WHEN cp.status = 'active' THEN 0 ELSE 1 END,
          cp.created_at DESC`,
@@ -253,6 +185,7 @@ exports.adminListPacks = async (req, res) => {
        JOIN care_pack_plans cpp ON cpp.id = cp.plan_id
        JOIN users p ON p.id = cp.patient_id
        LEFT JOIN users t ON t.id = cp.therapist_id
+       WHERE cp.status <> 'pending_payment'
        ORDER BY cp.created_at DESC`,
       { type: QueryTypes.SELECT }
     );
@@ -282,6 +215,10 @@ exports.adminRefundPack = async (req, res) => {
     if (pack.status === "refunded") {
       await t.rollback();
       return res.status(409).json({ success: false, error: "Care pack has already been refunded" });
+    }
+    if (pack.status === "pending_payment" || pack.status === "cancelled") {
+      await t.rollback();
+      return res.status(409).json({ success: false, error: "This care pack was never paid" });
     }
 
     const sessionsUnused = pack.sessions_total - pack.sessions_used;
@@ -382,6 +319,13 @@ exports.adminCreatePlan = async (req, res) => {
   const { name, serviceTypeId, sessions, price, validityDays = 90, active = true } = req.body || {};
   if (!name || !sessions || !price) {
     return res.status(400).json({ success: false, error: "name, sessions, and price are required" });
+  }
+  if (!Number.isInteger(Number(sessions)) || Number(sessions) < 1 || Number(sessions) > 60) return res.status(400).json({ success: false, error: "sessions must be a whole number from 1 to 60" });
+  if (!(Number(price) > 0)) return res.status(400).json({ success: false, error: "price must be more than 0" });
+  if (validityDays !== undefined && !(Number.isInteger(Number(validityDays)) && Number(validityDays) > 0)) return res.status(400).json({ success: false, error: "validityDays must be a whole number of days" });
+  if (serviceTypeId) {
+    const [st] = await sequelize.query(`SELECT id FROM service_types WHERE id = :id`, { replacements: { id: serviceTypeId }, type: QueryTypes.SELECT });
+    if (!st) return res.status(400).json({ success: false, error: "Unknown service type" });
   }
 
   try {

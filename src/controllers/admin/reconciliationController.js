@@ -81,7 +81,7 @@ exports.getReconciliation = async (req, res) => {
         a.created_at AS "createdAt"
       FROM appointments a
       WHERE a.payment_status IN ('Paid', 'Partially Refunded')
-        AND COALESCE(a.payment_method, 'razorpay') NOT LIKE 'manual_%'
+        AND COALESCE(a.payment_method, 'razorpay') NOT LIKE 'manual_%' AND COALESCE(a.payment_method, 'razorpay') <> 'care_pack'
         AND (
           (a.paid_at IS NOT NULL AND (a.paid_at AT TIME ZONE 'Asia/Kolkata')::date = :targetDate::date)
           OR (a.paid_at IS NULL AND (a.created_at AT TIME ZONE 'Asia/Kolkata')::date = :targetDate::date)
@@ -91,7 +91,16 @@ exports.getReconciliation = async (req, res) => {
       { replacements: { targetDate }, type: QueryTypes.SELECT }
     );
 
+    const packs = await sequelize.query(
+      `SELECT cp.id, ('PACK-' || cp.id) AS reference, cp.price_paid AS amount, cp.razorpay_payment_id AS "razorpayPaymentId", cp.razorpay_order_id AS "razorpayOrderId", cp.purchased_at AS "paidAt"
+       FROM care_packs cp
+       WHERE cp.razorpay_payment_id IS NOT NULL AND cp.status IN ('active', 'exhausted', 'expired', 'refunded') AND (cp.purchased_at AT TIME ZONE 'Asia/Kolkata')::date = :targetDate::date
+       ORDER BY cp.id ASC`,
+      { replacements: { targetDate }, type: QueryTypes.SELECT }
+    );
+
     const curevanItems = [
+      ...packs.map((c) => ({ id: c.id, type: "care_pack", reference: c.reference, amount: Number(c.amount || 0), paymentId: c.razorpayPaymentId, orderId: c.razorpayOrderId, paidAt: c.paidAt, link: "/dashboard/admin/care-packs" })),
       ...orders.map((o) => ({
         id: o.id,
         type: "order",

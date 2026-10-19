@@ -245,3 +245,17 @@ Total routes: 170
 | POST | /api/support/chat/sessions | any logged-in user (starts a chat) |
 | POST | /api/support/chat/sessions/:id/messages | the owner of the chat |
 | POST | /api/support/escalate | any logged-in user (ticket from the AI chat; priority and team are decided by the server) |
+
+## Added in P27 / P28
+
+| Method | Path | Who |
+|---|---|---|
+| POST | /api/communication/mask-call | the patient or the assigned therapist of the booking, inside the calling window (403 outside it) |
+| POST | /api/hooks/telephony | the telephony provider; refused without the shared token |
+| GET | /api/care-packs/plans | anyone (active plans) |
+| GET | /api/care-packs/my-packs | any logged-in user (own packs) |
+| POST | /api/care-packs/purchase/order, /purchase/verify | any logged-in user (the plan and price are stored server-side at order time) |
+| GET | /api/care-packs/:id | the owner or an admin |
+| GET | /api/care-packs/admin/all | admin.super, admin.therapy, admin.ecom |
+| POST | /api/care-packs/admin/:id/refund | admin.super, admin.therapy |
+| POST/PUT | /api/care-packs/admin/plans, /admin/plans/:id | admin.super |

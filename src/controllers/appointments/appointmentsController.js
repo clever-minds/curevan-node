@@ -355,13 +355,13 @@ exports.createBookingAndInvoice = async (req, res) => {
 
     if (payWithPack) {
       const packId = bookingData.carePackId;
-      let packQuery = `SELECT * FROM care_packs WHERE patient_id = :patientId AND status = 'active' AND expires_at > now() AND sessions_used < sessions_total`;
+      let packQuery = `SELECT cp.*, cpp.service_type_id AS plan_service_type_id FROM care_packs cp JOIN care_pack_plans cpp ON cpp.id = cp.plan_id WHERE cp.patient_id = :patientId AND cp.status = 'active' AND cp.expires_at > now() AND cp.sessions_used < cp.sessions_total`;
       const packReplacements = { patientId: req.user.id };
       if (packId) {
-        packQuery += ` AND id = :packId`;
+        packQuery += ` AND cp.id = :packId`;
         packReplacements.packId = packId;
       }
-      packQuery += ` ORDER BY expires_at ASC LIMIT 1 FOR UPDATE`;
+      packQuery += ` ORDER BY cp.expires_at ASC LIMIT 1 FOR UPDATE OF cp`;
 
       const [pack] = await sequelize.query(packQuery, { replacements: packReplacements, type: QueryTypes.SELECT, transaction: t });
       if (!pack) {
@@ -373,6 +373,12 @@ exports.createBookingAndInvoice = async (req, res) => {
       if (pack.therapist_id && Number(pack.therapist_id) !== Number(bookingData.therapistId)) {
         await t.rollback();
         return res.status(400).json({ success: false, error: "This care pack is reserved for a specific therapist" });
+      }
+
+      // a pack is for the service it was bought for
+      if (pack.plan_service_type_id && Number(pack.plan_service_type_id) !== Number(bookingData.serviceTypeId)) {
+        await t.rollback();
+        return res.status(400).json({ success: false, error: "This care pack is for a different service" });
       }
 
       const nextUsed = pack.sessions_used + 1;
@@ -387,12 +393,12 @@ exports.createBookingAndInvoice = async (req, res) => {
          SET care_pack_id = :packId,
              payment_status = 'Paid',
              payment_method = 'care_pack',
-             status = 'confirmed',
-             verification_status = 'Verified',
              paid_at = now()
          WHERE id = :id`,
         { replacements: { packId: pack.id, id: appointmentId }, type: QueryTypes.UPDATE, transaction: t }
       );
+      // the status moves through the state machine, like every other payment (history row, start code prepared)
+      await stateMachine.transition(appointmentId, STATUS.CONFIRMED, { system: true }, { transaction: t, note: `paid with care pack #${pack.id}` });
 
       const [finalAppt] = await sequelize.query(`SELECT * FROM appointments WHERE id = :id`, {
         replacements: { id: appointmentId },
@@ -400,9 +406,10 @@ exports.createBookingAndInvoice = async (req, res) => {
         transaction: t,
       });
 
-      await exports.finalizePaidBooking(finalAppt, t);
+      await exports.finalizePaidBooking(finalAppt, t, { skipInvoice: true });      // the pack purchase carries the invoice, not each session
 
       await t.commit();
+      await exports.notifyPaidBooking(finalAppt);                                  // booking_confirmed (with the start code) to patient and therapist
       return res.json({
         success: true,
         appointmentId,
@@ -443,14 +450,14 @@ exports.createBookingAndInvoice = async (req, res) => {
    Called once a booking payment is VERIFIED (paymentsController).
    Creates the invoice and the empty PCR, and sends the notifications.
 ===================================================== */
-exports.finalizePaidBooking = async (appt, transaction) => {
+exports.finalizePaidBooking = async (appt, transaction, { skipInvoice = false } = {}) => {
   const invoiceNumber = `INV-BK-${appt.id}`;
   const [existing] = await sequelize.query(
     `SELECT id FROM invoices WHERE booking_id = :id LIMIT 1`,
     { replacements: { id: appt.id }, type: QueryTypes.SELECT, transaction }
   );
   let invoiceId = existing ? existing.id : null;
-  if (!existing) {
+  if (!existing && !skipInvoice) {
     const [svc] = await sequelize.query(
       `SELECT st.tax_category AS "taxCategory", oa.state AS "placeState"
        FROM appointments a LEFT JOIN service_types st ON st.id = a.service_type_id LEFT JOIN order_addresses oa ON oa.id = a.service_address_id WHERE a.id = :id`,
@@ -1624,22 +1631,12 @@ exports.cancelAppointment = async (req, res) => {
 
       // If booked via care pack: free window returns the session; late cancellation consumes it (P28)
       if (isCarePack) {
-        const canReturnSession = q.band === "free" || q.band === "grace" || role !== "patient";
-        if (canReturnSession) {
-          await sequelize.query(
-            `UPDATE care_packs 
-             SET sessions_used = GREATEST(0, sessions_used - 1),
-                 status = 'active',
-                 updated_at = now()
-             WHERE id = :carePackId`,
-            { replacements: { carePackId: appt.care_pack_id }, type: QueryTypes.UPDATE, transaction: t }
-          );
-        }
+        if (q.chargePct === 0) await require("../../services/carePackService").returnSession(appt.care_pack_id, t);      // free window, grace, therapist late, therapist or admin cancelled
       }
 
       if (role === "therapist") await cancellationService.reliabilityEvent(appt.therapist_id, appt.id, "cancelled_by_therapist", t);
       await t.commit();
-      if (!isCarePack && q.chargeInr > 0) await payoutService.createItemForCancellation(appt.id).catch((e) => console.error("cancellation payout failed:", e.message));
+      if (q.chargeInr > 0) await payoutService.createItemForCancellation(appt.id).catch((e) => console.error("cancellation payout failed:", e.message));
     } catch (err) {
       await t.rollback();
       throw err;

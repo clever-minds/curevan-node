@@ -4,6 +4,7 @@ const { sequelize } = require("../../config/db");
 const razorpay = require("../../services/razorpayService");
 const payments = require("./paymentsController");
 const orderController = require("../orders/orderController");
+const carePackService = require("../../services/carePackService");
 
 /* ---------------------------------------------------------------
    Event handlers. Each one is safe to run twice.
@@ -40,7 +41,10 @@ async function onPaymentCaptured(payment) {
     if (!r.ok) throw new Error(r.message || "could not confirm booking");
     return "booking confirmed";
   }
-  return "no matching order or booking";
+  // a care pack bought and paid, then the browser was closed: the stored purchase is activated here
+  const pack = await carePackService.activateByOrder({ razorpayOrderId: rzpOrderId, paymentId: payment.id, amountPaise: payment.amount });
+  if (pack) return pack.already ? "care pack already active" : "care pack activated";
+  return "no matching order, booking or care pack";
 }
 
 async function onPaymentFailed(payment) {
