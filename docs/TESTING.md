@@ -8,7 +8,8 @@ You need a PostgreSQL 16 whose database name contains `test` (the scripts refuse
 # once: a throw-away database (Docker example)
 docker run -d --name curevan-test-db -e POSTGRES_USER=curevan -e POSTGRES_PASSWORD=testpw -e POSTGRES_DB=curevan_test -p 54329:5432 postgres:16
 
-# every time (DB_HOST/DB_PORT/DB_NAME/DB_USER/DB_PASSWORD default to 127.0.0.1 / 54329 / curevan_test / curevan / testpw)
+# every time
+export DB_HOST=127.0.0.1 DB_PORT=54329 DB_NAME=curevan_test DB_USER=curevan DB_PASSWORD=testpw
 npm test
 ```
 
