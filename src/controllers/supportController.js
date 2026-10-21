@@ -1,13 +1,29 @@
 const { QueryTypes } = require("sequelize");
 const { sequelize } = require("../config/db");
 const transporter = require("../config/mailer");
+const access = require("../utils/access");
+const { hasRole } = require("../middlewares/requireRole");
+
+// Ticket owner or Super Admin only.
+async function ticketAccess(req, ticketId) {
+  const [t] = await sequelize.query(
+    `SELECT id, user_id FROM tickets WHERE id = :ticketId`,
+    { replacements: { ticketId }, type: QueryTypes.SELECT }
+  );
+  if (!t) return { status: 404 };
+  if (hasRole(req.user, "admin.super") || access.same(t.user_id, req.user.id)) return { ok: true };
+  return { status: 403 };
+}
+
 
 
 exports.createTicket = async (req, res) => {
   try {
     const userId = req.user?.id;
 
-    const { type, subject, message, priority, rating, item_id, topic } = req.body;
+    const { type, subject, message, priority, rating, item_id, topic, category } = req.body;
+    if (category !== undefined && !["clinical", "ecommerce", "billing", "general"].includes(category)) return res.error("category must be clinical, ecommerce, billing or general");
+    if (priority !== undefined && !["low", "medium", "high", "P1", "P2", "P3", "P4"].includes(priority)) return res.error("priority must be low, medium, high or P1 to P4");
 
     const file = req.file?.path || null; // multer file path
 
@@ -16,8 +32,8 @@ exports.createTicket = async (req, res) => {
 
     const [ticket] = await sequelize.query(
       `INSERT INTO tickets
-      (user_id, item_id, type, topic, subject, message, file, priority, rating)
-      VALUES (:userId, :item_id, :type, :topic, :subject, :message, :file, :priority, :rating)
+      (user_id, item_id, type, topic, subject, message, file, priority, rating, category)
+      VALUES (:userId, :item_id, :type, :topic, :subject, :message, :file, :priority, :rating, :category)
       RETURNING *`,
       {
         replacements: {
@@ -29,6 +45,7 @@ exports.createTicket = async (req, res) => {
           message,
           file,
           priority: priority || "medium",
+          category: category || null,
           rating: rating || null
         },
         type: QueryTypes.INSERT
@@ -112,6 +129,9 @@ exports.getTicket = async (req, res) => {
   try {
     const { id } = req.params;
 
+    const check = await ticketAccess(req, id);
+    if (!check.ok) return res.error(check.status === 404 ? "Ticket not found" : "Forbidden", check.status);
+
     const [ticket] = await sequelize.query(
       `SELECT * FROM tickets WHERE id = :id`,
       {
@@ -148,8 +168,11 @@ exports.replyTicket = async (req, res) => {
     const { ticket_id, message } = req.body;
 
     if (!ticket_id || !message) {
-      return res.error("Ticket id and message required");
+      return res.error("Ticket id and message required", 400);
     }
+
+    const check = await ticketAccess(req, ticket_id);
+    if (!check.ok) return res.error(check.status === 404 ? "Ticket not found" : "Forbidden", check.status);
 
     await sequelize.query(
       `INSERT INTO ticket_messages
@@ -174,7 +197,7 @@ exports.replyTicket = async (req, res) => {
       );
 
       if (ticketInfo) {
-        const isUserReplying = (ticketInfo.user_id === userId);
+        const isUserReplying = access.same(ticketInfo.user_id, userId);
         
         if (isUserReplying) {
           await transporter.sendMail({
@@ -216,6 +239,9 @@ exports.replyTicket = async (req, res) => {
 exports.closeTicket = async (req, res) => {
   try {
     const { id } = req.params;
+
+    const check = await ticketAccess(req, id);
+    if (!check.ok) return res.error(check.status === 404 ? "Ticket not found" : "Forbidden", check.status);
 
     await sequelize.query(
       `UPDATE tickets

@@ -4,7 +4,7 @@ exports.sendMail = async (to, subject, html) => {
   try {
 
     const info = await transporter.sendMail({
-      from: '"Admin Panel" <yourgmail@gmail.com>',
+      from: `"Curevan" <${process.env.MAIL_FROM || process.env.MAIL_USER}>`,
       to: to,
       subject: subject,
       html: html

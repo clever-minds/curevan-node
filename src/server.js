@@ -5,10 +5,6 @@ const { connectDB } = require("./config/db");
 require("./cron");
 
 connectDB();   // ✅ YAHAN CALL HOTA HAI
-const bcrypt = require('bcrypt');
-
-bcrypt.hash('NewPassword@123', 10).then(console.log);
-
 app.listen(process.env.PORT || 3000, () => {
   console.log("🚀 Server running");
 });

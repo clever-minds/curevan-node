@@ -1,5 +1,7 @@
 const { QueryTypes } = require("sequelize");
 const { sequelize } = require("../../config/db");
+const notificationStore = require("../../services/notificationStore");
+const emergencyService = require("../../services/emergencyService");
 
 exports.addLeave = async (req, res) => {
   try {
@@ -26,7 +28,24 @@ exports.addLeave = async (req, res) => {
       }
     );
 
-    return res.success(null, "Leave added successfully");
+    // a leave for today or tomorrow that covers active bookings: the therapy team is told right away (the dashboard banner shows the same list)
+    let affectedBookings = 0;
+    try {
+      affectedBookings = (await emergencyService.listImpacted()).filter((b) => Number(b.therapist_id) === Number(userId)).length;
+      if (affectedBookings > 0) {
+        await notificationStore.notifyRoles(["admin.therapy", "admin.super"], {
+          type: "therapist_leave_conflict",
+          title: "Therapist leave needs a replacement",
+          message: `${affectedBookings} booking${affectedBookings === 1 ? "" : "s"} of ${req.user.name || "a therapist"} fall on a new leave. Reassign them.`,
+          link: "/dashboard/therapy-admin/my-dashboard",
+          data: { therapistId: userId, affectedBookings },
+        });
+      }
+    } catch (alertErr) {
+      console.error("leave conflict alert failed:", alertErr.message);      // the leave itself is saved
+    }
+
+    return res.success({ affectedBookings }, "Leave added successfully");
   } catch (error) {
     console.error(error);
     return res.error("Failed to add leave");

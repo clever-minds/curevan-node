@@ -21,23 +21,27 @@ exports.listServiceTypes = async (req, res) => {
 // ✅ ADD SERVICE TYPE
 exports.addServiceType = async (req, res) => {
   try {
-    const { name, is_active, fa_icon, description } = req.body;
+    const { name, is_active, fa_icon, description, tax_category } = req.body;
 
     if (!name) {
       return res.error("Name is required");
+    }
+    if (tax_category !== undefined && !["exempt_clinical", "taxable_18"].includes(tax_category)) {
+      return res.error("tax_category must be exempt_clinical or taxable_18");
     }
 
     const isActive = is_active !== undefined ? is_active : true;
 
     await sequelize.query(
-      `INSERT INTO service_types (name, is_active, fa_icon, description)
-       VALUES (:name, :is_active, :fa_icon, :description)`,
+      `INSERT INTO service_types (name, is_active, fa_icon, description, tax_category)
+       VALUES (:name, :is_active, :fa_icon, :description, :tax_category)`,
       {
         replacements: { 
           name, 
           is_active: isActive, 
           fa_icon: fa_icon || null,
-          description: description || null
+          description: description || null,
+          tax_category: tax_category || "exempt_clinical"
         },
         type: QueryTypes.INSERT,
       }
@@ -57,10 +61,13 @@ exports.addServiceType = async (req, res) => {
 exports.updateServiceType = async (req, res) => {
   try {
     const { id } = req.params;
-    const { name, is_active, fa_icon, description } = req.body;
+    const { name, is_active, fa_icon, description, tax_category } = req.body;
 
     if (!name) {
       return res.error("Name is required");
+    }
+    if (tax_category !== undefined && !["exempt_clinical", "taxable_18"].includes(tax_category)) {
+      return res.error("tax_category must be exempt_clinical or taxable_18");
     }
 
     let updateQuery = `
@@ -69,6 +76,7 @@ exports.updateServiceType = async (req, res) => {
            is_active = :is_active,
            fa_icon = :fa_icon,
            description = :description,
+           tax_category = COALESCE(:tax_category, tax_category),
            updated_at = CURRENT_TIMESTAMP
        WHERE id = :id
     `;
@@ -79,7 +87,8 @@ exports.updateServiceType = async (req, res) => {
         name, 
         is_active, 
         fa_icon: fa_icon || null,
-        description: description || null
+        description: description || null,
+        tax_category: tax_category || null
       },
       type: QueryTypes.UPDATE,
     });

@@ -1,0 +1,5 @@
+-- CUREVAN-BASELINE-PLACEHOLDER
+-- Replace this whole file with the schema of the database that matches production:
+--   pg_dump --schema-only --no-owner --no-privileges -d <db> > migrations/0000_baseline.sql
+-- Then remove environment-specific lines (OWNER TO, GRANT). The migration runner refuses to
+-- apply this file while this marker is present.

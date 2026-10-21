@@ -3,6 +3,7 @@ const router = express.Router();
 
 const orderController = require("../controllers/orders/orderController");
 const auth = require("../middlewares/authMiddleware");
+const { requireRole } = require("../middlewares/requireRole");
 const resHandler = require("../middlewares/responseHandler");
 
 
@@ -14,14 +15,17 @@ const refundController = require("../controllers/orders/refundController");
 router.get("/my-orders", auth, resHandler, orderController.myOrders);
 
 // ✅ Refund Routes
-router.get("/refunds", auth, resHandler, refundController.listRefunds); // Admin
+router.get("/refunds", auth, requireRole("admin.ecom"), resHandler, refundController.listRefunds); // Admin
 router.get("/my-refunds", auth, resHandler, refundController.getMyRefunds); // User
-router.post("/refunds", auth, resHandler, refundController.initiateRefund); // Admin
+router.post("/refunds", auth, requireRole("admin.ecom"), resHandler, refundController.initiateRefund); // Admin
 
 // ✅ Return Routes
-router.get("/returns", auth, resHandler, returnController.listReturns); // Admin
+router.get("/returns", auth, requireRole("admin.ecom"), resHandler, returnController.listReturns); // Admin
 router.post("/:id/return", auth, resHandler, returnController.requestReturn); // User
-router.put("/returns/:id/approve", auth, resHandler, returnController.approveReturn); // Admin
+router.put("/returns/:id/approve", auth, requireRole("admin.ecom"), resHandler, returnController.approveReturn); // Admin
+router.put("/returns/:id/reject", auth, requireRole("admin.ecom"), resHandler, returnController.rejectReturn); // Admin
+router.put("/returns/:id/receive", auth, requireRole("admin.ecom"), resHandler, returnController.receiveReturn); // Admin
+router.put("/returns/:id/inspect", auth, requireRole("admin.ecom"), resHandler, returnController.inspectReturn); // Admin
 
 
 // ✅ Invoice

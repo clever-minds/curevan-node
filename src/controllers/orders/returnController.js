@@ -1,79 +1,79 @@
 const { QueryTypes } = require('sequelize');
 const { sequelize } = require('../../config/db');
 const { createReturnOrder } = require('../../services/shiprocketService');
+const rules = require('../../config/businessRules');
+const refundService = require('../../services/refundService');
+const notificationStore = require('../../services/notificationStore');
+const affiliateService = require('../../services/affiliateService');
+
+const REASONS = ['damaged', 'defective', 'wrong_item', 'missing_part'];
+const PHOTO_REASONS = ['damaged', 'defective'];     // a photo is required for these
+const r2 = (n) => Math.round((Number(n) + Number.EPSILON) * 100) / 100;
 
 /* =========================
    REQUEST RETURN (User)
 ========================= */
 exports.requestReturn = async (req, res) => {
   const t = await sequelize.transaction();
+  const refuse = async (status, message) => { await t.rollback(); return res.status(status).json({ success: false, message }); };
   try {
     const { id: orderId } = req.params;
-    const { reason, items } = req.body; // items = [{ order_item_id, quantity }]
+    const { reason, note, photos, items } = req.body || {};      // items = [{ order_item_id, quantity }]
     const userId = req.user.id;
 
-    // 1. Validate Order
+    // 1. the order: yours, delivered, and still inside the return window
     const [order] = await sequelize.query(
-      `SELECT status FROM orders WHERE id = :orderId AND user_id = :userId`,
-      {
-        replacements: { orderId, userId },
-        type: QueryTypes.SELECT,
-        transaction: t
-      }
+      `SELECT o.id, o.status, COALESCE(o.delivered_at, (SELECT MAX(s.delivered_at) FROM shipments s WHERE s.order_id = o.id)) AS delivered_at
+       FROM orders o WHERE o.id = :orderId AND o.user_id = :userId`,
+      { replacements: { orderId, userId }, type: QueryTypes.SELECT, transaction: t }
     );
+    if (!order) return refuse(404, 'Order not found');
+    if (!order.delivered_at) return refuse(400, 'Returns open once the order has been delivered');
+    const days = rules.shop.returnWindowDays;
+    if (Date.now() > new Date(order.delivered_at).getTime() + days * 86400000) return refuse(400, `The return window of ${days} days after delivery is over`);
 
-    if (!order) {
-      await t.rollback();
-      return res.status(404).json({ success: false, message: 'Order not found' });
+    // 2. the reason, and a photo where the reason needs one
+    if (!REASONS.includes(reason)) return refuse(400, `Choose a reason: ${REASONS.join(', ')}`);
+    const photoList = Array.isArray(photos) ? photos.filter((x) => x !== null && x !== undefined && String(x).trim() !== '') : [];
+    if (PHOTO_REASONS.includes(reason) && photoList.length === 0) return refuse(400, 'Please add a photo of the problem');
+    if (!Array.isArray(items) || items.length === 0) return refuse(400, 'Choose the item(s) you want to return');
+
+    // 3. every item: part of this order, not in a category that cannot be returned, quantity still available
+    const lines = [];
+    for (const it of items) {
+      const [line] = await sequelize.query(
+        `SELECT oi.id, oi.name, oi.qty,
+                COALESCE((SELECT SUM(ri.quantity) FROM order_return_items ri JOIN order_returns r ON r.id = ri.return_id
+                          WHERE ri.order_item_id = oi.id AND r.status NOT IN ('Rejected', 'Closed')), 0) AS already,
+                COALESCE(c.non_returnable, false) AS non_returnable
+         FROM order_items oi LEFT JOIN products p ON p.sku = oi.sku LEFT JOIN categories c ON c.id = p.category_id
+         WHERE oi.id = :itemId AND oi.order_id = :orderId LIMIT 1`,
+        { replacements: { itemId: it.order_item_id, orderId }, type: QueryTypes.SELECT, transaction: t }
+      );
+      if (!line) return refuse(400, 'One of the items is not part of this order');
+      if (line.non_returnable) return refuse(400, `${line.name} cannot be returned (hygiene, custom or perishable item)`);
+      const qty = Number(it.quantity);
+      if (!Number.isInteger(qty) || qty < 1 || qty > Number(line.qty) - Number(line.already)) return refuse(400, `You can return at most ${Number(line.qty) - Number(line.already)} of ${line.name}`);
+      lines.push({ id: line.id, quantity: qty });
     }
 
-    // Usually returns are only for 'Delivered' orders
-    // But since statuses might vary, we'll allow it if it's not 'Cancelled' or 'Returned'
-    if (['Cancelled', 'Returned'].includes(order.status)) {
-      await t.rollback();
-      return res.status(400).json({ success: false, message: `Cannot return a ${order.status} order` });
-    }
-
-    // 2. Create Return Request
+    // 4. the request
     const [returnRequest] = await sequelize.query(
-      `INSERT INTO order_returns (order_id, user_id, reason, status)
-       VALUES (:orderId, :userId, :reason, 'Requested')
-       RETURNING id`,
-      {
-        replacements: { orderId, userId, reason: reason || null },
-        type: QueryTypes.INSERT,
-        transaction: t
-      }
+      `INSERT INTO order_returns (order_id, user_id, reason, reason_code, photos, status)
+       VALUES (:orderId, :userId, :reason, :code, :photos::jsonb, 'Requested') RETURNING id`,
+      { replacements: { orderId, userId, reason: String(note || reason).slice(0, 500), code: reason, photos: JSON.stringify(photoList) }, type: QueryTypes.INSERT, transaction: t }
     );
-
     const returnId = returnRequest[0].id;
-
-    // 3. Add Return Items
-    if (items && Array.isArray(items)) {
-      for (const item of items) {
-        await sequelize.query(
-          `INSERT INTO order_return_items (return_id, order_item_id, quantity)
-           VALUES (:returnId, :orderItemId, :quantity)`,
-          {
-            replacements: {
-              returnId,
-              orderItemId: item.order_item_id,
-              quantity: item.quantity
-            },
-            type: QueryTypes.INSERT,
-            transaction: t
-          }
-        );
-      }
+    for (const l of lines) {
+      await sequelize.query(`INSERT INTO order_return_items (return_id, order_item_id, quantity) VALUES (:returnId, :itemId, :quantity)`, { replacements: { returnId, itemId: l.id, quantity: l.quantity }, type: QueryTypes.INSERT, transaction: t });
     }
-
     await t.commit();
-    res.status(201).json({ success: true, message: 'Return requested successfully', returnId });
-
+    notificationStore.notifyRoles(['admin.ecom'], { type: 'return_requested', title: 'New return request', message: `Return #${returnId} was requested (${reason.replace('_', ' ')}).`, link: '/dashboard/ecom-admin/returns' }).catch(() => {});
+    return res.status(201).json({ success: true, message: 'Return requested successfully', returnId });
   } catch (error) {
     await t.rollback();
     console.error('REQUEST RETURN ERROR:', error);
-    res.status(500).json({ success: false, message: 'Failed to request return', error: error.message });
+    res.status(500).json({ success: false, message: 'Failed to request return' });
   }
 };
 
@@ -209,8 +209,8 @@ exports.approveReturn = async (req, res) => {
 
     // 6. Update local status
     await sequelize.query(
-      `UPDATE order_returns SET status = 'Approved', updated_at = CURRENT_TIMESTAMP WHERE id = :returnId`,
-      { replacements: { returnId }, type: QueryTypes.UPDATE, transaction: t }
+      `UPDATE order_returns SET status = 'Approved', reverse_shipment_id = :sid, updated_at = CURRENT_TIMESTAMP WHERE id = :returnId`,
+      { replacements: { returnId, sid: shiprocketRes.shipment_id || null }, type: QueryTypes.UPDATE, transaction: t }
     );
 
     // Optional: Update main order status
@@ -218,6 +218,9 @@ exports.approveReturn = async (req, res) => {
       `UPDATE orders SET status = 'Return Approved' WHERE id = :orderId`,
       { replacements: { orderId: returnData.order_id }, type: QueryTypes.UPDATE, transaction: t }
     );
+    // the commission on the returned lines is void
+    const returnedLines = await sequelize.query(`SELECT order_item_id FROM order_return_items WHERE return_id = :returnId`, { replacements: { returnId }, type: QueryTypes.SELECT, transaction: t });
+    await affiliateService.cancelFor(returnData.order_id, 'cancelled_returned', { itemIds: returnedLines.map((x) => x.order_item_id), transaction: t });
 
     await t.commit();
     res.json({
@@ -251,5 +254,96 @@ exports.listReturns = async (req, res) => {
   } catch (error) {
     console.error('LIST RETURNS ERROR:', error);
     res.status(500).json({ success: false, message: 'Failed to fetch returns' });
+  }
+};
+
+
+/* =========================
+   REJECT RETURN (Admin) - before pickup
+========================= */
+exports.rejectReturn = async (req, res) => {
+  try {
+    const reason = String((req.body || {}).reason || '').trim();
+    if (reason.length < 3) return res.status(400).json({ success: false, message: 'Please give the reason for rejecting' });
+    const rows = await sequelize.query(
+      `UPDATE order_returns SET status = 'Rejected', rejection_reason = :reason, updated_at = NOW() WHERE id = :id AND status = 'Requested' RETURNING id, user_id`,
+      { replacements: { id: req.params.id, reason: reason.slice(0, 500) }, type: QueryTypes.SELECT }
+    );
+    if (!rows.length) return res.status(409).json({ success: false, message: 'Only a new return request can be rejected' });
+    await notificationStore.notify(rows[0].user_id, { type: 'return', title: 'Your return request was not accepted', message: reason.slice(0, 200), link: '/dashboard/patient/orders' }).catch(() => {});
+    return res.json({ success: true, message: 'Return rejected' });
+  } catch (error) {
+    console.error('REJECT RETURN ERROR:', error);
+    return res.status(500).json({ success: false, message: 'Failed to reject the return' });
+  }
+};
+
+/* =========================
+   MARK RECEIVED (Admin) - the parcel reached the warehouse (the courier hook does this too)
+========================= */
+exports.receiveReturn = async (req, res) => {
+  try {
+    const rows = await sequelize.query(
+      `UPDATE order_returns SET status = 'Received', updated_at = NOW() WHERE id = :id AND status IN ('Approved', 'Pickup Scheduled', 'In Transit') RETURNING id`,
+      { replacements: { id: req.params.id }, type: QueryTypes.SELECT }
+    );
+    if (!rows.length) return res.status(409).json({ success: false, message: 'Only an approved return that is on its way can be marked received' });
+    return res.json({ success: true, message: 'Return marked received' });
+  } catch (error) {
+    console.error('RECEIVE RETURN ERROR:', error);
+    return res.status(500).json({ success: false, message: 'Failed to update the return' });
+  }
+};
+
+/* =========================
+   INSPECT (Admin): pass -> refund through Razorpay, fail -> rejected
+========================= */
+exports.inspectReturn = async (req, res) => {
+  const { result, note } = req.body || {};
+  if (!['pass', 'fail'].includes(result)) return res.status(400).json({ success: false, message: "result must be 'pass' or 'fail'" });
+  if (result === 'fail' && String(note || '').trim().length < 3) return res.status(400).json({ success: false, message: 'Please say why the item failed the inspection' });
+
+  const t = await sequelize.transaction();
+  let ret;
+  let amount;
+  try {
+    [ret] = await sequelize.query(`SELECT * FROM order_returns WHERE id = :id FOR UPDATE`, { replacements: { id: req.params.id }, type: QueryTypes.SELECT, transaction: t });
+    if (!ret) { await t.rollback(); return res.status(404).json({ success: false, message: 'Return not found' }); }
+    if (ret.status !== 'Received') { await t.rollback(); return res.status(409).json({ success: false, message: 'Only a received return can be inspected' }); }
+
+    if (result === 'fail') {
+      await sequelize.query(`UPDATE order_returns SET status = 'Rejected', inspection_result = 'fail', inspected_at = NOW(), rejection_reason = :note, updated_at = NOW() WHERE id = :id`, { replacements: { id: ret.id, note: String(note).trim().slice(0, 500) }, type: QueryTypes.UPDATE, transaction: t });
+      await t.commit();
+      await notificationStore.notify(ret.user_id, { type: 'return', title: 'Your return did not pass the check', message: String(note).trim().slice(0, 200), link: '/dashboard/patient/orders' }).catch(() => {});
+      return res.json({ success: true, message: 'Return rejected after inspection' });
+    }
+
+    // refund = the share of what the customer paid for goods (coupon and tax included) that the returned items represent
+    const [o] = await sequelize.query(`SELECT total, COALESCE(shipping_charges, 0) AS shipping FROM orders WHERE id = :id`, { replacements: { id: ret.order_id }, type: QueryTypes.SELECT, transaction: t });
+    const [v] = await sequelize.query(
+      `SELECT COALESCE(SUM(oi.price * oi.qty), 0) AS all_value,
+              COALESCE(SUM(oi.price * ri.quantity), 0) AS returned_value
+       FROM order_items oi LEFT JOIN order_return_items ri ON ri.order_item_id = oi.id AND ri.return_id = :returnId WHERE oi.order_id = :orderId`,
+      { replacements: { orderId: ret.order_id, returnId: ret.id }, type: QueryTypes.SELECT, transaction: t }
+    );
+    const goodsPaid = Number(o.total) - Number(o.shipping);
+    amount = Number(v.all_value) > 0 ? r2((goodsPaid * Number(v.returned_value)) / Number(v.all_value)) : r2(goodsPaid);
+    await sequelize.query(`UPDATE order_returns SET status = 'Inspected', inspection_result = 'pass', inspected_at = NOW(), updated_at = NOW() WHERE id = :id`, { replacements: { id: ret.id }, type: QueryTypes.UPDATE, transaction: t });
+    await t.commit();
+  } catch (error) {
+    await t.rollback();
+    console.error('INSPECT RETURN ERROR:', error);
+    return res.status(500).json({ success: false, message: 'Failed to record the inspection' });
+  }
+
+  try {
+    const refund = await refundService.refund({ orderId: ret.order_id, returnId: ret.id, amountInr: amount, reason: `Return #${ret.id} passed inspection`, actorId: req.user.id });
+    return res.json({ success: true, message: 'Inspection passed. The refund was sent to Razorpay.', refund: { refundId: refund.refundId, amount: refund.amount, status: refund.status } });
+  } catch (error) {
+    if (error instanceof refundService.RefundError) {
+      return res.status(error.status === 404 ? 409 : error.status).json({ success: false, message: `The item passed, but the refund was not made: ${error.message}. Use Refunds to retry.`, inspected: true });
+    }
+    console.error('RETURN REFUND ERROR:', error);
+    return res.status(500).json({ success: false, message: 'The item passed, but the refund failed. Use Refunds to retry.', inspected: true });
   }
 };

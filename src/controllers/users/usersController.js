@@ -3,6 +3,27 @@ const { sequelize } = require("../../config/db");
 const transporter = require("../../config/mailer");
 const { v4: uuidv4 } = require('uuid');
 const firebaseNotifier = require("../../utils/firebaseNotifier");
+const { hasRole } = require("../../middlewares/requireRole");
+
+const ALLOWED_ROLES = ["admin.super", "admin.ecom", "admin.therapy", "therapist", "patient"];
+
+async function writeAuditLog(actorId, action, entityType, entityId, details, transaction) {
+  await sequelize.query(
+    `INSERT INTO audit_logs (actor_id, action, entity_type, entity_id, details)
+     VALUES (:actorId, :action, :entityType, :entityId, :details)`,
+    {
+      replacements: {
+        actorId: String(actorId),
+        action,
+        entityType,
+        entityId: String(entityId),
+        details: details ? JSON.stringify(details) : null,
+      },
+      type: QueryTypes.INSERT,
+      transaction,
+    }
+  );
+}
 
 
 // ✅ LIST USERS
@@ -216,8 +237,17 @@ exports.inviteAdminUser = async (req, res) => {
     const { email, roles, state_admin_name } = req.body;
     const actorId = req.user?.id;
 
+    if (!hasRole(req.user, "admin.super")) {
+      return res.error("Forbidden", 403);
+    }
+
     if (!email || !roles?.length || !state_admin_name) {
       return res.error("Email, roles and state name are required");
+    }
+
+    const badRoles = roles.filter((r) => !ALLOWED_ROLES.includes(r));
+    if (badRoles.length) {
+      return res.error(`Invalid role(s): ${badRoles.join(", ")}`, 400);
     }
 
     if (!actorId) return res.error("Invalid actor");
@@ -283,6 +313,8 @@ exports.inviteAdminUser = async (req, res) => {
       }
     }
 
+    await writeAuditLog(actorId, "invite_admin", "user", userId, { email, roles, state_admin_name });
+
     const inviteLink = `${process.env.FRONTEND_URL}/reset-password?token=${resetToken}`;
 
     await transporter.sendMail({
@@ -305,56 +337,52 @@ exports.inviteAdminUser = async (req, res) => {
   }
 };
 
-// usersController.js
-exports.forgotPassword = async (req, res, next) => {
-  try {
-    const { email } = req.body;
-
-    if (!email) {
-      return res.error("Email is required");
-    }
-
-    const user = await User.findOne({ email });
-    if (!user) {
-      return res.error("User not found");
-    }
-
-    // Generate reset token (implement in User model)
-    const resetToken = user.generatePasswordResetToken();
-    await user.save();
-
-    // Send reset email
-    const resetLink = `${process.env.FRONTEND_URL}/reset-password/${resetToken}`;
-    await sendEmail(user.email, "Password Reset Request", `Click here to reset: ${resetLink}`);
-
-    return res.success(null, "Password reset link sent to your email");
-  } catch (err) {
-    return res.error("Failed to send password reset link");
-  }
-};
-
-
-
 exports.updateUserRoles = async (req, res) => {
+  // Only a Super Admin may change roles (also enforced on the route).
+  if (!hasRole(req.user, "admin.super")) {
+    return res.status(403).json({ success: false, message: "Forbidden" });
+  }
+
+  const transaction = await sequelize.transaction();
   try {
-    const { id, roles } = req.body;
+    const body = req.body || {};
+    const { roles } = body;
+    let id = body.id;
+
+    // the admin screens identify users by uid; resolve it to the numeric id
+    if (!id && body.uid) {
+      const [byUid] = await sequelize.query(
+        `SELECT id FROM users WHERE uid = :uid`,
+        { replacements: { uid: String(body.uid) }, type: QueryTypes.SELECT, transaction }
+      );
+      id = byUid ? byUid.id : null;
+    }
 
     if (!id) {
+      await transaction.rollback();
       return res.json({
         success: false,
         message: "User id is required"
       });
     }
 
+    let finalRoles = Array.isArray(roles) && roles.length ? [...new Set(roles)] : ["patient"];
+    const invalid = finalRoles.filter((r) => !ALLOWED_ROLES.includes(r));
+    if (invalid.length) {
+      await transaction.rollback();
+      return res.status(400).json({
+        success: false,
+        message: `Invalid role(s): ${invalid.join(", ")}`
+      });
+    }
+
     const [user] = await sequelize.query(
       `SELECT id FROM users WHERE id = :id`,
-      {
-        replacements: { id },
-        type: QueryTypes.SELECT
-      }
+      { replacements: { id }, type: QueryTypes.SELECT, transaction }
     );
 
     if (!user) {
+      await transaction.rollback();
       return res.json({
         success: false,
         message: "User not found"
@@ -363,46 +391,51 @@ exports.updateUserRoles = async (req, res) => {
 
     const userId = user.id;
 
-    // remove old roles
-    await sequelize.query(
-      `DELETE FROM user_roles WHERE user_id = :userId`,
-      {
-        replacements: { userId },
-        type: QueryTypes.DELETE
-      }
+    const oldRoleRows = await sequelize.query(
+      `SELECT r.name FROM user_roles ur JOIN roles r ON r.id = ur.role_id WHERE ur.user_id = :userId`,
+      { replacements: { userId }, type: QueryTypes.SELECT, transaction }
     );
+    const oldRoles = oldRoleRows.map((r) => r.name);
 
-    let finalRoles = roles;
-
-    if (!roles || roles.length === 0) {
-      finalRoles = ["patient"];
+    // Never remove the last Super Admin.
+    if (oldRoles.includes("admin.super") && !finalRoles.includes("admin.super")) {
+      const others = await sequelize.query(
+        `SELECT COUNT(DISTINCT ur.user_id)::int AS count
+         FROM user_roles ur JOIN roles r ON r.id = ur.role_id
+         WHERE r.name = 'admin.super' AND ur.user_id <> :userId`,
+        { replacements: { userId }, type: QueryTypes.SELECT, transaction }
+      );
+      if (!others[0] || Number(others[0].count) < 1) {
+        await transaction.rollback();
+        return res.status(400).json({
+          success: false,
+          message: "Cannot remove the last Super Admin"
+        });
+      }
     }
 
-    // insert roles
-    for (const roleName of finalRoles) {
+    await sequelize.query(
+      `DELETE FROM user_roles WHERE user_id = :userId`,
+      { replacements: { userId }, type: QueryTypes.DELETE, transaction }
+    );
 
+    for (const roleName of finalRoles) {
       const [role] = await sequelize.query(
         `SELECT id FROM roles WHERE name = :name`,
-        {
-          replacements: { name: roleName },
-          type: QueryTypes.SELECT
-        }
+        { replacements: { name: roleName }, type: QueryTypes.SELECT, transaction }
       );
 
       if (role) {
         await sequelize.query(
-          `INSERT INTO user_roles (user_id, role_id)
-           VALUES (:userId, :roleId)`,
-          {
-            replacements: {
-              userId,
-              roleId: role.id
-            },
-            type: QueryTypes.INSERT
-          }
+          `INSERT INTO user_roles (user_id, role_id) VALUES (:userId, :roleId)`,
+          { replacements: { userId, roleId: role.id }, type: QueryTypes.INSERT, transaction }
         );
       }
     }
+
+    await writeAuditLog(req.user.id, "update_roles", "user", userId, { oldRoles, newRoles: finalRoles }, transaction);
+
+    await transaction.commit();
 
     return res.json({
       success: true,
@@ -410,7 +443,7 @@ exports.updateUserRoles = async (req, res) => {
     });
 
   } catch (error) {
-
+    await transaction.rollback();
     console.error(error);
 
     return res.status(500).json({
@@ -885,6 +918,7 @@ exports.approveChangeRequest = async (req, res) => {
         }
       }
 
+      if (dbField === "membership_plan") value = value === "premium" ? "premium" : "standard";   // only an approved change can make a therapist premium
       if (dbField === "experience_years" || dbField === "hourly_rate" || dbField === "service_radius_km") {
         if (value === "N/A" || value === "" || isNaN(Number(value))) {
           value = null;
@@ -945,6 +979,11 @@ exports.approveChangeRequest = async (req, res) => {
       { replacements: { id: requestId, admin: req.user.id }, transaction: t }
     );
 
+    // approving a move to premium records who approved it and closes the request
+    if (profileId && changesObj.membershipPlan?.new === "premium") {
+      await sequelize.query(`UPDATE therapist_profiles SET premium_approved_by = :admin, premium_requested_at = NULL WHERE id = :profileId`, { replacements: { admin: req.user.id, profileId }, transaction: t });
+    }
+
     /* ---------- MARK PROFILE AS APPROVED ---------- */
     if (profileId) {
       await sequelize.query(
@@ -957,7 +996,9 @@ exports.approveChangeRequest = async (req, res) => {
 
     await t.commit();
 
-    
+    // every approved therapist gets a DR affiliate code (P20)
+    if (profileId) await require('../../services/affiliateService').ensureCodeForTherapist(profileId).catch((e) => console.error('DR code failed:', e.message));
+
     /* ---------- SEND NOTIFICATION ---------- */
     try {
       console.log("SEND NOTIFICATION TRIGGERED for request:", request);

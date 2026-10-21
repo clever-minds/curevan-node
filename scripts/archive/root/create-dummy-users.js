@@ -1,4 +1,5 @@
-const { sequelize } = require('./src/config/db');
+require('dotenv').config();
+const { sequelize } = require('../../../src/config/db');
 const bcrypt = require('bcrypt');
 const { v4: uuidv4 } = require('uuid');
 

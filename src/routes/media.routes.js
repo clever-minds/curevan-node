@@ -4,19 +4,20 @@ const upload = require("../middlewares/upload.middleware");
 const media = require("../controllers/media/mediaController");
 const authMiddleware = require("../middlewares/authMiddleware");
 
+const { requireRole } = require("../middlewares/requireRole");
 /* LIST */
-router.get("/list",authMiddleware, media.listMedia);
+router.get("/list",authMiddleware, requireRole("admin.ecom", "admin.therapy", "therapist"), media.listMedia);
 
 /* UPLOAD (MULTIPLE) */
 router.post(
-  "/upload",authMiddleware,
+  "/upload",authMiddleware, requireRole("admin.ecom", "admin.therapy", "therapist"),
   upload.any(),
   media.uploadMedia
 );
 
 /* DELETE */
 router.delete(
-  "/delete/:type/:filename",authMiddleware,
+  "/delete/:id",authMiddleware, requireRole("admin.ecom", "admin.therapy", "therapist"),
   media.deleteMedia
 );
 

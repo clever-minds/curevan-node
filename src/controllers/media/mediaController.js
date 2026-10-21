@@ -94,26 +94,37 @@ exports.deleteMedia = async (req, res) => {
   try {
     const { id } = req.params;
 
-    const result = await sequelize.query(
-      `SELECT * FROM media WHERE id = $1`,
-      [id]
+    const rows = await sequelize.query(
+      `SELECT id, user_id, file_path FROM media WHERE id = :id`,
+      { replacements: { id }, type: QueryTypes.SELECT }
     );
 
-    if (!result.rows.length) {
+    if (!rows.length) {
       return res.status(404).json({ message: "Media not found" });
     }
 
-    const media = result.rows[0];
-    const filePath = path.join(process.cwd(), media.file_path);
+    const media = rows[0];
 
+    // the uploader or an admin may delete a file
+    const roles = [...(Array.isArray(req.user.roles) ? req.user.roles : []), req.user.role];
+    const isAdmin = roles.some((r) => typeof r === "string" && r.startsWith("admin."));
+    if (!isAdmin && Number(media.user_id) !== Number(req.user.id)) {
+      return res.status(403).json({ message: "Forbidden" });
+    }
+
+    const filePath = path.join(process.cwd(), media.file_path);
     if (fs.existsSync(filePath)) {
       fs.unlinkSync(filePath);
     }
 
-    await sequelize.query(`DELETE FROM media WHERE id = $1`, [id]);
+    await sequelize.query(`DELETE FROM media WHERE id = :id`, {
+      replacements: { id },
+      type: QueryTypes.DELETE,
+    });
 
-    res.json({ message: "Media deleted successfully" });
+    res.json({ success: true, message: "Media deleted successfully" });
   } catch (error) {
+    console.error("deleteMedia error:", error);
     res.status(500).json({ message: "Server error" });
   }
 };

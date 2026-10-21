@@ -3,37 +3,50 @@ const router = express.Router();
 
 const appointmentsController = require("../controllers/appointments/appointmentsController");
 const authMiddleware = require("../middlewares/authMiddleware");
+const { requireRole } = require("../middlewares/requireRole");
 const responseHandler = require("../middlewares/responseHandler");
 
 // ✅ GET all appointments
-router.get("/", authMiddleware, responseHandler,appointmentsController.listAppointments);
+router.get("/", authMiddleware, requireRole("admin.ecom", "admin.therapy"), responseHandler,appointmentsController.listAppointments);
 
 // ✅ GET appointments for user
 router.get("/user/:userId/:role", authMiddleware,responseHandler, appointmentsController.listAppointmentsForUser);
 
 // ✅ GET single appointment
+// admin: list of PCRs (filters: bookingId, status, therapistId) - must stay above "/:id"
+router.get("/pcr-list", authMiddleware, requireRole("admin.therapy"), responseHandler, appointmentsController.listPcrs);
+
 router.get("/:id", authMiddleware,responseHandler, appointmentsController.getAppointmentById);
 
 // ✅ POST create new booking request (Service-First Flow)
 router.post("/request", authMiddleware, responseHandler, appointmentsController.createBookingRequest);
 
 // ✅ GET available requests for therapists
-router.get("/requests/available", authMiddleware, responseHandler, appointmentsController.getAvailableRequests);
+router.get("/requests/available", authMiddleware, requireRole("therapist"), responseHandler, appointmentsController.getAvailableRequests);
 
 // ✅ POST accept booking request
-router.post("/accept/:id", authMiddleware, responseHandler, appointmentsController.acceptBookingRequest);
+router.post("/accept/:id", authMiddleware, requireRole("therapist"), responseHandler, appointmentsController.acceptBookingRequest);
 
 // ✅ POST reject booking request
-router.post("/reject/:id", authMiddleware, responseHandler, appointmentsController.rejectBookingRequest);
+router.post("/reject/:id", authMiddleware, requireRole("therapist"), responseHandler, appointmentsController.rejectBookingRequest);
 
 // ✅ PUT update appointment status
 router.put("/status/:id", authMiddleware, responseHandler, appointmentsController.updateAppointmentStatus);
 
+// ✅ start-of-session OTP (P12)
+router.get("/:id/otp", authMiddleware, responseHandler, appointmentsController.getStartOtp);
+router.post("/:id/verify-start-otp", authMiddleware, requireRole("therapist"), responseHandler, appointmentsController.verifyStartOtp);
+
 // ✅ POST confirm payment
-router.post("/:id/pay", authMiddleware, responseHandler, appointmentsController.confirmPayment);
+// admin only: records an OFFLINE payment (online payments use /api/payments/verify-booking)
+router.post("/:id/pay", authMiddleware, requireRole("admin.therapy", "admin.ecom"), responseHandler, appointmentsController.confirmPayment);
+
+// ✅ what would cancelling cost right now?
+router.get("/:id/cancel-quote", authMiddleware, responseHandler, appointmentsController.getCancelQuote);
 
 // ✅ PATCH cancel appointment
 router.patch("/:id/cancel", authMiddleware, responseHandler, appointmentsController.cancelAppointment);
+router.post("/:id/cancel", authMiddleware, responseHandler, appointmentsController.cancelAppointment);
 
 router.post("/create-appointment", authMiddleware,responseHandler, appointmentsController.createBookingAndInvoice);
 

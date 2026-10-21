@@ -1,4 +1,5 @@
 const { QueryTypes } = require("sequelize");
+const access = require("../../utils/access");
 const { sequelize } = require("../../config/db");
 const { v4: uuidv4 } = require("uuid");
 const bcrypt = require("bcrypt");
@@ -290,13 +291,16 @@ exports.registerTherapist = async (req, res) => {
     const profileResult = await sequelize.query(
       `INSERT INTO therapist_profiles\n      (user_id,bio,qualification,registration_no,\n       experience_years,hourly_rate,membership_plan,\n       pan_number,bank_account_number,bank_ifsc_code,\n       service_radius_km,specialty,\n       address_line1,address_line2,city,state,pin,\n       full_address,latitude,longitude)\n      VALUES\n      (:user_id,:bio,:qualification,:registration_no,\n       :experience_years,:hourly_rate,:membership_plan,\n       :pan_number,:bank_account_number,:bank_ifsc_code,\n       :service_radius_km,:specialty,\n       :line1,:line2,:city,:state,:pin,\n       :fullAddress,:lat,:lng)\n      RETURNING *`,
       {
-        replacements: { user_id: user.id, bio: bio || null, qualification: qualification || null, registration_no: registrationNo || null, experience_years: experienceYears || null, hourly_rate: hourlyRate || null, membership_plan: membershipPlan || null, pan_number: panNumber || null, bank_account_number: bankAccountNumber || null, bank_ifsc_code: bankIfscCode || null, service_radius_km: serviceRadiusKm || 10, specialty: pgSpecialty || null, line1: line1 || null, line2: line2 || null, city: city || null, state: state || null, pin: pin || null, fullAddress: fullAddress || null, lat: lat || null, lng: lng || null },
+        replacements: { user_id: user.id, bio: bio || null, qualification: qualification || null, registration_no: registrationNo || null, experience_years: experienceYears || null, hourly_rate: hourlyRate || null, membership_plan: 'standard', pan_number: panNumber || null, bank_account_number: bankAccountNumber || null, bank_ifsc_code: bankIfscCode || null, service_radius_km: serviceRadiusKm || 10, specialty: pgSpecialty || null, line1: line1 || null, line2: line2 || null, city: city || null, state: state || null, pin: pin || null, fullAddress: fullAddress || null, lat: lat || null, lng: lng || null },
         type: QueryTypes.INSERT,
         transaction: t
       }
     );
 
     const therapist = profileResult[0][0];
+    if (membershipPlan === "premium") {   // premium is a request; an admin approves it in the profile approvals
+      await sequelize.query(`UPDATE therapist_profiles SET premium_requested_at = NOW() WHERE id = :id`, { replacements: { id: therapist.id }, type: QueryTypes.UPDATE, transaction: t });
+    }
 
     /* ---------- CREATE INITIAL APPROVAL REQUEST ---------- */
     const initialChanges = JSON.stringify({
@@ -575,6 +579,9 @@ exports.registerTherapist = async (req, res) => {
 // };
 
 exports.updateProfile = async (req, res) => {
+  if (!access.isAdmin(req.user) && !access.isSelfParam(req.user, req.params.userId)) {
+    return res.status(403).json({ status: false, message: "Forbidden" });
+  }
   const t = await sequelize.transaction();
 
   try {
@@ -658,7 +665,6 @@ exports.updateProfile = async (req, res) => {
         registration_no=:registrationNo,
         experience_years=:experienceYears,
         hourly_rate=:hourlyRate,
-        membership_plan=:membershipPlan,
         pan_number=:panNumber,
         bank_account_number=:bankAccountNumber,
         bank_ifsc_code=:bankIfscCode,
@@ -674,7 +680,6 @@ exports.updateProfile = async (req, res) => {
           registrationNo,
           experienceYears,
           hourlyRate,
-          membershipPlan,
           panNumber,
           bankAccountNumber,
           bankIfscCode,
@@ -860,7 +865,11 @@ exports.getProfile = async (req, res) => {
       });
     }
 
-    const profile = result[0];
+    let profile = result[0];
+    // Only the therapist themself or an admin gets contact / bank / KYC details.
+    if (!access.isAdmin(req.user) && !access.same(profile.user_id, req.user.id)) {
+      profile = access.stripTherapistPrivate(profile);
+    }
 
     // 2️⃣ Convert specialty to array and map to names
     const serviceTypesRows = await sequelize.query('SELECT id, name FROM service_types', { type: QueryTypes.SELECT });
@@ -997,6 +1006,8 @@ exports.listUsersWithProfiles = async (req, res) => {
         ON tp.profile_image = media.id
 
       WHERE u.role = 'therapist' AND tp.profile_status = 'approved'
+        AND (tp.quality_status IS NULL OR tp.quality_status != 'frozen')
+        AND (tp.registration_valid_until IS NULL OR tp.registration_valid_until >= CURRENT_DATE)
 
       GROUP BY 
         u.id,
@@ -1089,6 +1100,7 @@ exports.listUsersWithProfiles = async (req, res) => {
       const idToName = {};
       serviceTypesRows.forEach(st => { idToName[st.id] = st.name; });
 
+      const viewerIsAdmin = access.isAdmin(access.optionalUser(req));
       const usersWithAvailability = users.map(user => {
 
         const userAvail = availabilities
@@ -1114,10 +1126,8 @@ exports.listUsersWithProfiles = async (req, res) => {
         user.specialtyIds = specArray.map(id => Number(id) || id);
         user.specialty = specArray.map(id => idToName[id] || id);
 
-        return {
-          ...user,
-          availability: userAvail
-        };
+        const merged = { ...user, availability: userAvail };
+        return viewerIsAdmin ? merged : access.stripTherapistPrivate(merged);
 
       });
 
@@ -1131,13 +1141,15 @@ exports.listUsersWithProfiles = async (req, res) => {
     const idToName = {};
     serviceTypesRows.forEach(st => { idToName[st.id] = st.name; });
 
+    const viewerIsAdmin = access.isAdmin(access.optionalUser(req));
     res.json({
       status: true,
       data: users.map(u => {
         let specArray = Array.isArray(u.specialty) ? u.specialty : (u.specialty ? u.specialty.replace(/[{}]/g, "").split(",") : []);
         u.specialtyIds = specArray.map(id => Number(id) || id);
         u.specialty = specArray.map(id => idToName[id] || id);
-        return { ...u, availability: [] };
+        const merged = { ...u, availability: [] };
+        return viewerIsAdmin ? merged : access.stripTherapistPrivate(merged);
       })
     });
 
@@ -1241,6 +1253,8 @@ exports.listUsersWithProfilesInRadius = async (req, res) => {
         ON tp.profile_image = media.id
 
       WHERE u.role = 'therapist' AND tp.profile_status = 'approved'
+        AND (tp.quality_status IS NULL OR tp.quality_status != 'frozen')
+        AND (tp.registration_valid_until IS NULL OR tp.registration_valid_until >= CURRENT_DATE)
         AND u.latitude IS NOT NULL
         AND u.longitude IS NOT NULL
         AND (
@@ -1338,6 +1352,7 @@ exports.listUsersWithProfilesInRadius = async (req, res) => {
       const idToName = {};
       serviceTypesRows.forEach(st => { idToName[st.id] = st.name; });
 
+      const viewerIsAdmin = access.isAdmin(access.optionalUser(req));
       const usersWithAvailability = users.map(user => {
         const userAvail = availabilities
           .filter(a => a.therapist_id === user.therapist_id)
@@ -1358,10 +1373,8 @@ exports.listUsersWithProfilesInRadius = async (req, res) => {
         user.specialtyIds = specArray.map(id => Number(id) || id);
         user.specialty = specArray.map(id => idToName[id] || id);
 
-        return {
-          ...user,
-          availability: userAvail
-        };
+        const merged = { ...user, availability: userAvail };
+        return viewerIsAdmin ? merged : access.stripTherapistPrivate(merged);
       });
 
       return res.json({
@@ -1374,13 +1387,15 @@ exports.listUsersWithProfilesInRadius = async (req, res) => {
     const idToName = {};
     serviceTypesRows.forEach(st => { idToName[st.id] = st.name; });
 
+    const viewerIsAdmin = access.isAdmin(access.optionalUser(req));
     res.json({
       status: true,
       data: users.map(u => {
         let specArray = Array.isArray(u.specialty) ? u.specialty : (u.specialty ? u.specialty.replace(/[{}]/g, "").split(",") : []);
         u.specialtyIds = specArray.map(id => Number(id) || id);
         u.specialty = specArray.map(id => idToName[id] || id);
-        return { ...u, availability: [] };
+        const merged = { ...u, availability: [] };
+        return viewerIsAdmin ? merged : access.stripTherapistPrivate(merged);
       })
     });
 
@@ -1399,6 +1414,15 @@ exports.listUsersWithProfilesInRadius = async (req, res) => {
 exports.saveAvailability = async (req, res) => {
   try {
     const { therapist_id, availability } = req.body;
+
+    // therapist_id is the therapist PROFILE id; it must belong to the caller (admins may edit any)
+    if (!access.isAdmin(req.user)) {
+      const [own] = await sequelize.query(
+        `SELECT id FROM therapist_profiles WHERE id = :profileId AND user_id = :userId`,
+        { replacements: { profileId: therapist_id, userId: req.user.id }, type: QueryTypes.SELECT }
+      );
+      if (!own) return res.status(403).json({ status: false, message: "Forbidden" });
+    }
     await sequelize.query(
       `DELETE FROM therapist_availability WHERE therapist_id = :id`,
       { replacements: { id: therapist_id }, type: QueryTypes.DELETE }
@@ -1481,84 +1505,119 @@ exports.getAvailability = async (req, res) => {
 ========================= */
 exports.getDashboardStats = async (req, res) => {
   try {
-    const { therapistId } = req.params;
+    const therapistId = req.params.therapistId || req.user.id;
+    if (!access.isAdmin(req.user) && !access.same(therapistId, req.user.id)) {
+      return res.status(403).json({ success: false, status: false, message: "Forbidden" });
+    }
 
-    // 1. KPIs
-    // Sessions Completed (status = Completed)
+    // 1. KPIs (Last 90 days)
+    // Sessions Completed (status = completed, last 90 days)
     const [[sessionsCompletedRow]] = await sequelize.query(
-      `SELECT COUNT(*) as count FROM appointments WHERE therapist_id = :id AND status = 'Completed'`,
+      `SELECT COUNT(*)::int as count FROM appointments WHERE therapist_id = :id AND status = 'completed' AND date >= current_date - interval '90 days'`,
       { replacements: { id: therapistId } }
     );
     const sessionsCompleted = parseInt(sessionsCompletedRow.count || 0, 10);
 
-    // Unique Patients
+    // Unique Patients (last 90 days)
     const [[uniquePatientsRow]] = await sequelize.query(
-      `SELECT COUNT(DISTINCT patient_id) as count FROM appointments WHERE therapist_id = :id`,
+      `SELECT COUNT(DISTINCT patient_id)::int as count FROM appointments WHERE therapist_id = :id AND date >= current_date - interval '90 days'`,
       { replacements: { id: therapistId } }
     );
     const uniquePatients = parseInt(uniquePatientsRow.count || 0, 10);
 
     // Avg Rating
     const [[avgRatingRow]] = await sequelize.query(
-      `SELECT AVG(rating) as avg_rating FROM therapist_reviews WHERE therapist_id = :id AND rating IS NOT NULL`,
+      `SELECT AVG(rating) as avg_rating FROM therapist_reviews WHERE therapist_id = :id AND rating IS NOT NULL AND created_at >= current_date - interval '90 days'`,
       { replacements: { id: therapistId } }
     );
-    const avgRating = parseFloat(avgRatingRow.avg_rating || 0).toFixed(1);
+    const avgRating = avgRatingRow?.avg_rating ? parseFloat(avgRatingRow.avg_rating).toFixed(1) : "0.0";
 
-    // Net Payout (Estimate based on 90% of service_amount)
+    // Net payout (last 90 days from payout_items)
     const [[netPayoutRow]] = await sequelize.query(
-      `SELECT SUM(service_amount) as total FROM appointments WHERE therapist_id = :id AND status = 'Completed'`,
+      `SELECT COALESCE(SUM(net_amount), 0) as total FROM payout_items WHERE therapist_id = :id AND COALESCE(type, 'service') <> 'affiliate' AND created_at >= current_date - interval '90 days'`,
       { replacements: { id: therapistId } }
     );
-    const grossPayout = parseFloat(netPayoutRow.total || 0);
-    const netPayout = grossPayout * 0.9; // 10% platform fee assumed for now
+    const netPayout = parseFloat(netPayoutRow.total || 0);
 
-    // Product Commissions (Estimate - 0 for now unless there's a products table)
-    const productCommissions = 0;
-    
-    // PCR Lock Rate (Estimate - % of completed sessions that have PCR locked)
-    // Assuming PCR is locked if pcr_status = 'locked'
+    // Product Commissions (P20 affiliate table, last 90 days)
+    let productCommissions = 0;
+    try {
+      const [[commRow]] = await sequelize.query(
+        `SELECT COALESCE(SUM(commission_amount), 0) as total FROM affiliate_commissions WHERE therapist_id = :id AND status NOT IN ('cancelled', 'cancelled_returned') AND created_at >= current_date - interval '90 days'`,
+        { replacements: { id: therapistId } }
+      );
+      productCommissions = parseFloat(commRow?.total || 0);
+    } catch (_) {
+      productCommissions = 0;
+    }
+
+    // PCR Lock Rate (last 90 days completed sessions)
     const [[pcrLockedRow]] = await sequelize.query(
-      `SELECT COUNT(*) as count FROM appointments WHERE therapist_id = :id AND status = 'Completed' AND pcr_status = 'locked'`,
+      `SELECT COUNT(*)::int as count FROM appointments WHERE therapist_id = :id AND status = 'completed' AND pcr_status = 'locked' AND date >= current_date - interval '90 days'`,
       { replacements: { id: therapistId } }
     );
     const pcrLockedCount = parseInt(pcrLockedRow.count || 0, 10);
     const pcrLockRate = sessionsCompleted > 0 ? Math.round((pcrLockedCount / sessionsCompleted) * 100) : 0;
 
-    // 2. Charts Data
-    // Session Data (Last 7 days)
+    // PCR Alert: unlocked completed PCRs older than 48 hours and their pending amount
+    const [[pcrAlertRow]] = await sequelize.query(
+      `SELECT COUNT(*)::int as count, COALESCE(SUM(service_amount), 0)::numeric as amount
+       FROM appointments
+       WHERE therapist_id = :id AND status = 'completed' AND (pcr_status IS NULL OR pcr_status != 'locked')
+         AND (date + (CASE WHEN time ~ '^\\d{1,2}:\\d{2}' THEN time::time ELSE '00:00:00'::time END)) < NOW() - INTERVAL '48 hours'`,
+      { replacements: { id: therapistId } }
+    );
+    const pcrAlert = {
+      pendingCount: parseInt(pcrAlertRow?.count || 0, 10),
+      pendingAmount: parseFloat(pcrAlertRow?.amount || 0),
+    };
+
+    // 2. Charts Data (Last 90 days)
+    // Sessions per day
     const sessionDataQuery = await sequelize.query(
-      `SELECT DATE(date) as date, COUNT(*) as "sessionCount" 
+      `SELECT to_char(date, 'YYYY-MM-DD') as date, COUNT(*)::int as "sessionCount" 
        FROM appointments 
-       WHERE therapist_id = :id AND status = 'Completed' AND date >= current_date - interval '7 days'
-       GROUP BY DATE(date) ORDER BY DATE(date) ASC`,
+       WHERE therapist_id = :id AND status = 'completed' AND date >= current_date - interval '90 days'
+       GROUP BY date ORDER BY date ASC`,
       { replacements: { id: therapistId }, type: QueryTypes.SELECT }
     );
-    
+
     // Mode Split
     const modeSplitQuery = await sequelize.query(
-      `SELECT mode as name, COUNT(*) as value 
+      `SELECT COALESCE(mode, 'home') as name, COUNT(*)::int as value 
        FROM appointments 
-       WHERE therapist_id = :id AND status = 'Completed'
+       WHERE therapist_id = :id AND status = 'completed' AND date >= current_date - interval '90 days'
        GROUP BY mode`,
       { replacements: { id: therapistId }, type: QueryTypes.SELECT }
     );
 
-    // Weekly Earnings Data (Last 4 weeks)
+    // Weekly Earnings Data (Last 90 days)
     const weeklyEarningsQuery = await sequelize.query(
-      `SELECT to_char(date, 'WW') as week_num, MIN(date) as week_start, SUM(service_amount) * 0.9 as "Service"
-       FROM appointments 
-       WHERE therapist_id = :id AND status = 'Completed' AND date >= current_date - interval '28 days'
+      `SELECT to_char(week_start, 'IYYY-IW') as week_num, MIN(week_start) as week_start,
+              COALESCE(SUM(CASE WHEN type != 'affiliate' THEN net_amount ELSE 0 END), 0)::numeric as "Service",
+              COALESCE(SUM(CASE WHEN type = 'affiliate' THEN net_amount ELSE 0 END), 0)::numeric as "Product"
+       FROM payout_items
+       WHERE therapist_id = :id AND week_start >= current_date - interval '90 days'
        GROUP BY week_num ORDER BY week_num ASC`,
       { replacements: { id: therapistId }, type: QueryTypes.SELECT }
     );
     const weeklyEarningsData = weeklyEarningsQuery.map(row => ({
       week: `Week of ${new Date(row.week_start).toLocaleDateString('en-US', { month: 'short', day: 'numeric'})}`,
       Service: parseFloat(row.Service || 0),
-      Product: 0
+      Product: parseFloat(row.Product || 0)
     }));
 
+    // Top services by count
+    const topServicesQuery = await sequelize.query(
+      `SELECT COALESCE(therapy_type, 'General') as name, COUNT(*)::int as count
+       FROM appointments
+       WHERE therapist_id = :id AND status = 'completed' AND date >= current_date - interval '90 days'
+       GROUP BY therapy_type ORDER BY count DESC LIMIT 5`,
+      { replacements: { id: therapistId }, type: QueryTypes.SELECT }
+    );
+
     res.json({
+      success: true,
       status: true,
       data: {
         kpis: {
@@ -1567,18 +1626,94 @@ exports.getDashboardStats = async (req, res) => {
           avgRating,
           netPayout,
           productCommissions,
-          pcrLockRate
+          pcrLockRate,
+          pcrAlert
         },
         charts: {
           sessionData: sessionDataQuery,
           modeSplitData: modeSplitQuery,
-          weeklyEarningsData
+          weeklyEarningsData,
+          topServicesData: topServicesQuery
         }
       }
     });
 
   } catch (error) {
     console.error("getDashboardStats error:", error);
+    res.status(500).json({ success: false, status: false, message: "Server error" });
+  }
+};
+
+/* =========================
+   GET MY PATIENTS PROGRESS (P22)
+========================= */
+exports.getMyPatientsProgress = async (req, res) => {
+  try {
+    const therapistId = req.user.id;
+    const progressService = require("../../services/progressService");
+
+    const plans = await sequelize.query(
+      `SELECT tp.*, u.name as patient_name, u.phone as patient_phone
+       FROM treatment_plans tp
+       JOIN users u ON u.id = tp.patient_id
+       WHERE tp.primary_therapist_id = :id AND tp.status = 'active'
+       ORDER BY tp.updated_at DESC`,
+      { replacements: { id: therapistId }, type: QueryTypes.SELECT }
+    );
+
+    const items = [];
+    for (const plan of plans) {
+      const prog = await progressService.planProgress(plan.id).catch(() => null);
+
+      // Check for unconfirmed proposals
+      const [[unconfirmedRow]] = await sequelize.query(
+        `SELECT COUNT(*)::int as count FROM appointments WHERE treatment_plan_id = :planId AND status = 'proposed'`,
+        { replacements: { planId: plan.id } }
+      );
+      const unconfirmedProposals = parseInt(unconfirmedRow?.count || 0, 10);
+
+      // Primary goal trend
+      let primaryGoalTrend = "no change";
+      let primaryGoalMeasure = null;
+      if (prog && prog.goals && prog.goals.length > 0) {
+        const pg = prog.goals[0];
+        primaryGoalMeasure = pg.measureName || pg.measureCode;
+        if (prog.measures && prog.measures.length > 0) {
+          const pm = prog.measures.find(m => m.measureId === pg.id || m.code === pg.measureCode);
+          if (pm) primaryGoalTrend = pm.status;
+        }
+      }
+
+      // Check review due
+      const isReviewDue = plan.next_review_session
+        ? (prog?.sessionsDone || 0) >= plan.next_review_session
+        : (plan.next_review_date ? new Date(plan.next_review_date) <= new Date() : false);
+
+      items.push({
+        planId: plan.id,
+        patientId: plan.patient_id,
+        patientName: plan.patient_name,
+        patientPhone: plan.patient_phone,
+        condition: plan.condition_name || plan.diagnosis || "General Rehab",
+        sessionsDone: prog?.sessionsDone ?? 0,
+        plannedSessions: plan.planned_sessions || 0,
+        lastReviewDate: plan.last_review_date,
+        nextReviewDate: plan.next_review_date,
+        isReviewDue,
+        primaryGoalMeasure,
+        primaryGoalTrend,
+        unconfirmedProposals,
+        followUpOverdue: !!plan.follow_up_overdue,
+      });
+    }
+
+    res.json({
+      success: true,
+      status: true,
+      data: items
+    });
+  } catch (error) {
+    console.error("getMyPatientsProgress error:", error);
     res.status(500).json({ status: false, message: "Server error" });
   }
 };
@@ -1586,29 +1721,43 @@ exports.getDashboardStats = async (req, res) => {
 /* =========================
    GET EARNINGS
 ========================= */
+// GET /api/therapists/affiliate: the signed-in therapist's DR code and commission numbers (P20)
+exports.getAffiliate = async (req, res) => {
+  try {
+    const data = await require('../../services/affiliateService').statsFor(req.user.id);
+    if (!data) return res.error('Therapist profile not found', 404);
+    return res.success(data, 'Affiliate stats fetched');
+  } catch (err) {
+    console.error('getAffiliate error:', err.message);
+    return res.error('Failed to load affiliate stats');
+  }
+};
+
 exports.getEarnings = async (req, res) => {
   try {
     const { therapistId } = req.params;
+    if (!access.isAdmin(req.user) && !access.same(therapistId, req.user.id)) {
+      return res.status(403).json({ status: false, message: "Forbidden" });
+    }
 
     // Fetch payout history (summarized by week)
     const payoutHistoryQuery = await sequelize.query(
-      `SELECT 
-         week_start,
-         SUM(net_amount) as total_amount,
-         COUNT(source_id) as number_of_sessions
-       FROM payout_items
-       WHERE therapist_id = :id AND state = 'Paid'
-       GROUP BY week_start
-       ORDER BY week_start DESC`,
+      `SELECT b.id, b.week_start, b.week_end, b.net, b.status, b.paid_at, b.utr,
+              (SELECT COUNT(*) FROM payout_items i WHERE i.batch_id = b.id) AS number_of_sessions
+       FROM payout_batches b
+       WHERE b.therapist_id = :id
+       ORDER BY b.week_start DESC`,
       { replacements: { id: therapistId }, type: QueryTypes.SELECT }
     );
 
     const payoutHistory = payoutHistoryQuery.map(row => ({
-      payoutId: 'PO-' + new Date(row.week_start).getTime(),
+      payoutId: 'PO-' + row.id,
+      batchId: row.id,
       period: `Week of ${new Date(row.week_start).toLocaleDateString()}`,
-      payoutDate: row.week_start,
-      totalAmount: parseFloat(row.total_amount || 0),
-      status: 'Paid',
+      payoutDate: row.paid_at || row.week_end,
+      totalAmount: parseFloat(row.net || 0),
+      status: row.status === 'paid' ? 'Paid' : row.status === 'on_hold' ? 'On-Hold' : row.status === 'approved' ? 'Approved' : 'Scheduled',
+      utr: row.utr || undefined,
       numberOfSessions: parseInt(row.number_of_sessions || 0)
     }));
 
@@ -1636,10 +1785,10 @@ exports.getEarnings = async (req, res) => {
       preTdsPayable: parseFloat(row.pre_tds_payable || 0),
       tdsDeducted: parseFloat(row.tds_deducted || 0),
       netPayable: parseFloat(row.net_amount || 0),
-      status: row.state === 'Paid' ? 'Paid' : (row.state === 'onHold' ? 'On-Hold' : 'Payout Scheduled'),
+      status: String(row.state).toLowerCase() === 'paid' ? 'Paid' : (row.state === 'onHold' ? 'On-Hold' : 'Payout Scheduled'),
       type: row.type,
       mode: row.appointment_mode || 'Clinic',
-      reason: row.state === 'onHold' ? 'Awaiting verification' : undefined
+      reason: row.state === 'onHold' ? 'On hold - bank details or an admin check are pending' : undefined
     }));
 
     // Daily Net Earnings (Last 30 days)
