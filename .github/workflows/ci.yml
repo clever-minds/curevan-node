@@ -40,6 +40,9 @@ jobs:
         with:
           node-version: 22
           cache: npm
+      # the acceptance suite also checks that every API call the website makes exists (docs/API_CALL_MAP.md of the website repo, expected next to this one)
+      - name: Fetch the website repo
+        run: git clone --depth 1 https://github.com/clever-minds/curevan-dev.git ../curevan-dev
       - name: Install dependencies
         run: npm ci
       # unit tests, the whole acceptance suite in both booking flows, and the go-live checklist mapping (tests/checklist.json).
