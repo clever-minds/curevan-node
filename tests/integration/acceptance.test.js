@@ -761,6 +761,8 @@ async function seed() {
   const g = r.j && r.j.data;
   check("P15 second-visit PCR opens with the baseline prefilled from the last locked PCR; vitals, HEP and scores start empty", r.s === 200 && g.baseline && g.baseline.chiefComplaint === "knee pain" && g.baseline.allergies === "none" && g.bp === "" && g.hep === "" && g.functionalScore === null && g.painVas === null, "got " + r.s + " " + JSON.stringify(g && { b: g.baseline, bp: g.bp, hep: g.hep }));
 
+  check("P15 the PCR carries the therapy type by name (the report form's select needs text, not an id)", typeof g.therapyType === "string" && g.therapyType.length > 0, "got " + JSON.stringify(g.therapyType));
+
   // T-4h rule: history stays closed until 4 hours before the session
   const later = await mkVisit(60 * 9, "confirmed"); await mkPcrRow(later);
   r = await call("GET", "/api/appointments/pcr/" + later, T.t1);

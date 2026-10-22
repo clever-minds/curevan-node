@@ -686,7 +686,7 @@ exports.getPCRByBookingId = async (req, res) => {
         pcr.chief_complaint  AS "chiefComplaint",
         pcr.treatment_provided AS "treatmentProvided",
         pcr.plan_of_care     AS "planOfCare",
-        pcr.service_type_id  AS "therapyType",
+        (SELECT st.name FROM service_types st WHERE st.id = pcr.service_type_id) AS "therapyType",   -- the form's select works with names
         pcr.upload_attachment_id AS "uploadAttachmentId",
         pcr.signature_confirmation AS "signatureConfirmation",
         m.file_path          AS attachment
