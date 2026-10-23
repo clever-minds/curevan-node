@@ -452,9 +452,9 @@ async function seed() {
 
   // cancel
   const day = (n) => { const d = new Date(Date.now() + 5.5 * 3600e3 + n * 86400e3); return `${d.getUTCFullYear()}-${pad(d.getUTCMonth() + 1)}-${pad(d.getUTCDate())}`; };
-  let mkN = 0;   // every test booking gets its own time, because the database now refuses two active bookings in one slot
+  let mkN = 0;   // every test booking gets its own time, because the database now refuses two active bookings in one slot; the minute is half an hour away from the clock's, so it never meets the fixtures that are placed relative to "now"
   const mkA = async (pay, daysAhead, extra = {}) => (await q(`INSERT INTO appointments(patient_id, patient_name, therapist_id, therapist_name, service_type_id, service_amount, total_amount, date, time, status, payment_status, razorpay_payment_id, payment_method, created_at)
-    VALUES ($1,'Patient One',$2,'Dr One',1,1500,1500,$3,$4,CASE WHEN $5 = 'Paid' THEN 'confirmed' ELSE 'pending_payment' END,$5,$6,$7, now() - interval '1 day') RETURNING id`, [U.p1.id, U.t1.id, day(daysAhead), extra.time || `${pad(1 + (mkN++ % 20))}:30`, pay, extra.rzp || null, extra.method || null]))[0].id;
+    VALUES ($1,'Patient One',$2,'Dr One',1,1500,1500,$3,$4,CASE WHEN $5 = 'Paid' THEN 'confirmed' ELSE 'pending_payment' END,$5,$6,$7, now() - interval '1 day') RETURNING id`, [U.p1.id, U.t1.id, day(daysAhead), extra.time || `${pad(1 + (mkN++ % 20))}:${pad((new Date().getUTCMinutes() + 30) % 60)}`, pay, extra.rzp || null, extra.method || null]))[0].id;
   const unpaid = await mkA("Pending", 0, { time: "23:00" });
   r = await call("POST", "/api/appointments/" + unpaid + "/cancel", T.p2); check("P10 another patient cannot cancel -> " + r.s, r.s === 403);
   const tNotifBefore = (await q("SELECT COUNT(*)::int AS n FROM notifications WHERE user_uid = $1 AND title = 'Appointment cancelled'", [String(U.t1.id)]))[0].n;
@@ -2191,6 +2191,16 @@ async function seed() {
         check("P25 another patient cannot open that session's invoice by BK-<id> (404)", r.s === 404 || r.s === 403, "got " + r.s);
       } else check("P25 (setup) an order invoice and a booking with the same number exist for the collision test", false, "no matching pair in the fixture");
     }
+
+    // --- a user record (name, e-mail, roles) is for its owner and the admins
+    r = await call("GET", "/api/users/" + U.t1.id, T.p1);
+    check("P04 a patient cannot read another user's record by id (403)", r.s === 403, "got " + r.s);
+    r = await call("GET", "/api/users/" + U.p1.id, T.p1);
+    check("P04 a user can still read their own record", r.s === 200 && String(r.j.data.id) === String(U.p1.id), "got " + r.s);
+    r = await call("GET", "/api/users/" + U.p1.id, T.therapy);
+    check("P04 an admin can read a user's record", r.s === 200, "got " + r.s);
+    r = await call("GET", "/api/users/" + U.p1.id, T.t1);
+    check("P04 a therapist cannot read a patient's user record by id (403)", r.s === 403, "got " + r.s);
 
     // --- shop data stays with the shop admins: a therapy admin lists only their own orders and cannot read someone else's shop invoice
     {
