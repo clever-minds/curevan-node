@@ -2207,6 +2207,10 @@ async function seed() {
         r = await call("GET", "/api/orders/invoice/ORD-" + someOrder.id, T.ecom);
         check("P04 the e-com admin can open a shop invoice", r.s === 200, "got " + r.s);
       }
+      r = await call("GET", "/api/appointments", T.ecom);
+      check("P04 the e-com admin's appointment list has no patient or therapist phone, no home address and no notes", r.s === 200 && (r.j.data || []).length > 0 && (r.j.data || []).every((x) => !("patientPhone" in x) && !("therapistPhone" in x) && !("notes" in x) && !("serviceAddress" in x)), "got " + r.s + " " + JSON.stringify(Object.keys(((r.j && r.j.data) || [{}])[0] || {})).slice(0, 160));
+      r = await call("GET", "/api/appointments", T.therapy);
+      check("P04 the Therapy Admin still gets the full appointment rows (phone, address, notes)", r.s === 200 && (r.j.data || []).length > 0 && "patientPhone" in r.j.data[0] && "notes" in r.j.data[0], "got " + r.s);
       r = await call("GET", "/api/invoices/list", T.therapy);
       check("P04 a therapy admin's invoice list has no shop invoices of other customers", r.s === 200 && !(r.j.data || []).some((x) => x.source && x.source.orderId && String(x.userId) !== String(U.therapy.id)), "got " + r.s);
       r = await call("GET", "/api/invoices/list", T.ecom);

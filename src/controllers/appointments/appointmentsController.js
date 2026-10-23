@@ -79,6 +79,10 @@ exports.listAppointments = async (req, res) => {
       { replacements, type: QueryTypes.SELECT }
     );
 
+    // the e-com admin sees bookings and payments, not the patient's and therapist's phone numbers, home address or notes (those are for the clinical admins)
+    if (!access.isClinicalAdmin(req.user)) {
+      for (const row of appointments) { delete row.patientPhone; delete row.therapistPhone; delete row.notes; delete row.serviceAddress; }
+    }
     return res.success(appointments, "Appointments fetched successfully");
   } catch (error) {
     console.error(error);
