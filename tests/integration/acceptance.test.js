@@ -453,8 +453,9 @@ async function seed() {
   // cancel
   const day = (n) => { const d = new Date(Date.now() + 5.5 * 3600e3 + n * 86400e3); return `${d.getUTCFullYear()}-${pad(d.getUTCMonth() + 1)}-${pad(d.getUTCDate())}`; };
   let mkN = 0;   // every test booking gets its own time, because the database now refuses two active bookings in one slot; the minute is half an hour away from the clock's, so it never meets the fixtures that are placed relative to "now"
-  const mkA = async (pay, daysAhead, extra = {}) => (await q(`INSERT INTO appointments(patient_id, patient_name, therapist_id, therapist_name, service_type_id, service_amount, total_amount, date, time, status, payment_status, razorpay_payment_id, payment_method, created_at)
+  const mkA1 = async (pay, daysAhead, extra = {}) => (await q(`INSERT INTO appointments(patient_id, patient_name, therapist_id, therapist_name, service_type_id, service_amount, total_amount, date, time, status, payment_status, razorpay_payment_id, payment_method, created_at)
     VALUES ($1,'Patient One',$2,'Dr One',1,1500,1500,$3,$4,CASE WHEN $5 = 'Paid' THEN 'confirmed' ELSE 'pending_payment' END,$5,$6,$7, now() - interval '1 day') RETURNING id`, [U.p1.id, U.t1.id, day(daysAhead), extra.time || `${pad(1 + (mkN++ % 20))}:${pad((new Date().getUTCMinutes() + 30) % 60)}`, pay, extra.rzp || null, extra.method || null]))[0].id;
+  const mkA = async (pay, daysAhead, extra = {}) => { for (let k = 0; ; k++) { try { return await mkA1(pay, daysAhead, k ? { ...extra, time: `${pad(1 + (mkN++ % 20))}:${pad((new Date().getUTCMinutes() + 31 + k * 3) % 60)}` } : extra); } catch (e) { if (!/uq_appointments_active_slot/.test(String(e.message)) || k >= 8) throw e; } } };   // a slot taken by a clock-relative fixture: try another minute
   const unpaid = await mkA("Pending", 0, { time: "23:00" });
   r = await call("POST", "/api/appointments/" + unpaid + "/cancel", T.p2); check("P10 another patient cannot cancel -> " + r.s, r.s === 403);
   const tNotifBefore = (await q("SELECT COUNT(*)::int AS n FROM notifications WHERE user_uid = $1 AND title = 'Appointment cancelled'", [String(U.t1.id)]))[0].n;
@@ -2869,6 +2870,10 @@ async function seed() {
     const later = await mkPrev({ mode: "later", reason: "Patient will check the calendar" });
     r = await opts(later.id);
     check("P30 'patient will book later' leaves the date free", r.s === 200 && r.j.data.mode === "any");
+    const subm = await mkPrev({ mode: "single", date: day(26), time: "11:00" });
+    await q("UPDATE pcr SET status = 'submitted', locked_at = NULL WHERE id = $1", [subm.pcrId]);
+    r = await book(subm.id, day(27), "10:00");
+    check("P30 the doctor's date counts as soon as the report is submitted, before it is locked (400 for another date)", r.s === 400 && (r.raw || "").includes(day(26)), "got " + r.s + " " + (r.raw || "").slice(0, 140));
     const none = await mkPrev({ mode: "none" });
     r = await book(none.id, day(23), "16:00");
     check("P30 'no further sessions' blocks a follow-up (400)", r.s === 400 && /no further sessions/i.test(r.raw || ""), "got " + r.s + " " + (r.raw || "").slice(0, 120));
@@ -2883,6 +2888,9 @@ async function seed() {
     check("P30 options: a held (proposed) slot is reported, with the dashboard as the place to confirm it", r.s === 200 && r.j.data.mode === "proposed", "got " + (r.raw || "").slice(0, 140));
     r = await book(held.id, day(25), "11:00");
     check("P30 booking over a held follow-up is refused (409)", r.s === 409 && /reserved/i.test(r.raw || ""), "got " + r.s + " " + (r.raw || "").slice(0, 120));
+    await q("UPDATE appointments SET status = 'proposal_declined' WHERE id = $1", [hold]);
+    r = await opts(held.id);
+    check("P30 after the patient declines the doctor's held slot the doctor's date is offered again (not 'already booked')", r.s === 200 && r.j.data.mode === "dates" && r.j.data.dates.includes(day(25)), "got " + (r.raw || "").slice(0, 140));
 
     // privacy and plumbing
     r = await opts(single.id, T.p2);
