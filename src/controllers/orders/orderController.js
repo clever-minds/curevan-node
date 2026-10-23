@@ -1633,8 +1633,8 @@ exports.myOrders = async (req, res) => {
        LEFT JOIN users u ON o.user_id = u.id
     `;
 
-    // Role based filtering
-    if (userRole === 'admin') {
+    // Role based filtering: every customer's orders only for the shop admins (super + e-com); anyone else, a therapy admin included, sees their own
+    if (access.isShopAdmin(req.user)) {
       query += ` GROUP BY o.id, oa_billing.id, oa_shipping.id, i.id,u.name ORDER BY o.id DESC`;
     } else {
       query += ` WHERE o.user_id = :userId GROUP BY o.id, oa_billing.id, oa_shipping.id, i.id,u.name ORDER BY o.id DESC`;
@@ -1888,7 +1888,8 @@ exports.getInvoiceById = async (req, res) => {
     // 2️⃣ Role based access control
     let isAuthorized = false;
 
-    if (access.isAdmin(req.user)) {
+    // a shop invoice is for the shop admins (super + e-com); a session invoice for any admin; either way the owner may see it
+    if (invoiceData.order_id ? access.isShopAdmin(req.user) : access.isAdmin(req.user)) {
       isAuthorized = true;
     } else if (access.same(invoiceData.user_id, userId)) {
       isAuthorized = true;

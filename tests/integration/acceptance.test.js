@@ -2192,6 +2192,27 @@ async function seed() {
       } else check("P25 (setup) an order invoice and a booking with the same number exist for the collision test", false, "no matching pair in the fixture");
     }
 
+    // --- shop data stays with the shop admins: a therapy admin lists only their own orders and cannot read someone else's shop invoice
+    {
+      const someOrder = (await q("SELECT o.id, o.user_id, i.id AS inv FROM orders o JOIN invoices i ON i.order_id = o.id WHERE o.user_id <> $1 ORDER BY o.id LIMIT 1", [U.therapy.id]))[0];
+      r = await call("GET", "/api/orders/my-orders", T.therapy);
+      check("P04 a therapy admin's order list holds only their own orders (none belong to other customers)", r.s === 200 && (r.j.data || []).length === 0, "got " + r.s + " rows " + ((r.j && r.j.data) || []).length);
+      r = await call("GET", "/api/orders/my-orders", T.ecom);
+      check("P04 the e-com admin still sees every customer's orders", r.s === 200 && (r.j.data || []).length > 0, "got " + r.s);
+      r = await call("GET", "/api/orders/my-orders", T.su);
+      check("P04 the super admin still sees every customer's orders", r.s === 200 && (r.j.data || []).length > 0, "got " + r.s);
+      if (someOrder) {
+        r = await call("GET", "/api/orders/invoice/" + someOrder.inv, T.therapy);
+        check("P04 a therapy admin cannot open a shop invoice (403)", r.s === 403, "got " + r.s);
+        r = await call("GET", "/api/orders/invoice/ORD-" + someOrder.id, T.ecom);
+        check("P04 the e-com admin can open a shop invoice", r.s === 200, "got " + r.s);
+      }
+      r = await call("GET", "/api/invoices/list", T.therapy);
+      check("P04 a therapy admin's invoice list has no shop invoices of other customers", r.s === 200 && !(r.j.data || []).some((x) => x.source && x.source.orderId && String(x.userId) !== String(U.therapy.id)), "got " + r.s);
+      r = await call("GET", "/api/invoices/list", T.ecom);
+      check("P04 the e-com admin's invoice list still has shop invoices", r.s === 200 && (r.j.data || []).some((x) => x.source && x.source.orderId), "got " + r.s);
+    }
+
     // --- DPDP rights
     const pd = await mkP("d");
     await q("INSERT INTO appointments(patient_id, patient_name, therapist_id, therapist_name, service_type_id, therapy_type, service_amount, total_amount, date, time, status, payment_status, mode, created_at) VALUES ($1,'D',$2,'Dr One',1,'Physio',1500,1500,'2031-03-03','09:00','completed','Paid','home',now())", [pd.id, U.t1.id]);

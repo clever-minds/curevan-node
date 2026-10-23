@@ -3,7 +3,7 @@ const { sequelize } = require("../../config/db");
 const access = require("../../utils/access");
 
 /* GET /api/invoices/list?type=order|service&from=YYYY-MM-DD&to=YYYY-MM-DD&userId=
-   Admins see every invoice (and may filter by user); anyone else sees only their own. */
+   Super and e-com admins see every invoice (and may filter by user), the therapy admin the session invoices, anyone else only their own. */
 exports.listInvoices = async (req, res) => {
   try {
     const admin = access.isAdmin(req.user);
@@ -13,9 +13,10 @@ exports.listInvoices = async (req, res) => {
     if (!admin) {
       where.push("i.user_id = :me");
       replacements.me = req.user.id;
-    } else if (req.query.userId) {
-      where.push("i.user_id = :userId");
-      replacements.userId = Number(req.query.userId);
+    } else {
+      // shop invoices belong to the shop admins (super + e-com); another admin (therapy) sees session invoices and their own
+      if (!access.isShopAdmin(req.user)) { where.push("(i.order_id IS NULL OR i.user_id = :me)"); replacements.me = req.user.id; }
+      if (req.query.userId) { where.push("i.user_id = :userId"); replacements.userId = Number(req.query.userId); }
     }
     if (req.query.type === "order") where.push("i.order_id IS NOT NULL");
     if (req.query.type === "service") where.push("i.booking_id IS NOT NULL");
