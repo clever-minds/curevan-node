@@ -11,7 +11,9 @@ const sequelize = new Sequelize(
     port: Number(process.env.DB_PORT) || 5432,
     dialect: "postgres",
     logging: false,
-    timezone: "+05:30"
+    timezone: "+05:30",
+    // a managed / remote PostgreSQL (for example AWS RDS) often refuses plain connections: set DB_SSL=true
+    ...(require("./dbSsl").dialectOptions()),
   }
 );
 
