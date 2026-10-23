@@ -2728,6 +2728,50 @@ async function seed() {
     }
     check("P24 all 24 events of the pack's table are covered", Object.keys(need).length === 24);
   }
+  // ---- P30 (new feature): the patient asks for a follow-up visit; the new PCR opens with the last visit's report
+  {
+    const prev = (await q(`INSERT INTO appointments(patient_id, patient_name, therapist_id, therapist_name, service_type_id, service_amount, total_amount, date, time, status, payment_status, payment_method, created_at)
+      VALUES ($1,'Patient One',$2,'Dr One',1,1500,1500,$3,'03:41','completed','Paid','razorpay', now() - interval '4 days') RETURNING id`, [U.p1.id, U.t1.id, day(-3)]))[0].id;
+    await q(`INSERT INTO pcr(appointment_id, patient_id, therapist_id, service_type_id, status, version, chief_complaint, assessment, diagnosis, treatment_provided, plan_of_care, bp, hr, rr, temp, functional_score, pain_vas, functional_measure, hep, locked_at)
+      VALUES ($1,$2,$3,1,'locked',2,'Knee pain','Reduced knee flexion, joint-line tenderness','Knee sprain','Manual therapy and quadriceps work','Twice weekly for three weeks','120/80','78','16','98.4',6,4,'Range of motion','Straight leg raises 3x10 daily', now())`, [prev, U.p1.id, U.t1.id]);
+    const fuOf = (id) => q("SELECT follow_up_of FROM appointments WHERE id = $1", [id]).then((x) => x[0] && x[0].follow_up_of);
+    const live = (extra) => ({ followUpOf: prev, ...extra });
+
+    r = await call("POST", "/api/appointments/create-appointment", T.p1, bk(U.t1.id, day(27), "11:00", live()));
+    const fu1 = r.j && r.j.appointmentId;
+    check("P30 the patient books a follow-up of a completed visit; the booking is linked to it", r.s === 200 && fu1 && String(await fuOf(fu1)) === String(prev), "got " + r.s + " " + (r.raw || "").slice(0, 140));
+    r = await call("POST", "/api/appointments/create-appointment", T.p1, bk(U.t1.id, day(27), "12:00", live()));
+    check("P30 a second live follow-up for the same visit is refused (409)", r.s === 409 && /already booked/i.test(r.raw || ""), "got " + r.s + " " + (r.raw || "").slice(0, 120));
+    r = await call("POST", "/api/appointments/create-appointment", T.p2, bk(U.t1.id, day(27), "13:00", { followUpOf: prev, addressId: U.a2 }));
+    check("P30 another patient cannot follow up someone else's visit (404, same answer as a missing visit)", r.s === 404, "got " + r.s + " " + (r.raw || "").slice(0, 120));
+    const confirmed = await mkVisit(317, "confirmed");
+    r = await call("POST", "/api/appointments/create-appointment", T.p1, bk(U.t1.id, day(27), "14:00", { followUpOf: confirmed }));
+    check("P30 a visit that is not completed cannot be followed up (400)", r.s === 400 && /completed/i.test(r.raw || ""), "got " + r.s + " " + (r.raw || "").slice(0, 120));
+    r = await call("POST", "/api/appointments/create-appointment", T.p1, bk(U.t1.id, day(27), "15:00", { followUpOf: "abc" }));
+    check("P30 a follow-up id that is not a number is refused (400)", r.s === 400, "got " + r.s);
+    await q("UPDATE appointments SET status = 'cancelled_by_patient' WHERE id = $1", [fu1]);
+    r = await call("POST", "/api/appointments/create-appointment", T.p1, bk(U.t1.id, day(27), "16:00", live()));
+    check("P30 after the first follow-up is cancelled, a new one can be booked for the same visit", r.s === 200 && String(await fuOf(r.j.appointmentId)) === String(prev), "got " + r.s + " " + (r.raw || "").slice(0, 120));
+    r = await call("POST", "/api/appointments/request", T.p1, { bookingData: { patientId: U.p1.id, patientName: "P", serviceTypeId: 1, therapyType: "Physio", date: day(29), time: "11:00", mode: "home", addressId: U.a1, followUpOf: confirmed } });
+    check("P30 the request-a-therapist route applies the same rule (400 for a visit that is not completed)", r.s === 400, "got " + r.s + " " + (r.raw || "").slice(0, 120));
+
+    // the new PCR carries the last visit's report
+    const fu = await mkVisit(97, "in_progress"); await q("UPDATE appointments SET follow_up_of = $1 WHERE id = $2", [prev, fu]); await mkPcrRow(fu);
+    r = await call("GET", "/api/appointments/pcr/" + fu, T.t1);
+    const lv = r.j && r.j.data && r.j.data.lastVisit;
+    check("P30 the treating therapist opens the new PCR with the last visit's report (assessment, treatment, plan, HEP, scores)",
+      r.s === 200 && lv && lv.linked === true && /joint-line/.test(lv.assessment) && /Manual therapy/.test(lv.treatmentProvided) && /three weeks/.test(lv.planOfCare) && /Straight leg/.test(lv.hep) && lv.functionalScore === 6 && lv.painVas === 4 && String(lv.appointmentId) === String(prev), "got " + r.s + " " + JSON.stringify(lv).slice(0, 160));
+    r = await call("GET", "/api/appointments/pcr/" + fu, T.p1);
+    check("P30 the patient sees the same last-visit report in their own new PCR", r.s === 200 && r.j.data.lastVisit && r.j.data.lastVisit.linked === true);
+    const far = await mkVisit(24 * 60 * 5 + 13, "confirmed"); await q("UPDATE appointments SET follow_up_of = $1 WHERE id = $2", [prev, far]); await mkPcrRow(far);
+    r = await call("GET", "/api/appointments/pcr/" + far, T.t1);
+    check("P30 more than 4 hours before the session the therapist gets no last-visit report (history stays closed)", r.s === 200 && r.j.data.historyLocked === true && !r.j.data.lastVisit, "got " + r.s + " " + JSON.stringify(r.j && r.j.data && r.j.data.lastVisit).slice(0, 80));
+    const plain = await mkVisit(104, "in_progress"); await mkPcrRow(plain);
+    r = await call("GET", "/api/appointments/pcr/" + plain, T.t1);
+    check("P30 a booking without a link still shows the patient's latest locked report", r.s === 200 && r.j.data.lastVisit && r.j.data.lastVisit.linked === false);
+    r = await call("GET", "/api/appointments/pcr/" + fu, T.t2);
+    check("P30 another therapist cannot open that PCR (403)", r.s === 403, "got " + r.s);
+  }
   unmute();
   const widthName = Math.max(...results.map((x) => x.name.length));
   for (const x of results) console.log((x.ok ? "PASS " : "FAIL ") + x.name + (x.ok ? "" : "  <-- " + x.detail));

@@ -15,6 +15,7 @@ const refundService = require("../../services/refundService");
 const notificationStore = require("../../services/notificationStore");
 const notifications = require("../../services/notifications");
 const compliance = require("../../services/complianceService");
+const followUpLink = require("../../services/followUpLink");
 const { sequelize } = require("../../config/db");
 const transporter = require("../../config/mailer");
 const firebaseNotifier = require("../../utils/firebaseNotifier");
@@ -55,6 +56,7 @@ exports.listAppointments = async (req, res) => {
          a.therapist_phone AS "therapistPhone",
          a.service_type_id AS "serviceTypeId",
          a.therapy_type AS "therapyType",
+         a.follow_up_of AS "followUpOf",
          a.service_amount AS "serviceAmount",
          a.total_amount AS "totalAmount",
          a.clinic_id AS "clinicId",
@@ -101,6 +103,7 @@ exports.getAppointmentById = async (req, res) => {
          a.therapist_phone AS "therapistPhone",
          a.service_type_id AS "serviceTypeId",
          a.therapy_type AS "therapyType",
+         a.follow_up_of AS "followUpOf",
          a.service_amount AS "serviceAmount",
          a.total_amount AS "totalAmount",
          a.clinic_id AS "clinicId",
@@ -204,6 +207,7 @@ exports.listAppointmentsForUser = async (req, res) => {
          a.therapist_phone AS "therapistPhone",
          a.service_type_id AS "serviceTypeId",
          a.therapy_type AS "therapyType",
+         a.follow_up_of AS "followUpOf",
          a.service_amount AS "serviceAmount",
          a.total_amount AS "totalAmount",
          a.clinic_id AS "clinicId",
@@ -307,20 +311,22 @@ exports.createBookingAndInvoice = async (req, res) => {
 
       // patients book for themselves; only an admin may book on behalf of someone
       const patientId = access.isAdmin(req.user) && bookingData.patientId ? bookingData.patientId : req.user.id;
+      const followUpOf = await followUpLink.resolve(patientId, bookingData.followUpOf, { transaction: t });
 
       const [rows] = await sequelize.query(
         `INSERT INTO appointments (
           patient_id, patient_name, date_of_birth, therapist_id, therapist_name, service_type_id, therapy_type,
           service_amount, total_amount, date, time, mode, notes, service_address_id,
-          status, verification_status, payment_status, pcr_status, reports, price_source, created_at
+          status, verification_status, payment_status, pcr_status, reports, price_source, follow_up_of, created_at
         ) VALUES (
           :patientId, :patientName, :dateofbirth, :therapistId, :therapistName, :serviceTypeId, :therapyType,
           :amount, :amount, :date, :time, :mode, :notes, :serviceAddress,
-          :initialStatus, 'Pending', 'Pending', 'not_started', :reports, 'therapist_rate', NOW()
+          :initialStatus, 'Pending', 'Pending', 'not_started', :reports, 'therapist_rate', :followUpOf, NOW()
         ) RETURNING id`,
         {
           replacements: {
             patientId,
+            followUpOf,
             patientName: bookingData.patientName || null,
             dateofbirth: bookingData.dateofBirth || null,
             therapistId: bookingData.therapistId,
@@ -441,6 +447,7 @@ exports.createBookingAndInvoice = async (req, res) => {
   } catch (error) {
     await t.rollback();
     if (error instanceof compliance.ComplianceError) return res.status(error.httpStatus).json({ success: false, error: error.message, message: error.message });
+    if (error instanceof followUpLink.FollowUpLinkError) return res.status(error.httpStatus).json({ success: false, error: error.message, message: error.message });
     if (error instanceof slotService.SlotError) return res.status(error.httpStatus).json({ success: false, error: error.message });
     if (slotService.isSlotConflict(error)) return res.status(409).json({ success: false, error: "Slot no longer available" });
     console.error("Error creating booking:", error);
@@ -663,7 +670,7 @@ exports.getPCRByBookingId = async (req, res) => {
 
   try {
     const [owner] = await sequelize.query(
-      `SELECT patient_id, therapist_id, status, date, time, start_time FROM appointments WHERE id = :appointmentId`,
+      `SELECT patient_id, therapist_id, status, date, time, start_time, follow_up_of FROM appointments WHERE id = :appointmentId`,
       { replacements: { appointmentId }, type: QueryTypes.SELECT }
     );
     if (!owner) return res.error("PCR not found", 404);
@@ -738,9 +745,13 @@ exports.getPCRByBookingId = async (req, res) => {
       }
     }
 
+    // the report of the visit this one follows (the treating therapist sees it from 4 hours before, like the baseline)
+    const lastVisit = historyLocked ? null : await followUpLink.lastVisitFor(owner.patient_id, appointmentId, owner.follow_up_of);
+
     const response = {
       ...pcr,
       baseline,
+      lastVisit,
       historyLocked,
       sessionType,
       sessionNumber,
@@ -1236,18 +1247,21 @@ exports.createBookingRequest = async (req, res) => {
     );
     const basePrice = serviceType && Number(serviceType.base_price) > 0 ? Number(serviceType.base_price) : 0;
 
+    const followUpOf = await followUpLink.resolve(bookingData.patientId, bookingData.followUpOf);
+
     const [rows] = await sequelize.query(
       `INSERT INTO appointments (
         patient_id, patient_name, date_of_birth, service_type_id, therapy_type,
         service_amount, total_amount, date, time, mode, notes, service_address_id,
-        status, verification_status, payment_status, pcr_status, reports, price_source, created_at
+        status, verification_status, payment_status, pcr_status, reports, price_source, follow_up_of, created_at
       ) VALUES (
         :patientId, :patientName, :dateofbirth, :serviceTypeId, :therapyType,
         :serviceAmount, :totalAmount, :date, :time, :mode, :notes, :serviceAddress,
-        'searching_therapist', 'Not Verified', 'Pending', 'not_started', :reports, :priceSource, NOW()
+        'searching_therapist', 'Not Verified', 'Pending', 'not_started', :reports, :priceSource, :followUpOf, NOW()
       ) RETURNING id`,
       {
         replacements: {
+          followUpOf,
           patientId: bookingData.patientId,
           patientName: bookingData.patientName,
           dateofbirth: bookingData.dateofBirth || null,
@@ -1346,6 +1360,7 @@ exports.createBookingRequest = async (req, res) => {
   } catch (error) {
     if (slotService.isSlotConflict(error)) return res.status(409).json({ success: false, error: "Slot no longer available" });
     if (error instanceof compliance.ComplianceError) return res.status(error.httpStatus).json({ success: false, error: error.message, message: error.message });
+    if (error instanceof followUpLink.FollowUpLinkError) return res.status(error.httpStatus).json({ success: false, error: error.message, message: error.message });
     console.error("Error creating booking request:", error);
     return res.status(500).json({ success: false, error: "Failed to create booking request" });
   }
