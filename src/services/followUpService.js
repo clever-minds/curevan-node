@@ -73,10 +73,10 @@ async function createProposals({ pcrId, appointmentId, plan, now = Date.now() })
       const amount = Number(src.hourly_rate) || Number(src.service_amount) || 0;
       const [appt] = await q(
         `INSERT INTO appointments (patient_id, patient_name, therapist_id, therapist_name, service_type_id, therapy_type, service_amount, total_amount, date, time, mode, service_address_id,
-           status, verification_status, payment_status, pcr_status, price_source, treatment_plan_id, created_at)
+           status, verification_status, payment_status, pcr_status, price_source, treatment_plan_id, follow_up_of, created_at)
          VALUES (:patientId, :patientName, :therapistId, :therapistName, :serviceTypeId, :therapyType, :amount, :amount, :date, :time, 'home', :addressId,
-           'proposed', 'Not Verified', 'Pending', 'not_started', 'therapist_rate', :planId, NOW()) RETURNING id`,
-        { patientId: src.patient_id, patientName: src.patient_name || src.patient_name_u, therapistId: src.therapist_id, therapistName: src.therapist_name, serviceTypeId: src.service_type_id, therapyType: src.therapy_type, amount, date: slot.date, time: slot.time.padStart(5, "0"), addressId: src.service_address_id, planId: src.treatment_plan_id || null }, t);
+           'proposed', 'Not Verified', 'Pending', 'not_started', 'therapist_rate', :planId, :followUpOf, NOW()) RETURNING id`,
+        { followUpOf: src.id, patientId: src.patient_id, patientName: src.patient_name || src.patient_name_u, therapistId: src.therapist_id, therapistName: src.therapist_name, serviceTypeId: src.service_type_id, therapyType: src.therapy_type, amount, date: slot.date, time: slot.time.padStart(5, "0"), addressId: src.service_address_id, planId: src.treatment_plan_id || null }, t);
       const startMs = new Date(startIso(slot.date, slot.time.padStart(5, "0"))).getTime();
       await q(`INSERT INTO followup_proposals (source_pcr_id, treatment_plan_id, patient_id, therapist_id, proposed_start, series_id, appointment_id, status, hold_expires_at) VALUES (:pcrId, :planId, :patientId, :therapistId, :start, :seriesId, :apptId, 'proposed', :hold)`,
         { pcrId, planId: src.treatment_plan_id || null, patientId: src.patient_id, therapistId: src.therapist_id, start: new Date(startMs).toISOString(), seriesId, apptId: appt.id, hold: holdUntil(startMs, now).toISOString() }, t);

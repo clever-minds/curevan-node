@@ -761,6 +761,8 @@ async function seed() {
   const g = r.j && r.j.data;
   check("P15 second-visit PCR opens with the baseline prefilled from the last locked PCR; vitals, HEP and scores start empty", r.s === 200 && g.baseline && g.baseline.chiefComplaint === "knee pain" && g.baseline.allergies === "none" && g.bp === "" && g.hep === "" && g.functionalScore === null && g.painVas === null, "got " + r.s + " " + JSON.stringify(g && { b: g.baseline, bp: g.bp, hep: g.hep }));
 
+  check("P15 the PCR carries the therapy type by name (the report form's select needs text, not an id)", typeof g.therapyType === "string" && g.therapyType.length > 0, "got " + JSON.stringify(g.therapyType));
+
   // T-4h rule: history stays closed until 4 hours before the session
   const later = await mkVisit(60 * 9, "confirmed"); await mkPcrRow(later);
   r = await call("GET", "/api/appointments/pcr/" + later, T.t1);
@@ -1877,7 +1879,7 @@ async function seed() {
     const accessUtil = require("../../src/utils/access");
     const slotMs = accessUtil.slotStart({ date: tomorrowStr, time: timeB }).getTime();
     const early = await emergencyService.autoCancelUnassigned(slotMs - 5 * 3600e3);
-    check("P22 more than 2 hours before the slot nothing is cancelled", early.cancelled === 0 && (await q("SELECT status FROM appointments WHERE id = $1", [emB.id]))[0].status === "confirmed");
+    check("P22 more than 2 hours before the slot this booking is not cancelled", (await q("SELECT status FROM appointments WHERE id = $1", [emB.id]))[0].status === "confirmed");   // other fixture bookings of that therapist may legitimately fall inside the 2 h window of this fake clock
     const refundsBefore = rzpRefunds.length;
     const late = await emergencyService.autoCancelUnassigned(slotMs - 90 * 60e3);
     const after = (await q("SELECT status FROM appointments WHERE id = $1", [emB.id]))[0];
@@ -2725,6 +2727,112 @@ async function seed() {
       check("P24 event " + ev + " was sent by its real flow on " + chans.join(" + "), chans.every((c) => got.has(c)), "channels seen: " + [...got].join(","));
     }
     check("P24 all 24 events of the pack's table are covered", Object.keys(need).length === 24);
+  }
+  // ---- P30 (new feature): the patient asks for a follow-up visit; the new PCR opens with the last visit's report
+  {
+    const prev = (await q(`INSERT INTO appointments(patient_id, patient_name, therapist_id, therapist_name, service_type_id, service_amount, total_amount, date, time, status, payment_status, payment_method, created_at)
+      VALUES ($1,'Patient One',$2,'Dr One',1,1500,1500,$3,'03:41','completed','Paid','razorpay', now() - interval '4 days') RETURNING id`, [U.p1.id, U.t1.id, day(-3)]))[0].id;
+    await q(`INSERT INTO pcr(appointment_id, patient_id, therapist_id, service_type_id, status, version, chief_complaint, assessment, diagnosis, treatment_provided, plan_of_care, bp, hr, rr, temp, functional_score, pain_vas, functional_measure, hep, locked_at)
+      VALUES ($1,$2,$3,1,'locked',2,'Knee pain','Reduced knee flexion, joint-line tenderness','Knee sprain','Manual therapy and quadriceps work','Twice weekly for three weeks','120/80','78','16','98.4',6,4,'Range of motion','Straight leg raises 3x10 daily', now())`, [prev, U.p1.id, U.t1.id]);
+    const fuOf = (id) => q("SELECT follow_up_of FROM appointments WHERE id = $1", [id]).then((x) => x[0] && x[0].follow_up_of);
+    const live = (extra) => ({ followUpOf: prev, ...extra });
+
+    r = await call("POST", "/api/appointments/create-appointment", T.p1, bk(U.t1.id, day(27), "11:00", live()));
+    const fu1 = r.j && r.j.appointmentId;
+    check("P30 the patient books a follow-up of a completed visit; the booking is linked to it", r.s === 200 && fu1 && String(await fuOf(fu1)) === String(prev), "got " + r.s + " " + (r.raw || "").slice(0, 140));
+    r = await call("POST", "/api/appointments/create-appointment", T.p1, bk(U.t1.id, day(27), "12:00", live()));
+    check("P30 a second live follow-up for the same visit is refused (409)", r.s === 409 && /already booked/i.test(r.raw || ""), "got " + r.s + " " + (r.raw || "").slice(0, 120));
+    r = await call("POST", "/api/appointments/create-appointment", T.p2, bk(U.t1.id, day(27), "13:00", { followUpOf: prev, addressId: U.a2 }));
+    check("P30 another patient cannot follow up someone else's visit (404, same answer as a missing visit)", r.s === 404, "got " + r.s + " " + (r.raw || "").slice(0, 120));
+    const confirmed = await mkVisit(317, "confirmed");
+    r = await call("POST", "/api/appointments/create-appointment", T.p1, bk(U.t1.id, day(27), "14:00", { followUpOf: confirmed }));
+    check("P30 a visit that is not completed cannot be followed up (400)", r.s === 400 && /completed/i.test(r.raw || ""), "got " + r.s + " " + (r.raw || "").slice(0, 120));
+    r = await call("POST", "/api/appointments/create-appointment", T.p1, bk(U.t1.id, day(27), "15:00", { followUpOf: "abc" }));
+    check("P30 a follow-up id that is not a number is refused (400)", r.s === 400, "got " + r.s);
+    await q("UPDATE appointments SET status = 'cancelled_by_patient' WHERE id = $1", [fu1]);
+    r = await call("POST", "/api/appointments/create-appointment", T.p1, bk(U.t1.id, day(27), "16:00", live()));
+    check("P30 after the first follow-up is cancelled, a new one can be booked for the same visit", r.s === 200 && String(await fuOf(r.j.appointmentId)) === String(prev), "got " + r.s + " " + (r.raw || "").slice(0, 120));
+    r = await call("POST", "/api/appointments/request", T.p1, { bookingData: { patientId: U.p1.id, patientName: "P", serviceTypeId: 1, therapyType: "Physio", date: day(29), time: "11:00", mode: "home", addressId: U.a1, followUpOf: confirmed } });
+    check("P30 the request-a-therapist route applies the same rule (400 for a visit that is not completed)", r.s === 400, "got " + r.s + " " + (r.raw || "").slice(0, 120));
+
+    // the new PCR carries the last visit's report
+    const fu = await mkVisit(97, "in_progress"); await q("UPDATE appointments SET follow_up_of = $1 WHERE id = $2", [prev, fu]); await mkPcrRow(fu);
+    r = await call("GET", "/api/appointments/pcr/" + fu, T.t1);
+    const lv = r.j && r.j.data && r.j.data.lastVisit;
+    check("P30 the treating therapist opens the new PCR with the last visit's report (assessment, treatment, plan, HEP, scores)",
+      r.s === 200 && lv && lv.linked === true && /joint-line/.test(lv.assessment) && /Manual therapy/.test(lv.treatmentProvided) && /three weeks/.test(lv.planOfCare) && /Straight leg/.test(lv.hep) && lv.functionalScore === 6 && lv.painVas === 4 && String(lv.appointmentId) === String(prev), "got " + r.s + " " + JSON.stringify(lv).slice(0, 160));
+    r = await call("GET", "/api/appointments/pcr/" + fu, T.p1);
+    check("P30 the patient sees the same last-visit report in their own new PCR", r.s === 200 && r.j.data.lastVisit && r.j.data.lastVisit.linked === true);
+    const far = await mkVisit(24 * 60 * 5 + 13, "confirmed"); await q("UPDATE appointments SET follow_up_of = $1 WHERE id = $2", [prev, far]); await mkPcrRow(far);
+    r = await call("GET", "/api/appointments/pcr/" + far, T.t1);
+    check("P30 more than 4 hours before the session the therapist gets no last-visit report (history stays closed)", r.s === 200 && r.j.data.historyLocked === true && !r.j.data.lastVisit, "got " + r.s + " " + JSON.stringify(r.j && r.j.data && r.j.data.lastVisit).slice(0, 80));
+    const plain = await mkVisit(104, "in_progress"); await mkPcrRow(plain);
+    r = await call("GET", "/api/appointments/pcr/" + plain, T.t1);
+    check("P30 a booking without a link still shows the patient's latest locked report", r.s === 200 && r.j.data.lastVisit && r.j.data.lastVisit.linked === false);
+    r = await call("GET", "/api/appointments/pcr/" + fu, T.t2);
+    check("P30 another therapist cannot open that PCR (403)", r.s === 403, "got " + r.s);
+  }
+  // ---- P30b: the follow-up can only be booked on the date(s) the doctor gave in the report
+  {
+    let n = 0;
+    const mkPrev = async (plan) => {
+      n += 1; const t = "0" + n + ":" + (13 + n * 7);   // odd times far from every other fixture, one per visit
+      const id = (await q(`INSERT INTO appointments(patient_id, patient_name, therapist_id, therapist_name, service_type_id, service_amount, total_amount, date, time, status, payment_status, payment_method, created_at)
+        VALUES ($1,'Patient One',$2,'Dr One',1,1500,1500,$3,$4,'completed','Paid','razorpay', now() - interval '5 days') RETURNING id`, [U.p1.id, U.t1.id, day(-4), t]))[0].id;
+      const pcrId = (await q(`INSERT INTO pcr(appointment_id, patient_id, therapist_id, service_type_id, status, version, assessment, next_session_plan, locked_at)
+        VALUES ($1,$2,$3,1,'locked',1,'Assessed',$4, now()) RETURNING id`, [id, U.p1.id, U.t1.id, plan ? JSON.stringify(plan) : null]))[0].id;
+      return { id, pcrId };
+    };
+    const book = (prevId, date, time, extra = {}) => call("POST", "/api/appointments/create-appointment", T.p1, bk(U.t1.id, date, time, { followUpOf: prevId, ...extra }));
+    const opts = (id, token = T.p1) => call("GET", "/api/appointments/" + id + "/follow-up-options", token);
+
+    // the doctor gave one date
+    const single = await mkPrev({ mode: "single", date: day(23), time: "11:00" });
+    r = await opts(single.id);
+    check("P30 options: the doctor's single date is the only date offered", r.s === 200 && r.j.data.mode === "dates" && JSON.stringify(r.j.data.dates) === JSON.stringify([day(23)]), "got " + r.s + " " + (r.raw || "").slice(0, 140));
+    r = await book(single.id, day(24), "11:00");
+    check("P30 a follow-up on any other date is refused (400, the message names the doctor's date)", r.s === 400 && (r.raw || "").includes(day(23)), "got " + r.s + " " + (r.raw || "").slice(0, 160));
+    r = await book(single.id, day(23), "12:00");
+    check("P30 on the doctor's date it is booked (the patient picks the time that day)", r.s === 200 && r.j.appointmentId, "got " + r.s + " " + (r.raw || "").slice(0, 140));
+    r = await opts(single.id);
+    check("P30 options then say a follow-up is already booked", r.s === 200 && r.j.data.mode === "booked");
+
+    // the doctor gave a series: the dates of its proposals (kept even when a slot could not be held)
+    const series = await mkPrev({ mode: "series", weekdays: [1, 3], time: "16:00", occurrences: 2 });
+    for (const d of [day(24), day(25)]) await q(`INSERT INTO followup_proposals(source_pcr_id, patient_id, therapist_id, proposed_start, status) VALUES ($1,$2,$3,$4,'no_slot')`, [series.pcrId, U.p1.id, U.t1.id, d + "T16:00:00+05:30"]);
+    r = await opts(series.id);
+    check("P30 options: every date of the doctor's series is offered", r.s === 200 && r.j.data.mode === "dates" && r.j.data.dates.length === 2 && r.j.data.dates.includes(day(24)) && r.j.data.dates.includes(day(25)), "got " + (r.raw || "").slice(0, 140));
+    r = await book(series.id, day(26), "16:00");
+    check("P30 a date outside the series is refused (400)", r.s === 400, "got " + r.s);
+    r = await book(series.id, day(25), "16:00");
+    check("P30 a date inside the series is accepted", r.s === 200, "got " + r.s + " " + (r.raw || "").slice(0, 120));
+
+    // the doctor left it to the patient / recorded nothing / ended the care
+    const later = await mkPrev({ mode: "later", reason: "Patient will check the calendar" });
+    r = await opts(later.id);
+    check("P30 'patient will book later' leaves the date free", r.s === 200 && r.j.data.mode === "any");
+    const none = await mkPrev({ mode: "none" });
+    r = await book(none.id, day(23), "16:00");
+    check("P30 'no further sessions' blocks a follow-up (400)", r.s === 400 && /no further sessions/i.test(r.raw || ""), "got " + r.s + " " + (r.raw || "").slice(0, 120));
+    const past = await mkPrev({ mode: "single", date: day(-1), time: "10:00" });
+    r = await opts(past.id);
+    check("P30 when the doctor's date has already passed the patient may choose a new one", r.s === 200 && r.j.data.mode === "any" && /passed/i.test(r.j.data.note || ""), "got " + (r.raw || "").slice(0, 140));
+
+    // a slot the doctor already holds for the patient is confirmed from the dashboard, not booked a second time
+    const held = await mkPrev({ mode: "single", date: day(25), time: "17:00" });
+    const hold = (await q(`INSERT INTO appointments(patient_id, therapist_id, service_type_id, date, time, status, payment_status, follow_up_of) VALUES ($1,$2,1,$3,'17:00','proposed','Pending',$4) RETURNING id`, [U.p1.id, U.t1.id, day(25), held.id]))[0].id;
+    r = await opts(held.id);
+    check("P30 options: a held (proposed) slot is reported, with the dashboard as the place to confirm it", r.s === 200 && r.j.data.mode === "proposed", "got " + (r.raw || "").slice(0, 140));
+    r = await book(held.id, day(25), "11:00");
+    check("P30 booking over a held follow-up is refused (409)", r.s === 409 && /reserved/i.test(r.raw || ""), "got " + r.s + " " + (r.raw || "").slice(0, 120));
+
+    // privacy and plumbing
+    r = await opts(single.id, T.p2);
+    check("P30 another patient cannot read the options of someone else's visit (404)", r.s === 404, "got " + r.s);
+    r = await opts(hold, T.p1);
+    check("P30 options of a visit that is not completed (400)", r.s === 400, "got " + r.s);
+    check("P30 every follow-up proposal made by the doctor is linked to the visit it follows",
+      (await q("SELECT COUNT(*)::int AS n FROM appointments a JOIN followup_proposals fp ON fp.appointment_id = a.id WHERE a.follow_up_of IS NULL AND fp.source_pcr_id IS NOT NULL"))[0].n === 0);
   }
   unmute();
   const widthName = Math.max(...results.map((x) => x.name.length));
