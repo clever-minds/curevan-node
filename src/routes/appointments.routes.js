@@ -43,6 +43,7 @@ router.post("/:id/pay", authMiddleware, requireRole("admin.therapy", "admin.ecom
 
 // ✅ what would cancelling cost right now?
 router.get("/:id/cancel-quote", authMiddleware, responseHandler, appointmentsController.getCancelQuote);
+router.get("/:id/follow-up-options", authMiddleware, responseHandler, appointmentsController.getFollowUpOptions);
 
 // ✅ PATCH cancel appointment
 router.patch("/:id/cancel", authMiddleware, responseHandler, appointmentsController.cancelAppointment);

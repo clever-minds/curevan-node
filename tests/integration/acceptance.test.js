@@ -2772,6 +2772,68 @@ async function seed() {
     r = await call("GET", "/api/appointments/pcr/" + fu, T.t2);
     check("P30 another therapist cannot open that PCR (403)", r.s === 403, "got " + r.s);
   }
+  // ---- P30b: the follow-up can only be booked on the date(s) the doctor gave in the report
+  {
+    let n = 0;
+    const mkPrev = async (plan) => {
+      n += 1; const t = "0" + n + ":" + (13 + n * 7);   // odd times far from every other fixture, one per visit
+      const id = (await q(`INSERT INTO appointments(patient_id, patient_name, therapist_id, therapist_name, service_type_id, service_amount, total_amount, date, time, status, payment_status, payment_method, created_at)
+        VALUES ($1,'Patient One',$2,'Dr One',1,1500,1500,$3,$4,'completed','Paid','razorpay', now() - interval '5 days') RETURNING id`, [U.p1.id, U.t1.id, day(-4), t]))[0].id;
+      const pcrId = (await q(`INSERT INTO pcr(appointment_id, patient_id, therapist_id, service_type_id, status, version, assessment, next_session_plan, locked_at)
+        VALUES ($1,$2,$3,1,'locked',1,'Assessed',$4, now()) RETURNING id`, [id, U.p1.id, U.t1.id, plan ? JSON.stringify(plan) : null]))[0].id;
+      return { id, pcrId };
+    };
+    const book = (prevId, date, time, extra = {}) => call("POST", "/api/appointments/create-appointment", T.p1, bk(U.t1.id, date, time, { followUpOf: prevId, ...extra }));
+    const opts = (id, token = T.p1) => call("GET", "/api/appointments/" + id + "/follow-up-options", token);
+
+    // the doctor gave one date
+    const single = await mkPrev({ mode: "single", date: day(23), time: "11:00" });
+    r = await opts(single.id);
+    check("P30 options: the doctor's single date is the only date offered", r.s === 200 && r.j.data.mode === "dates" && JSON.stringify(r.j.data.dates) === JSON.stringify([day(23)]), "got " + r.s + " " + (r.raw || "").slice(0, 140));
+    r = await book(single.id, day(24), "11:00");
+    check("P30 a follow-up on any other date is refused (400, the message names the doctor's date)", r.s === 400 && (r.raw || "").includes(day(23)), "got " + r.s + " " + (r.raw || "").slice(0, 160));
+    r = await book(single.id, day(23), "12:00");
+    check("P30 on the doctor's date it is booked (the patient picks the time that day)", r.s === 200 && r.j.appointmentId, "got " + r.s + " " + (r.raw || "").slice(0, 140));
+    r = await opts(single.id);
+    check("P30 options then say a follow-up is already booked", r.s === 200 && r.j.data.mode === "booked");
+
+    // the doctor gave a series: the dates of its proposals (kept even when a slot could not be held)
+    const series = await mkPrev({ mode: "series", weekdays: [1, 3], time: "16:00", occurrences: 2 });
+    for (const d of [day(24), day(25)]) await q(`INSERT INTO followup_proposals(source_pcr_id, patient_id, therapist_id, proposed_start, status) VALUES ($1,$2,$3,$4,'no_slot')`, [series.pcrId, U.p1.id, U.t1.id, d + "T16:00:00+05:30"]);
+    r = await opts(series.id);
+    check("P30 options: every date of the doctor's series is offered", r.s === 200 && r.j.data.mode === "dates" && r.j.data.dates.length === 2 && r.j.data.dates.includes(day(24)) && r.j.data.dates.includes(day(25)), "got " + (r.raw || "").slice(0, 140));
+    r = await book(series.id, day(26), "16:00");
+    check("P30 a date outside the series is refused (400)", r.s === 400, "got " + r.s);
+    r = await book(series.id, day(25), "16:00");
+    check("P30 a date inside the series is accepted", r.s === 200, "got " + r.s + " " + (r.raw || "").slice(0, 120));
+
+    // the doctor left it to the patient / recorded nothing / ended the care
+    const later = await mkPrev({ mode: "later", reason: "Patient will check the calendar" });
+    r = await opts(later.id);
+    check("P30 'patient will book later' leaves the date free", r.s === 200 && r.j.data.mode === "any");
+    const none = await mkPrev({ mode: "none" });
+    r = await book(none.id, day(23), "16:00");
+    check("P30 'no further sessions' blocks a follow-up (400)", r.s === 400 && /no further sessions/i.test(r.raw || ""), "got " + r.s + " " + (r.raw || "").slice(0, 120));
+    const past = await mkPrev({ mode: "single", date: day(-1), time: "10:00" });
+    r = await opts(past.id);
+    check("P30 when the doctor's date has already passed the patient may choose a new one", r.s === 200 && r.j.data.mode === "any" && /passed/i.test(r.j.data.note || ""), "got " + (r.raw || "").slice(0, 140));
+
+    // a slot the doctor already holds for the patient is confirmed from the dashboard, not booked a second time
+    const held = await mkPrev({ mode: "single", date: day(25), time: "17:00" });
+    const hold = (await q(`INSERT INTO appointments(patient_id, therapist_id, service_type_id, date, time, status, payment_status, follow_up_of) VALUES ($1,$2,1,$3,'17:00','proposed','Pending',$4) RETURNING id`, [U.p1.id, U.t1.id, day(25), held.id]))[0].id;
+    r = await opts(held.id);
+    check("P30 options: a held (proposed) slot is reported, with the dashboard as the place to confirm it", r.s === 200 && r.j.data.mode === "proposed", "got " + (r.raw || "").slice(0, 140));
+    r = await book(held.id, day(25), "11:00");
+    check("P30 booking over a held follow-up is refused (409)", r.s === 409 && /reserved/i.test(r.raw || ""), "got " + r.s + " " + (r.raw || "").slice(0, 120));
+
+    // privacy and plumbing
+    r = await opts(single.id, T.p2);
+    check("P30 another patient cannot read the options of someone else's visit (404)", r.s === 404, "got " + r.s);
+    r = await opts(hold, T.p1);
+    check("P30 options of a visit that is not completed (400)", r.s === 400, "got " + r.s);
+    check("P30 every follow-up proposal made by the doctor is linked to the visit it follows",
+      (await q("SELECT COUNT(*)::int AS n FROM appointments a JOIN followup_proposals fp ON fp.appointment_id = a.id WHERE a.follow_up_of IS NULL AND fp.source_pcr_id IS NOT NULL"))[0].n === 0);
+  }
   unmute();
   const widthName = Math.max(...results.map((x) => x.name.length));
   for (const x of results) console.log((x.ok ? "PASS " : "FAIL ") + x.name + (x.ok ? "" : "  <-- " + x.detail));

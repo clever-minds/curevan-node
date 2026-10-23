@@ -306,12 +306,13 @@ exports.createBookingAndInvoice = async (req, res) => {
         ip: req.ip, userAgent: req.headers["user-agent"], transaction: t,
       });
 
-      // working hours, leave, double booking, 4-hour lead time and 30-day limit are all checked here, inside the transaction
-      await slotService.assertSlotBookable(bookingData.therapistId, bookingData.date, bookingData.time, { transaction: t });
-
       // patients book for themselves; only an admin may book on behalf of someone
       const patientId = access.isAdmin(req.user) && bookingData.patientId ? bookingData.patientId : req.user.id;
-      const followUpOf = await followUpLink.resolve(patientId, bookingData.followUpOf, { transaction: t });
+      // a follow-up: the doctor's date rule comes first, so the patient hears "choose the date your therapist gave" before "slot taken"
+      const followUpOf = await followUpLink.resolve(patientId, bookingData.followUpOf, { transaction: t, date: bookingData.date });
+
+      // working hours, leave, double booking, 4-hour lead time and 30-day limit are all checked here, inside the transaction
+      await slotService.assertSlotBookable(bookingData.therapistId, bookingData.date, bookingData.time, { transaction: t });
 
       const [rows] = await sequelize.query(
         `INSERT INTO appointments (
@@ -1247,7 +1248,7 @@ exports.createBookingRequest = async (req, res) => {
     );
     const basePrice = serviceType && Number(serviceType.base_price) > 0 ? Number(serviceType.base_price) : 0;
 
-    const followUpOf = await followUpLink.resolve(bookingData.patientId, bookingData.followUpOf);
+    const followUpOf = await followUpLink.resolve(bookingData.patientId, bookingData.followUpOf, { date: bookingData.date });
 
     const [rows] = await sequelize.query(
       `INSERT INTO appointments (
@@ -2071,3 +2072,15 @@ exports.rescheduleAppointment = async (req, res) => {
       return res.status(500).json({ success: false, error: "Failed to reschedule appointment" });
     }
   };
+
+// GET /api/appointments/:id/follow-up-options: may the patient book a follow-up of this completed visit, and on which dates?
+exports.getFollowUpOptions = async (req, res) => {
+  try {
+    const o = await followUpLink.options(req.user.id, req.params.id);
+    return res.json({ success: true, data: o });
+  } catch (error) {
+    if (error instanceof followUpLink.FollowUpLinkError) return res.status(error.httpStatus).json({ success: false, error: error.message, message: error.message });
+    console.error("getFollowUpOptions error:", error);
+    return res.status(500).json({ success: false, error: "Could not load follow-up options" });
+  }
+};
