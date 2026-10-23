@@ -266,3 +266,10 @@ Total routes: 170
 - `GET /api/appointments/pcr/:appointmentId` now returns `lastVisit`: the linked visit's locked report (assessment, treatment, plan of care, HEP, vitals, scores), or the patient's latest locked report when the booking is not linked (`linked: false`).
   The treating therapist gets it from 4 hours before the session, like the baseline (`historyLocked` hides it earlier). The patient and clinical admins see it any time; other therapists still get 403 on the PCR.
 - Appointment reads and lists carry `followUpOf`.
+
+### The doctor's date decides when a follow-up can be booked
+- `GET /api/appointments/:id/follow-up-options` (the patient who owns the completed visit) returns `mode`:
+  `dates` (only the dates the doctor gave in the report: a single date, or every date of the series), `any` (the doctor chose "patient will book later", gave nothing, or the given dates have passed), `none` ("no further sessions": booking refused, 400),
+  `proposed` (the doctor's slot is already held: confirm it from the dashboard, 409), `booked` (a follow-up already exists, 409).
+- Booking with `followUpOf` on a date outside `dates` is refused (400, the message names the doctor's date). The date rule is checked before slot availability.
+- Slots the doctor proposes in the report (P17) now carry `follow_up_of`, so they count as the follow-up of that visit.
