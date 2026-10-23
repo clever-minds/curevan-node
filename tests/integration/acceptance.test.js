@@ -2175,6 +2175,23 @@ async function seed() {
     await call("PUT", "/api/service-types/update/1", T.therapy, { name: "Physio", is_active: true, tax_category: "exempt_clinical" });
     }
 
+    // --- a session and a shop order must never be mixed up: "BK-<id>" is a booking id, "ORD-<id>" an order id, a bare number keeps its old meaning
+    {
+      const ordInv = (await q("SELECT id, order_id FROM invoices WHERE order_id IS NOT NULL ORDER BY id LIMIT 1"))[0];
+      const ap = ordInv ? (await q("SELECT id, patient_id FROM appointments WHERE id = $1", [ordInv.id]))[0] : null;
+      if (ordInv && ap) {
+        await q("INSERT INTO invoices(invoice_number, invoice_type, status, user_id, booking_id, total_amount_paise, issued_at) VALUES ('INV-BK-SAMEID', 'booking', 'issued', $1, $2, 50000, now())", [ap.patient_id, ap.id]);
+        r = await call("GET", "/api/orders/invoice/BK-" + ap.id, T.su);
+        check("P25 BK-<id> opens the invoice of that session even when an order invoice has the same number", r.s === 200 && String(r.j.data.invoice.booking_id) === String(ap.id) && r.j.data.invoice.order_id == null, "got " + r.s + " " + (r.raw || "").slice(0, 120));
+        r = await call("GET", "/api/orders/invoice/ORD-" + ordInv.order_id, T.su);
+        check("P25 ORD-<id> opens the invoice of that shop order", r.s === 200 && String(r.j.data.invoice.order_id) === String(ordInv.order_id) && r.j.data.type === "order", "got " + r.s + " " + (r.raw || "").slice(0, 120));
+        r = await call("GET", "/api/orders/invoice/" + ordInv.id, T.su);
+        check("P25 a bare number keeps working for old links (the exact invoice id first)", r.s === 200 && String(r.j.data.invoice.id) === String(ordInv.id), "got " + r.s);
+        r = await call("GET", "/api/orders/invoice/BK-" + ap.id, T.p2);
+        check("P25 another patient cannot open that session's invoice by BK-<id> (404)", r.s === 404 || r.s === 403, "got " + r.s);
+      } else check("P25 (setup) an order invoice and a booking with the same number exist for the collision test", false, "no matching pair in the fixture");
+    }
+
     // --- DPDP rights
     const pd = await mkP("d");
     await q("INSERT INTO appointments(patient_id, patient_name, therapist_id, therapist_name, service_type_id, therapy_type, service_amount, total_amount, date, time, status, payment_status, mode, created_at) VALUES ($1,'D',$2,'Dr One',1,'Physio',1500,1500,'2031-03-03','09:00','completed','Paid','home',now())", [pd.id, U.t1.id]);
