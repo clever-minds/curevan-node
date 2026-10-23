@@ -1377,6 +1377,8 @@ async function seed() {
     check("P19 a return on an undelivered order is refused (400)", r.s === 400 && /delivered/i.test(r.raw || ""), "got " + r.s + " " + (r.raw || "").slice(0, 100));
     const Old = await mkOrder("delivered");
     await q("UPDATE orders SET delivered_at = now() - interval '8 days' WHERE id = $1", [Old.id]);
+    r = await call("POST", "/api/orders/" + Und.id + "/return", T.p1, { reason: "damaged", photos: ["p1"], items: [{ orderItemId: 1, qty: 1 }] });
+    check("P19 an item without order_item_id and quantity is a 400, not a server error", r.s === 400, "got " + r.s + " " + (r.raw || "").slice(0, 100));
     r = await call("POST", "/api/orders/" + Old.id + "/return", T.p1, { reason: "damaged", photos: ["p1"], items: [{ order_item_id: await itemOf(Old.id), quantity: 1 }] });
     check("P19 a return after 7 days is refused (400)", r.s === 400 && /window/i.test(r.raw || ""), "got " + r.s + " " + (r.raw || "").slice(0, 100));
     const itA = await itemOf(A.id);
@@ -2192,6 +2194,9 @@ async function seed() {
       } else check("P25 (setup) an order invoice and a booking with the same number exist for the collision test", false, "no matching pair in the fixture");
     }
 
+    // --- an empty cart is a polite 400, not a server error
+    { const ec = await mkP("emptycart"); r = await call("POST", "/api/orders/validate-cart-stock", ec.tk, {}); check("P06 checking stock with an empty cart answers 400 'cart is empty' (was a SQL error)", r.s === 400 && /empty/i.test(r.raw || ""), "got " + r.s + " " + (r.raw || "").slice(0, 100)); }
+
     // --- a user record (name, e-mail, roles) is for its owner and the admins
     r = await call("GET", "/api/users/" + U.t1.id, T.p1);
     check("P04 a patient cannot read another user's record by id (403)", r.s === 403, "got " + r.s);
@@ -2792,6 +2797,7 @@ async function seed() {
     r = await call("POST", "/api/appointments/create-appointment", T.p1, bk(U.t1.id, day(27), "11:00", live()));
     const fu1 = r.j && r.j.appointmentId;
     check("P30 the patient books a follow-up of a completed visit; the booking is linked to it", r.s === 200 && fu1 && String(await fuOf(fu1)) === String(prev), "got " + r.s + " " + (r.raw || "").slice(0, 140));
+    check("P30 the booking carries the therapist's name from the user record even when the client sends none", fu1 && (await q("SELECT a.therapist_name = u.name AS same FROM appointments a JOIN users u ON u.id = a.therapist_id WHERE a.id = $1", [fu1]))[0].same === true);
     r = await call("POST", "/api/appointments/create-appointment", T.p1, bk(U.t1.id, day(27), "12:00", live()));
     check("P30 a second live follow-up for the same visit is refused (409)", r.s === 409 && /already booked/i.test(r.raw || ""), "got " + r.s + " " + (r.raw || "").slice(0, 120));
     r = await call("POST", "/api/appointments/create-appointment", T.p2, bk(U.t1.id, day(27), "13:00", { followUpOf: prev, addressId: U.a2 }));

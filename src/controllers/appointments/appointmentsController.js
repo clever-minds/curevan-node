@@ -297,7 +297,7 @@ exports.createBookingAndInvoice = async (req, res) => {
       }
 
       const [therapist] = await sequelize.query(
-        `SELECT hourly_rate FROM therapist_profiles WHERE user_id = :therapistId AND profile_status = 'approved'`,
+        `SELECT tp.hourly_rate, u.name FROM therapist_profiles tp JOIN users u ON u.id = tp.user_id WHERE tp.user_id = :therapistId AND tp.profile_status = 'approved'`,
         { replacements: { therapistId: bookingData.therapistId }, type: QueryTypes.SELECT, transaction: t }
       );
       if (!therapist) { await t.rollback(); return res.status(404).json({ success: false, error: "Therapist not found" }); }
@@ -335,7 +335,7 @@ exports.createBookingAndInvoice = async (req, res) => {
             patientName: bookingData.patientName || null,
             dateofbirth: bookingData.dateofBirth || null,
             therapistId: bookingData.therapistId,
-            therapistName: bookingData.therapist || null,
+            therapistName: therapist.name || bookingData.therapist || null,   // the name on file, so every screen has one
             serviceTypeId: bookingData.serviceTypeId || null,
             therapyType: bookingData.therapyType || null,
             amount,

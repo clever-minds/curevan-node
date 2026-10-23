@@ -1392,6 +1392,8 @@ exports.validateCartStock = async (req, res) => {
     }
   );
 
+  if (!cartItems.length) return res.status(400).json({ success: false, message: 'Your cart is empty' });   // an empty cart is not a server error
+
   const productIds = cartItems.map(i => i.product_id);
 
   const inventories = await sequelize.query(

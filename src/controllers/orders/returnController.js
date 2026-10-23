@@ -41,6 +41,7 @@ exports.requestReturn = async (req, res) => {
     // 3. every item: part of this order, not in a category that cannot be returned, quantity still available
     const lines = [];
     for (const it of items) {
+      if (!it || !Number.isInteger(Number(it.order_item_id)) || !(Number(it.quantity) >= 1)) return refuse(400, 'Choose the item(s) you want to return');   // a malformed item is the caller's mistake, not a server error
       const [line] = await sequelize.query(
         `SELECT oi.id, oi.name, oi.qty,
                 COALESCE((SELECT SUM(ri.quantity) FROM order_return_items ri JOIN order_returns r ON r.id = ri.return_id
