@@ -68,7 +68,7 @@ async function resolve(patientId, followUpOf, { transaction, date } = {}) {
   return Number(followUpOf);
 }
 
-/** The report of the patient's latest locked visit before this one. `linked` says it is the visit this follow-up was booked from. */
+/** The report of the patient's latest submitted or locked visit before this one. `linked` says it is the visit this follow-up was booked from. */
 async function lastVisitFor(patientId, appointmentId, followUpOf, transaction) {
   const [latest] = await q(
     `SELECT a.id AS "appointmentId", a.date, a.time, a.therapist_name AS "therapistName", a.therapy_type AS "therapyType",
@@ -76,8 +76,8 @@ async function lastVisitFor(patientId, appointmentId, followUpOf, transaction) {
       p.bp, p.hr, p.rr, p.temp, p.functional_score AS "functionalScore", p.functional_measure AS "functionalMeasure", p.pain_vas AS "painVas",
       p.hep, p.next_treatment_date AS "nextTreatmentDate", p.session_type AS "sessionType", p.locked_at AS "lockedAt"
      FROM pcr p JOIN appointments a ON a.id = p.appointment_id
-     WHERE a.patient_id = :patientId AND a.id <> :appointmentId AND p.status = 'locked'
-     ORDER BY p.locked_at DESC NULLS LAST, p.id DESC LIMIT 1`,
+     WHERE a.patient_id = :patientId AND a.id <> :appointmentId AND p.status IN ('submitted', 'locked')   -- a submitted report counts: the therapist's text is final, the lock comes later
+     ORDER BY COALESCE(p.locked_at, p.submitted_at) DESC NULLS LAST, p.id DESC LIMIT 1`,
     { patientId, appointmentId }, transaction
   );
   return latest ? { ...latest, linked: Boolean(followUpOf) && String(latest.appointmentId) === String(followUpOf) } : null;

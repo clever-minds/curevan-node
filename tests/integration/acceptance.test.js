@@ -2822,6 +2822,12 @@ async function seed() {
       r.s === 200 && lv && lv.linked === true && /joint-line/.test(lv.assessment) && /Manual therapy/.test(lv.treatmentProvided) && /three weeks/.test(lv.planOfCare) && /Straight leg/.test(lv.hep) && lv.functionalScore === 6 && lv.painVas === 4 && String(lv.appointmentId) === String(prev), "got " + r.s + " " + JSON.stringify(lv).slice(0, 160));
     r = await call("GET", "/api/appointments/pcr/" + fu, T.p1);
     check("P30 the patient sees the same last-visit report in their own new PCR", r.s === 200 && r.j.data.lastVisit && r.j.data.lastVisit.linked === true);
+    const sbPrev = (await q(`INSERT INTO appointments(patient_id, patient_name, therapist_id, therapist_name, service_type_id, service_amount, total_amount, date, time, status, payment_status, payment_method, created_at)
+      VALUES ($1,'Patient One',$2,'Dr One',1,1500,1500,$3,'04:52','completed','Paid','razorpay', now()) RETURNING id`, [U.p1.id, U.t1.id, day(-1)]))[0].id;
+    await q(`INSERT INTO pcr(appointment_id, patient_id, therapist_id, service_type_id, status, version, assessment, submitted_at) VALUES ($1,$2,$3,1,'submitted',1,'Newest visit, submitted but not yet locked', now() + interval '1 hour')`, [sbPrev, U.p1.id, U.t1.id]);
+    r = await call("GET", "/api/appointments/pcr/" + fu, T.t1);
+    check("P30 a report that is submitted but not yet locked is the 'last visit' (it is newer than the older locked one)", r.s === 200 && r.j.data.lastVisit && /Newest visit/.test(r.j.data.lastVisit.assessment) && String(r.j.data.lastVisit.appointmentId) === String(sbPrev), "got " + r.s + " " + JSON.stringify(r.j && r.j.data && r.j.data.lastVisit).slice(0, 120));
+    await q("DELETE FROM pcr WHERE appointment_id = $1", [sbPrev]); await q("DELETE FROM appointments WHERE id = $1", [sbPrev]);
     const far = await mkVisit(24 * 60 * 5 + 13, "confirmed"); await q("UPDATE appointments SET follow_up_of = $1 WHERE id = $2", [prev, far]); await mkPcrRow(far);
     r = await call("GET", "/api/appointments/pcr/" + far, T.t1);
     check("P30 more than 4 hours before the session the therapist gets no last-visit report (history stays closed)", r.s === 200 && r.j.data.historyLocked === true && !r.j.data.lastVisit, "got " + r.s + " " + JSON.stringify(r.j && r.j.data && r.j.data.lastVisit).slice(0, 80));
