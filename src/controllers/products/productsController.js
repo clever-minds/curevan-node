@@ -1,3 +1,4 @@
+const { chooseSlug, SlugError } = require("../../utils/slug");
 const { QueryTypes } = require('sequelize');
 const { sequelize } = require('../../config/db');
 /* =========================
@@ -178,10 +179,12 @@ exports.addProduct = async (req, res) => {
     const imageIdsArray = Array.isArray(image_ids) ? image_ids : image_ids ? [image_ids] : [];
     const imageIdsString = imageIdsArray.length > 0 ? imageIdsArray.join(',') : '';
 
+    const slug = await chooseSlug('products', req.body.slug, title, { fallback: 'product', transaction: t });
+
     // 5️⃣ Insert product
     const [product] = await sequelize.query(
       `INSERT INTO products (
-          product_type, title, subtitle, short_description, long_description,
+          product_type, title, slug, subtitle, short_description, long_description,
           brand, sku, category_id, mrp, selling_price,
           is_tax_inclusive, is_coupon_excluded,
           hsn_code, sac_code, gst_slab, status,
@@ -190,7 +193,7 @@ exports.addProduct = async (req, res) => {
           manufacturing_date, expiry_date, tags,
           image_ids, additional_features, is_recommended, service_type_id, sub_category_id
         ) VALUES (
-          :productType, :title, :subtitle, :shortDescription, :longDescription,
+          :productType, :title, :slug, :subtitle, :shortDescription, :longDescription,
           :brand, :sku, :category, :mrp, :sellingPrice,
           :isTaxInclusive, :isCouponExcluded,
           :hsnCode, :sacCode, :gstSlab, :status,
@@ -204,6 +207,7 @@ exports.addProduct = async (req, res) => {
         replacements: {
           productType,
           title,
+          slug,
           subtitle,
           shortDescription,
           longDescription,
@@ -337,8 +341,9 @@ exports.addProduct = async (req, res) => {
   } catch (error) {
     await t.rollback();
 
+    if (error instanceof SlugError) return res.status(400).json({ message: error.message });
     // 8️⃣ Handle unique SKU error
-    if (error.original?.code === '23505') {
+    if (error.original?.code === '23505' && error.original?.constraint !== 'uq_products_slug') {
       return res.status(409).json({ message: 'SKU already exists' });
     }
 
@@ -685,11 +690,15 @@ exports.updateProduct = async (req, res) => {
     const tagsJSON = JSON.stringify(tags || []);
     const additionalFeaturesJSON = JSON.stringify(additional_features || []);
 
+    // a product link that is already out in the world changes only when the admin edits the slug itself
+    const slug = req.body.slug ? await chooseSlug('products', req.body.slug, title, { excludeId: Number(id), transaction: t }) : null;
+
     // ---------------- PRODUCT UPDATE QUERY ----------------
     let updateQuery = `
       UPDATE products SET
         product_type = :productType,
         title = :title,
+        slug = COALESCE(:slug, slug),
         subtitle = :subtitle,
         short_description = :shortDescription,
         long_description = :longDescription,
@@ -733,6 +742,7 @@ exports.updateProduct = async (req, res) => {
       id,
       productType,
       title,
+      slug,
       subtitle,
       shortDescription,
       longDescription,
@@ -876,8 +886,9 @@ exports.updateProduct = async (req, res) => {
   } catch (error) {
     await t.rollback();
 
+    if (error instanceof SlugError) return res.status(400).json({ success: false, message: error.message });
     // Handle unique SKU error
-    if (error.original?.code === '23505') {
+    if (error.original?.code === '23505' && error.original?.constraint !== 'uq_products_slug') {
       return res.status(409).json({ success: false, message: 'SKU already exists' });
     }
 
@@ -1352,7 +1363,7 @@ exports.getProductFrontendById = async (req, res) => {
       LEFT JOIN inventory i ON i.product_id = p.id
       LEFT JOIN media m ON m.id = p.image_ids[1]
       LEFT JOIN media m2 ON m2.id = ANY(p.image_ids)
-      WHERE p.id = :id
+      WHERE ${/^[0-9]+$/.test(String(id)) ? 'p.id' : 'p.slug'} = :id
       GROUP BY p.id, c.name, i.on_hand, i.reserved, i.reorder_point, m.file_path
       ) q`,
       {

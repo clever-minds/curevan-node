@@ -32,13 +32,13 @@ async function options(patientId, followUpOf, { transaction } = {}) {
   if (!Number.isInteger(id) || id <= 0) throw new FollowUpLinkError(400, "followUpOf must be the id of an earlier visit");
   await loadOwned(patientId, id, transaction);
   const [live] = await q(
-    `SELECT id, status FROM appointments WHERE follow_up_of = :id AND status NOT LIKE 'cancelled%' AND status NOT IN ('proposal_expired', 'no_slot', 'declined') ORDER BY (status = 'proposed') DESC LIMIT 1`,
+    `SELECT id, status FROM appointments WHERE follow_up_of = :id AND status NOT LIKE 'cancelled%' AND status NOT IN ('proposal_expired', 'proposal_declined', 'no_slot', 'no_show') ORDER BY (status = 'proposed') DESC LIMIT 1`,
     { id }, transaction
   );
   if (live && live.status === "proposed") return { mode: "proposed", message: "Your therapist has already reserved a follow-up for you. Confirm it from your dashboard." };
   if (live) return { mode: "booked", message: "A follow-up for this visit is already booked" };
 
-  const [report] = await q(`SELECT id, next_session_plan AS plan FROM pcr WHERE appointment_id = :id AND status = 'locked' ORDER BY id DESC LIMIT 1`, { id }, transaction);
+  const [report] = await q(`SELECT id, next_session_plan AS plan FROM pcr WHERE appointment_id = :id AND status IN ('submitted', 'locked') ORDER BY id DESC LIMIT 1`, { id }, transaction);   // the doctor's date counts from the moment the report is submitted
   const plan = report && report.plan;
   if (!plan || !plan.mode || plan.mode === "later") return { mode: "any" };
   if (plan.mode === "none") return { mode: "none", message: "Your therapist has recorded that no further sessions are needed. Please ask for a new assessment if you need more care." };
@@ -68,7 +68,7 @@ async function resolve(patientId, followUpOf, { transaction, date } = {}) {
   return Number(followUpOf);
 }
 
-/** The report of the patient's latest locked visit before this one. `linked` says it is the visit this follow-up was booked from. */
+/** The report of the patient's latest submitted or locked visit before this one. `linked` says it is the visit this follow-up was booked from. */
 async function lastVisitFor(patientId, appointmentId, followUpOf, transaction) {
   const [latest] = await q(
     `SELECT a.id AS "appointmentId", a.date, a.time, a.therapist_name AS "therapistName", a.therapy_type AS "therapyType",
@@ -76,8 +76,8 @@ async function lastVisitFor(patientId, appointmentId, followUpOf, transaction) {
       p.bp, p.hr, p.rr, p.temp, p.functional_score AS "functionalScore", p.functional_measure AS "functionalMeasure", p.pain_vas AS "painVas",
       p.hep, p.next_treatment_date AS "nextTreatmentDate", p.session_type AS "sessionType", p.locked_at AS "lockedAt"
      FROM pcr p JOIN appointments a ON a.id = p.appointment_id
-     WHERE a.patient_id = :patientId AND a.id <> :appointmentId AND p.status = 'locked'
-     ORDER BY p.locked_at DESC NULLS LAST, p.id DESC LIMIT 1`,
+     WHERE a.patient_id = :patientId AND a.id <> :appointmentId AND p.status IN ('submitted', 'locked')   -- a submitted report counts: the therapist's text is final, the lock comes later
+     ORDER BY COALESCE(p.locked_at, p.submitted_at) DESC NULLS LAST, p.id DESC LIMIT 1`,
     { patientId, appointmentId }, transaction
   );
   return latest ? { ...latest, linked: Boolean(followUpOf) && String(latest.appointmentId) === String(followUpOf) } : null;

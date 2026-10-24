@@ -452,9 +452,10 @@ async function seed() {
 
   // cancel
   const day = (n) => { const d = new Date(Date.now() + 5.5 * 3600e3 + n * 86400e3); return `${d.getUTCFullYear()}-${pad(d.getUTCMonth() + 1)}-${pad(d.getUTCDate())}`; };
-  let mkN = 0;   // every test booking gets its own time, because the database now refuses two active bookings in one slot
-  const mkA = async (pay, daysAhead, extra = {}) => (await q(`INSERT INTO appointments(patient_id, patient_name, therapist_id, therapist_name, service_type_id, service_amount, total_amount, date, time, status, payment_status, razorpay_payment_id, payment_method, created_at)
-    VALUES ($1,'Patient One',$2,'Dr One',1,1500,1500,$3,$4,CASE WHEN $5 = 'Paid' THEN 'confirmed' ELSE 'pending_payment' END,$5,$6,$7, now() - interval '1 day') RETURNING id`, [U.p1.id, U.t1.id, day(daysAhead), extra.time || `${pad(1 + (mkN++ % 20))}:30`, pay, extra.rzp || null, extra.method || null]))[0].id;
+  let mkN = 0;   // every test booking gets its own time, because the database now refuses two active bookings in one slot; the minute is half an hour away from the clock's, so it never meets the fixtures that are placed relative to "now"
+  const mkA1 = async (pay, daysAhead, extra = {}) => (await q(`INSERT INTO appointments(patient_id, patient_name, therapist_id, therapist_name, service_type_id, service_amount, total_amount, date, time, status, payment_status, razorpay_payment_id, payment_method, created_at)
+    VALUES ($1,'Patient One',$2,'Dr One',1,1500,1500,$3,$4,CASE WHEN $5 = 'Paid' THEN 'confirmed' ELSE 'pending_payment' END,$5,$6,$7, now() - interval '1 day') RETURNING id`, [U.p1.id, U.t1.id, day(daysAhead), extra.time || `${pad(1 + (mkN++ % 20))}:${pad((new Date().getUTCMinutes() + 30) % 60)}`, pay, extra.rzp || null, extra.method || null]))[0].id;
+  const mkA = async (pay, daysAhead, extra = {}) => { for (let k = 0; ; k++) { try { return await mkA1(pay, daysAhead, k ? { ...extra, time: `${pad(1 + (mkN++ % 20))}:${pad((new Date().getUTCMinutes() + 31 + k * 3) % 60)}` } : extra); } catch (e) { if (!/uq_appointments_active_slot/.test(String(e.message)) || k >= 8) throw e; } } };   // a slot taken by a clock-relative fixture: try another minute
   const unpaid = await mkA("Pending", 0, { time: "23:00" });
   r = await call("POST", "/api/appointments/" + unpaid + "/cancel", T.p2); check("P10 another patient cannot cancel -> " + r.s, r.s === 403);
   const tNotifBefore = (await q("SELECT COUNT(*)::int AS n FROM notifications WHERE user_uid = $1 AND title = 'Appointment cancelled'", [String(U.t1.id)]))[0].n;
@@ -1377,6 +1378,8 @@ async function seed() {
     check("P19 a return on an undelivered order is refused (400)", r.s === 400 && /delivered/i.test(r.raw || ""), "got " + r.s + " " + (r.raw || "").slice(0, 100));
     const Old = await mkOrder("delivered");
     await q("UPDATE orders SET delivered_at = now() - interval '8 days' WHERE id = $1", [Old.id]);
+    r = await call("POST", "/api/orders/" + Und.id + "/return", T.p1, { reason: "damaged", photos: ["p1"], items: [{ orderItemId: 1, qty: 1 }] });
+    check("P19 an item without order_item_id and quantity is a 400, not a server error", r.s === 400, "got " + r.s + " " + (r.raw || "").slice(0, 100));
     r = await call("POST", "/api/orders/" + Old.id + "/return", T.p1, { reason: "damaged", photos: ["p1"], items: [{ order_item_id: await itemOf(Old.id), quantity: 1 }] });
     check("P19 a return after 7 days is refused (400)", r.s === 400 && /window/i.test(r.raw || ""), "got " + r.s + " " + (r.raw || "").slice(0, 100));
     const itA = await itemOf(A.id);
@@ -2175,6 +2178,61 @@ async function seed() {
     await call("PUT", "/api/service-types/update/1", T.therapy, { name: "Physio", is_active: true, tax_category: "exempt_clinical" });
     }
 
+    // --- a session and a shop order must never be mixed up: "BK-<id>" is a booking id, "ORD-<id>" an order id, a bare number keeps its old meaning
+    {
+      const ordInv = (await q("SELECT id, order_id FROM invoices WHERE order_id IS NOT NULL ORDER BY id LIMIT 1"))[0];
+      const ap = ordInv ? (await q("SELECT id, patient_id FROM appointments WHERE id = $1", [ordInv.id]))[0] : null;
+      if (ordInv && ap) {
+        await q("INSERT INTO invoices(invoice_number, invoice_type, status, user_id, booking_id, total_amount_paise, issued_at) VALUES ('INV-BK-SAMEID', 'booking', 'issued', $1, $2, 50000, now())", [ap.patient_id, ap.id]);
+        r = await call("GET", "/api/orders/invoice/BK-" + ap.id, T.su);
+        check("P25 BK-<id> opens the invoice of that session even when an order invoice has the same number", r.s === 200 && String(r.j.data.invoice.booking_id) === String(ap.id) && r.j.data.invoice.order_id == null, "got " + r.s + " " + (r.raw || "").slice(0, 120));
+        r = await call("GET", "/api/orders/invoice/ORD-" + ordInv.order_id, T.su);
+        check("P25 ORD-<id> opens the invoice of that shop order", r.s === 200 && String(r.j.data.invoice.order_id) === String(ordInv.order_id) && r.j.data.type === "order", "got " + r.s + " " + (r.raw || "").slice(0, 120));
+        r = await call("GET", "/api/orders/invoice/" + ordInv.id, T.su);
+        check("P25 a bare number keeps working for old links (the exact invoice id first)", r.s === 200 && String(r.j.data.invoice.id) === String(ordInv.id), "got " + r.s);
+        r = await call("GET", "/api/orders/invoice/BK-" + ap.id, T.p2);
+        check("P25 another patient cannot open that session's invoice by BK-<id> (404)", r.s === 404 || r.s === 403, "got " + r.s);
+      } else check("P25 (setup) an order invoice and a booking with the same number exist for the collision test", false, "no matching pair in the fixture");
+    }
+
+    // --- an empty cart is a polite 400, not a server error
+    { const ec = await mkP("emptycart"); r = await call("POST", "/api/orders/validate-cart-stock", ec.tk, {}); check("P06 checking stock with an empty cart answers 400 'cart is empty' (was a SQL error)", r.s === 400 && /empty/i.test(r.raw || ""), "got " + r.s + " " + (r.raw || "").slice(0, 100)); }
+
+    // --- a user record (name, e-mail, roles) is for its owner and the admins
+    r = await call("GET", "/api/users/" + U.t1.id, T.p1);
+    check("P04 a patient cannot read another user's record by id (403)", r.s === 403, "got " + r.s);
+    r = await call("GET", "/api/users/" + U.p1.id, T.p1);
+    check("P04 a user can still read their own record", r.s === 200 && String(r.j.data.id) === String(U.p1.id), "got " + r.s);
+    r = await call("GET", "/api/users/" + U.p1.id, T.therapy);
+    check("P04 an admin can read a user's record", r.s === 200, "got " + r.s);
+    r = await call("GET", "/api/users/" + U.p1.id, T.t1);
+    check("P04 a therapist cannot read a patient's user record by id (403)", r.s === 403, "got " + r.s);
+
+    // --- shop data stays with the shop admins: a therapy admin lists only their own orders and cannot read someone else's shop invoice
+    {
+      const someOrder = (await q("SELECT o.id, o.user_id, i.id AS inv FROM orders o JOIN invoices i ON i.order_id = o.id WHERE o.user_id <> $1 ORDER BY o.id LIMIT 1", [U.therapy.id]))[0];
+      r = await call("GET", "/api/orders/my-orders", T.therapy);
+      check("P04 a therapy admin's order list holds only their own orders (none belong to other customers)", r.s === 200 && (r.j.data || []).length === 0, "got " + r.s + " rows " + ((r.j && r.j.data) || []).length);
+      r = await call("GET", "/api/orders/my-orders", T.ecom);
+      check("P04 the e-com admin still sees every customer's orders", r.s === 200 && (r.j.data || []).length > 0, "got " + r.s);
+      r = await call("GET", "/api/orders/my-orders", T.su);
+      check("P04 the super admin still sees every customer's orders", r.s === 200 && (r.j.data || []).length > 0, "got " + r.s);
+      if (someOrder) {
+        r = await call("GET", "/api/orders/invoice/" + someOrder.inv, T.therapy);
+        check("P04 a therapy admin cannot open a shop invoice (403)", r.s === 403, "got " + r.s);
+        r = await call("GET", "/api/orders/invoice/ORD-" + someOrder.id, T.ecom);
+        check("P04 the e-com admin can open a shop invoice", r.s === 200, "got " + r.s);
+      }
+      r = await call("GET", "/api/appointments", T.ecom);
+      check("P04 the e-com admin's appointment list has no patient or therapist phone, no home address and no notes", r.s === 200 && (r.j.data || []).length > 0 && (r.j.data || []).every((x) => !("patientPhone" in x) && !("therapistPhone" in x) && !("notes" in x) && !("serviceAddress" in x)), "got " + r.s + " " + JSON.stringify(Object.keys(((r.j && r.j.data) || [{}])[0] || {})).slice(0, 160));
+      r = await call("GET", "/api/appointments", T.therapy);
+      check("P04 the Therapy Admin still gets the full appointment rows (phone, address, notes)", r.s === 200 && (r.j.data || []).length > 0 && "patientPhone" in r.j.data[0] && "notes" in r.j.data[0], "got " + r.s);
+      r = await call("GET", "/api/invoices/list", T.therapy);
+      check("P04 a therapy admin's invoice list has no shop invoices of other customers", r.s === 200 && !(r.j.data || []).some((x) => x.source && x.source.orderId && String(x.userId) !== String(U.therapy.id)), "got " + r.s);
+      r = await call("GET", "/api/invoices/list", T.ecom);
+      check("P04 the e-com admin's invoice list still has shop invoices", r.s === 200 && (r.j.data || []).some((x) => x.source && x.source.orderId), "got " + r.s);
+    }
+
     // --- DPDP rights
     const pd = await mkP("d");
     await q("INSERT INTO appointments(patient_id, patient_name, therapist_id, therapist_name, service_type_id, therapy_type, service_amount, total_amount, date, time, status, payment_status, mode, created_at) VALUES ($1,'D',$2,'Dr One',1,'Physio',1500,1500,'2031-03-03','09:00','completed','Paid','home',now())", [pd.id, U.t1.id]);
@@ -2740,6 +2798,7 @@ async function seed() {
     r = await call("POST", "/api/appointments/create-appointment", T.p1, bk(U.t1.id, day(27), "11:00", live()));
     const fu1 = r.j && r.j.appointmentId;
     check("P30 the patient books a follow-up of a completed visit; the booking is linked to it", r.s === 200 && fu1 && String(await fuOf(fu1)) === String(prev), "got " + r.s + " " + (r.raw || "").slice(0, 140));
+    check("P30 the booking carries the therapist's name from the user record even when the client sends none", fu1 && (await q("SELECT a.therapist_name = u.name AS same FROM appointments a JOIN users u ON u.id = a.therapist_id WHERE a.id = $1", [fu1]))[0].same === true);
     r = await call("POST", "/api/appointments/create-appointment", T.p1, bk(U.t1.id, day(27), "12:00", live()));
     check("P30 a second live follow-up for the same visit is refused (409)", r.s === 409 && /already booked/i.test(r.raw || ""), "got " + r.s + " " + (r.raw || "").slice(0, 120));
     r = await call("POST", "/api/appointments/create-appointment", T.p2, bk(U.t1.id, day(27), "13:00", { followUpOf: prev, addressId: U.a2 }));
@@ -2763,6 +2822,12 @@ async function seed() {
       r.s === 200 && lv && lv.linked === true && /joint-line/.test(lv.assessment) && /Manual therapy/.test(lv.treatmentProvided) && /three weeks/.test(lv.planOfCare) && /Straight leg/.test(lv.hep) && lv.functionalScore === 6 && lv.painVas === 4 && String(lv.appointmentId) === String(prev), "got " + r.s + " " + JSON.stringify(lv).slice(0, 160));
     r = await call("GET", "/api/appointments/pcr/" + fu, T.p1);
     check("P30 the patient sees the same last-visit report in their own new PCR", r.s === 200 && r.j.data.lastVisit && r.j.data.lastVisit.linked === true);
+    const sbPrev = (await q(`INSERT INTO appointments(patient_id, patient_name, therapist_id, therapist_name, service_type_id, service_amount, total_amount, date, time, status, payment_status, payment_method, created_at)
+      VALUES ($1,'Patient One',$2,'Dr One',1,1500,1500,$3,'04:52','completed','Paid','razorpay', now()) RETURNING id`, [U.p1.id, U.t1.id, day(-1)]))[0].id;
+    await q(`INSERT INTO pcr(appointment_id, patient_id, therapist_id, service_type_id, status, version, assessment, submitted_at) VALUES ($1,$2,$3,1,'submitted',1,'Newest visit, submitted but not yet locked', now() + interval '1 hour')`, [sbPrev, U.p1.id, U.t1.id]);
+    r = await call("GET", "/api/appointments/pcr/" + fu, T.t1);
+    check("P30 a report that is submitted but not yet locked is the 'last visit' (it is newer than the older locked one)", r.s === 200 && r.j.data.lastVisit && /Newest visit/.test(r.j.data.lastVisit.assessment) && String(r.j.data.lastVisit.appointmentId) === String(sbPrev), "got " + r.s + " " + JSON.stringify(r.j && r.j.data && r.j.data.lastVisit).slice(0, 120));
+    await q("DELETE FROM pcr WHERE appointment_id = $1", [sbPrev]); await q("DELETE FROM appointments WHERE id = $1", [sbPrev]);
     const far = await mkVisit(24 * 60 * 5 + 13, "confirmed"); await q("UPDATE appointments SET follow_up_of = $1 WHERE id = $2", [prev, far]); await mkPcrRow(far);
     r = await call("GET", "/api/appointments/pcr/" + far, T.t1);
     check("P30 more than 4 hours before the session the therapist gets no last-visit report (history stays closed)", r.s === 200 && r.j.data.historyLocked === true && !r.j.data.lastVisit, "got " + r.s + " " + JSON.stringify(r.j && r.j.data && r.j.data.lastVisit).slice(0, 80));
@@ -2811,6 +2876,10 @@ async function seed() {
     const later = await mkPrev({ mode: "later", reason: "Patient will check the calendar" });
     r = await opts(later.id);
     check("P30 'patient will book later' leaves the date free", r.s === 200 && r.j.data.mode === "any");
+    const subm = await mkPrev({ mode: "single", date: day(26), time: "11:00" });
+    await q("UPDATE pcr SET status = 'submitted', locked_at = NULL WHERE id = $1", [subm.pcrId]);
+    r = await book(subm.id, day(27), "10:00");
+    check("P30 the doctor's date counts as soon as the report is submitted, before it is locked (400 for another date)", r.s === 400 && (r.raw || "").includes(day(26)), "got " + r.s + " " + (r.raw || "").slice(0, 140));
     const none = await mkPrev({ mode: "none" });
     r = await book(none.id, day(23), "16:00");
     check("P30 'no further sessions' blocks a follow-up (400)", r.s === 400 && /no further sessions/i.test(r.raw || ""), "got " + r.s + " " + (r.raw || "").slice(0, 120));
@@ -2825,6 +2894,9 @@ async function seed() {
     check("P30 options: a held (proposed) slot is reported, with the dashboard as the place to confirm it", r.s === 200 && r.j.data.mode === "proposed", "got " + (r.raw || "").slice(0, 140));
     r = await book(held.id, day(25), "11:00");
     check("P30 booking over a held follow-up is refused (409)", r.s === 409 && /reserved/i.test(r.raw || ""), "got " + r.s + " " + (r.raw || "").slice(0, 120));
+    await q("UPDATE appointments SET status = 'proposal_declined' WHERE id = $1", [hold]);
+    r = await opts(held.id);
+    check("P30 after the patient declines the doctor's held slot the doctor's date is offered again (not 'already booked')", r.s === 200 && r.j.data.mode === "dates" && r.j.data.dates.includes(day(25)), "got " + (r.raw || "").slice(0, 140));
 
     // privacy and plumbing
     r = await opts(single.id, T.p2);
@@ -2834,8 +2906,44 @@ async function seed() {
     check("P30 every follow-up proposal made by the doctor is linked to the visit it follows",
       (await q("SELECT COUNT(*)::int AS n FROM appointments a JOIN followup_proposals fp ON fp.appointment_id = a.id WHERE a.follow_up_of IS NULL AND fp.source_pcr_id IS NOT NULL"))[0].n === 0);
   }
+  {
+    // P31 clean links: every therapy category and product has a unique slug, made from the name and editable by the admin
+    const slugOf = async (table, id) => (await q(`SELECT slug FROM ${table} WHERE id = $1`, [id]))[0].slug;
+    check("P31 every slug in the database is lowercase-hyphen (no space, &, %20)", (await q("SELECT 1 FROM service_types WHERE slug !~ '^[a-z0-9]+(-[a-z0-9]+)*$'")).length === 0);
+    // the schema dump behind this test database predates some product columns that addProduct writes
+    for (const col of ["subtitle TEXT", "short_description TEXT", "length_cm NUMERIC", "width_cm NUMERIC", "height_cm NUMERIC", "manufacturer TEXT", "country_of_origin TEXT", "packer TEXT", "importer TEXT", "batch_number TEXT", "manufacturing_date DATE", "expiry_date DATE", "tags JSON", "sac_code TEXT"]) await q(`ALTER TABLE products ADD COLUMN IF NOT EXISTS ${col}`);
+    let r = await call("POST", "/api/service-types/add", T.therapy, { name: "Post-Surgery Rehab" });
+    check("P31 a new category gets its slug from the name", r.s === 200 && (await q("SELECT 1 FROM service_types WHERE slug = 'post-surgery-rehab'")).length === 1, "got " + r.s + " " + (r.raw || "").slice(0, 120));
+    const catId = (await q("SELECT id FROM service_types WHERE slug = 'post-surgery-rehab'"))[0].id;
+    r = await call("POST", "/api/service-types/add", T.therapy, { name: "Occupational Health & Wellness", slug: "occupational-therapy" });
+    check("P31 an admin can type the slug (Occupational Health & Wellness -> occupational-therapy)", r.s === 200 && (await q("SELECT 1 FROM service_types WHERE name = 'Occupational Health & Wellness' AND slug = 'occupational-therapy'")).length === 1, "got " + (r.raw || "").slice(0, 120));
+    r = await call("POST", "/api/service-types/add", T.therapy, { name: "Another Occupational", slug: "Occupational Therapy" });
+    check("P31 a slug already used by another category is refused", r.s === 200 && r.j.success === false || r.s >= 400, "got " + r.s + " " + (r.raw || "").slice(0, 120));
+    r = await call("PUT", "/api/service-types/update/" + catId, T.therapy, { name: "Post-Surgery Rehabilitation", is_active: true });
+    check("P31 renaming a category does not change its link", r.s === 200 && (await slugOf("service_types", catId)) === "post-surgery-rehab");
+    r = await call("PUT", "/api/service-types/update/" + catId, T.therapy, { name: "Post-Surgery Rehabilitation", is_active: true, slug: "post-surgery-rehabilitation" });
+    check("P31 ... it changes only when the admin edits the slug", r.s === 200 && (await slugOf("service_types", catId)) === "post-surgery-rehabilitation");
+
+    const cat = (await q("INSERT INTO categories(name) VALUES ('P31 devices') RETURNING id"))[0].id;
+    const mk = (extra) => call("POST", "/api/products/add", T.ecom, { title: "TENS Electrode Pads", category: cat, sku: "P31-" + Math.random().toString(36).slice(2, 8), mrp: 500, sellingPrice: 450, status: "Published", ...extra });
+    r = await mk({});
+    const p1 = r.j && r.j.productId;
+    check("P31 a new product gets its slug from the title", r.s === 201 && p1 && (await slugOf("products", p1)) === "tens-electrode-pads", "got " + r.s + " " + (r.raw || "").slice(0, 160));
+    r = await mk({});
+    const p2 = r.j && r.j.productId;
+    check("P31 a second product with the same title gets a different slug (-2)", r.s === 201 && (await slugOf("products", p2)) === "tens-electrode-pads-2", "got " + r.s + " " + (r.raw || "").slice(0, 120));
+    r = await mk({ slug: "tens-electrode-pads" });
+    check("P31 typing a slug that is taken is refused (400)", r.s === 400 && /already used/i.test(r.raw || ""), "got " + r.s + " " + (r.raw || "").slice(0, 120));
+    r = await call("GET", "/api/products/frontend/tens-electrode-pads", null);
+    check("P31 the public product page loads by slug", r.s === 200 && Number(r.j.data.id) === p1 && r.j.data.slug === "tens-electrode-pads", "got " + r.s + " " + (r.raw || "").slice(0, 120));
+    r = await call("GET", "/api/products/frontend/" + p1, null);
+    check("P31 ... and the old numeric link still loads (the website redirects it)", r.s === 200 && r.j.data.slug === "tens-electrode-pads", "got " + r.s);
+    r = await call("GET", "/api/products/frontend/no-such-product", null);
+    check("P31 an unknown slug -> 404", r.s === 404, "got " + r.s);
+    check("P31 the slug columns are unique in the database", (await q("SELECT count(*)::int AS n FROM pg_indexes WHERE indexname IN ('uq_service_types_slug','uq_products_slug')"))[0].n === 2);
+  }
   unmute();
-  const widthName = Math.max(...results.map((x) => x.name.length));
+  const widthName =Math.max(...results.map((x) => x.name.length));
   for (const x of results) console.log((x.ok ? "PASS " : "FAIL ") + x.name + (x.ok ? "" : "  <-- " + x.detail));
   console.log(`\n${results.length - failed}/${results.length} passed${PAYFIRST ? " (pay-first mode)" : " (approval-first mode)"}`);
   srv.close(); await pg.end(); process.exit(failed ? 1 : 0);

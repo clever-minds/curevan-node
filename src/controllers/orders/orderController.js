@@ -1392,6 +1392,8 @@ exports.validateCartStock = async (req, res) => {
     }
   );
 
+  if (!cartItems.length) return res.status(400).json({ success: false, message: 'Your cart is empty' });   // an empty cart is not a server error
+
   const productIds = cartItems.map(i => i.product_id);
 
   const inventories = await sequelize.query(
@@ -1633,8 +1635,8 @@ exports.myOrders = async (req, res) => {
        LEFT JOIN users u ON o.user_id = u.id
     `;
 
-    // Role based filtering
-    if (userRole === 'admin') {
+    // Role based filtering: every customer's orders only for the shop admins (super + e-com); anyone else, a therapy admin included, sees their own
+    if (access.isShopAdmin(req.user)) {
       query += ` GROUP BY o.id, oa_billing.id, oa_shipping.id, i.id,u.name ORDER BY o.id DESC`;
     } else {
       query += ` WHERE o.user_id = :userId GROUP BY o.id, oa_billing.id, oa_shipping.id, i.id,u.name ORDER BY o.id DESC`;
@@ -1856,8 +1858,15 @@ exports.getInvoiceById = async (req, res) => {
     const userId = req.user.id;
     const userRole = req.user.role;
 
+    // "BK-<id>" is the invoice of a session (booking id), "ORD-<id>" the invoice of a shop order (order id): the website says which one it means.
+    // A bare number stays what it was: an invoice id, a booking id or an order id (the exact invoice id first), for old links.
+    let key = invoiceId;
     let queryCondition = "invoice_number = :invoiceId";
-    if (/^\d+$/.test(invoiceId)) {
+    const kind = /^(BK|ORD)-(\d+)$/i.exec(invoiceId);
+    if (kind) {
+      key = kind[2];
+      queryCondition = kind[1].toUpperCase() === "BK" ? "booking_id = :invoiceId" : "order_id = :invoiceId";
+    } else if (/^\d+$/.test(invoiceId)) {
       queryCondition = "id = :invoiceId OR invoice_number = :invoiceId OR booking_id = :invoiceId OR order_id = :invoiceId";
     }
 
@@ -1865,9 +1874,9 @@ exports.getInvoiceById = async (req, res) => {
     // a number can be an invoice id, a booking id or an order id: of the matches, only the caller's own are considered (admins see all), the exact invoice id first
     const invoice = await sequelize.query(
       `SELECT * FROM invoices WHERE (${queryCondition}) AND (:isAdmin OR user_id = :userId)
-       ORDER BY (CASE WHEN id::text = :invoiceId THEN 0 ELSE 1 END), id LIMIT 1`,
+       ORDER BY (CASE WHEN id::text = :invoiceId THEN 0 ELSE 1 END), id DESC LIMIT 1`,
       {
-        replacements: { invoiceId, isAdmin: access.isAdmin(req.user), userId },
+        replacements: { invoiceId: key, isAdmin: access.isAdmin(req.user), userId },
         type: QueryTypes.SELECT,
       }
     );
@@ -1881,7 +1890,8 @@ exports.getInvoiceById = async (req, res) => {
     // 2️⃣ Role based access control
     let isAuthorized = false;
 
-    if (access.isAdmin(req.user)) {
+    // a shop invoice is for the shop admins (super + e-com); a session invoice for any admin; either way the owner may see it
+    if (invoiceData.order_id ? access.isShopAdmin(req.user) : access.isAdmin(req.user)) {
       isAuthorized = true;
     } else if (access.same(invoiceData.user_id, userId)) {
       isAuthorized = true;

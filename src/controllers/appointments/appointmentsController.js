@@ -79,6 +79,10 @@ exports.listAppointments = async (req, res) => {
       { replacements, type: QueryTypes.SELECT }
     );
 
+    // the e-com admin sees bookings and payments, not the patient's and therapist's phone numbers, home address or notes (those are for the clinical admins)
+    if (!access.isClinicalAdmin(req.user)) {
+      for (const row of appointments) { delete row.patientPhone; delete row.therapistPhone; delete row.notes; delete row.serviceAddress; }
+    }
     return res.success(appointments, "Appointments fetched successfully");
   } catch (error) {
     console.error(error);
@@ -293,7 +297,7 @@ exports.createBookingAndInvoice = async (req, res) => {
       }
 
       const [therapist] = await sequelize.query(
-        `SELECT hourly_rate FROM therapist_profiles WHERE user_id = :therapistId AND profile_status = 'approved'`,
+        `SELECT tp.hourly_rate, u.name FROM therapist_profiles tp JOIN users u ON u.id = tp.user_id WHERE tp.user_id = :therapistId AND tp.profile_status = 'approved'`,
         { replacements: { therapistId: bookingData.therapistId }, type: QueryTypes.SELECT, transaction: t }
       );
       if (!therapist) { await t.rollback(); return res.status(404).json({ success: false, error: "Therapist not found" }); }
@@ -331,7 +335,7 @@ exports.createBookingAndInvoice = async (req, res) => {
             patientName: bookingData.patientName || null,
             dateofbirth: bookingData.dateofBirth || null,
             therapistId: bookingData.therapistId,
-            therapistName: bookingData.therapist || null,
+            therapistName: therapist.name || bookingData.therapist || null,   // the name on file, so every screen has one
             serviceTypeId: bookingData.serviceTypeId || null,
             therapyType: bookingData.therapyType || null,
             amount,

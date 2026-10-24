@@ -119,6 +119,11 @@ exports.getUserById = async (req, res) => {
   try {
     const { id } = req.params;
 
+    // your own record, or any admin's: nobody else may read a user's name, e-mail and roles by guessing an id
+    if (!require("../../utils/access").isAdmin(req.user) && !require("../../utils/access").same(id, req.user.id)) {
+      return res.error("Forbidden", 403);
+    }
+
     const [user] = await sequelize.query(
       `SELECT 
       u.id,

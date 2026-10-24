@@ -25,7 +25,7 @@ Module._load = function (r, parent, ...a) {
   if (/config[\\/]mailer(\.js)?$/.test(r)) return { sendMail: async () => ({}) };
   if (/config[\\/]firebaseAdmin(\.js)?$/.test(r)) return { getAuth: () => ({ verifyIdToken: async () => { throw new Error("stub"); } }), getMessaging: () => ({ send: async () => {}, sendEachForMulticast: async () => {} }), isReady: () => true };
   if (/utils[\\/]firebaseNotifier(\.js)?$/.test(r)) return { sendToTherapist: async () => {}, sendToMultipleTherapists: async () => {}, sendToAllTherapists: async () => {} };
-  if (/services[\\/]shiprocketService(\.js)?$/.test(r)) return { getPickupLocations: async () => ({ data: { shipping_address: [{ pin_code: "390012" }] } }), checkServiceability: async () => ({ data: { available_courier_companies: [{ courier_company_id: 1, rate: 50 }], recommended_courier_company_id: 1 } }), createOrder() {}, generateAWB() {}, generateLabel() {}, generateManifest() {}, trackShipment() {}, cancelShipment() {}, createReturnOrder() {} };
+  if (/services[\\/]shiprocketService(\.js)?$/.test(r)) return { getPickupLocations: async () => ({ data: { shipping_address: [{ pin_code: "390012" }] } }), checkServiceability: async () => ({ data: { available_courier_companies: [{ courier_company_id: 1, rate: 50 }], recommended_courier_company_id: 1 } }), createOrder() {}, createReturnOrder: async () => ({ shipment_id: 987654 }), generateAWB() {}, generateLabel() {}, generateManifest() {}, trackShipment() {}, cancelShipment() {}, };
   return orig.call(this, r, parent, ...a);
 };
 const app = require(root + "/src/app");
