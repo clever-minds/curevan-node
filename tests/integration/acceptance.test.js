@@ -2906,8 +2906,44 @@ async function seed() {
     check("P30 every follow-up proposal made by the doctor is linked to the visit it follows",
       (await q("SELECT COUNT(*)::int AS n FROM appointments a JOIN followup_proposals fp ON fp.appointment_id = a.id WHERE a.follow_up_of IS NULL AND fp.source_pcr_id IS NOT NULL"))[0].n === 0);
   }
+  {
+    // P31 clean links: every therapy category and product has a unique slug, made from the name and editable by the admin
+    const slugOf = async (table, id) => (await q(`SELECT slug FROM ${table} WHERE id = $1`, [id]))[0].slug;
+    check("P31 every slug in the database is lowercase-hyphen (no space, &, %20)", (await q("SELECT 1 FROM service_types WHERE slug !~ '^[a-z0-9]+(-[a-z0-9]+)*$'")).length === 0);
+    // the schema dump behind this test database predates some product columns that addProduct writes
+    for (const col of ["subtitle TEXT", "short_description TEXT", "length_cm NUMERIC", "width_cm NUMERIC", "height_cm NUMERIC", "manufacturer TEXT", "country_of_origin TEXT", "packer TEXT", "importer TEXT", "batch_number TEXT", "manufacturing_date DATE", "expiry_date DATE", "tags JSON", "sac_code TEXT"]) await q(`ALTER TABLE products ADD COLUMN IF NOT EXISTS ${col}`);
+    let r = await call("POST", "/api/service-types/add", T.therapy, { name: "Post-Surgery Rehab" });
+    check("P31 a new category gets its slug from the name", r.s === 200 && (await q("SELECT 1 FROM service_types WHERE slug = 'post-surgery-rehab'")).length === 1, "got " + r.s + " " + (r.raw || "").slice(0, 120));
+    const catId = (await q("SELECT id FROM service_types WHERE slug = 'post-surgery-rehab'"))[0].id;
+    r = await call("POST", "/api/service-types/add", T.therapy, { name: "Occupational Health & Wellness", slug: "occupational-therapy" });
+    check("P31 an admin can type the slug (Occupational Health & Wellness -> occupational-therapy)", r.s === 200 && (await q("SELECT 1 FROM service_types WHERE name = 'Occupational Health & Wellness' AND slug = 'occupational-therapy'")).length === 1, "got " + (r.raw || "").slice(0, 120));
+    r = await call("POST", "/api/service-types/add", T.therapy, { name: "Another Occupational", slug: "Occupational Therapy" });
+    check("P31 a slug already used by another category is refused", r.s === 200 && r.j.success === false || r.s >= 400, "got " + r.s + " " + (r.raw || "").slice(0, 120));
+    r = await call("PUT", "/api/service-types/update/" + catId, T.therapy, { name: "Post-Surgery Rehabilitation", is_active: true });
+    check("P31 renaming a category does not change its link", r.s === 200 && (await slugOf("service_types", catId)) === "post-surgery-rehab");
+    r = await call("PUT", "/api/service-types/update/" + catId, T.therapy, { name: "Post-Surgery Rehabilitation", is_active: true, slug: "post-surgery-rehabilitation" });
+    check("P31 ... it changes only when the admin edits the slug", r.s === 200 && (await slugOf("service_types", catId)) === "post-surgery-rehabilitation");
+
+    const cat = (await q("INSERT INTO categories(name) VALUES ('P31 devices') RETURNING id"))[0].id;
+    const mk = (extra) => call("POST", "/api/products/add", T.ecom, { title: "TENS Electrode Pads", category: cat, sku: "P31-" + Math.random().toString(36).slice(2, 8), mrp: 500, sellingPrice: 450, status: "Published", ...extra });
+    r = await mk({});
+    const p1 = r.j && r.j.productId;
+    check("P31 a new product gets its slug from the title", r.s === 201 && p1 && (await slugOf("products", p1)) === "tens-electrode-pads", "got " + r.s + " " + (r.raw || "").slice(0, 160));
+    r = await mk({});
+    const p2 = r.j && r.j.productId;
+    check("P31 a second product with the same title gets a different slug (-2)", r.s === 201 && (await slugOf("products", p2)) === "tens-electrode-pads-2", "got " + r.s + " " + (r.raw || "").slice(0, 120));
+    r = await mk({ slug: "tens-electrode-pads" });
+    check("P31 typing a slug that is taken is refused (400)", r.s === 400 && /already used/i.test(r.raw || ""), "got " + r.s + " " + (r.raw || "").slice(0, 120));
+    r = await call("GET", "/api/products/frontend/tens-electrode-pads", null);
+    check("P31 the public product page loads by slug", r.s === 200 && Number(r.j.data.id) === p1 && r.j.data.slug === "tens-electrode-pads", "got " + r.s + " " + (r.raw || "").slice(0, 120));
+    r = await call("GET", "/api/products/frontend/" + p1, null);
+    check("P31 ... and the old numeric link still loads (the website redirects it)", r.s === 200 && r.j.data.slug === "tens-electrode-pads", "got " + r.s);
+    r = await call("GET", "/api/products/frontend/no-such-product", null);
+    check("P31 an unknown slug -> 404", r.s === 404, "got " + r.s);
+    check("P31 the slug columns are unique in the database", (await q("SELECT count(*)::int AS n FROM pg_indexes WHERE indexname IN ('uq_service_types_slug','uq_products_slug')"))[0].n === 2);
+  }
   unmute();
-  const widthName = Math.max(...results.map((x) => x.name.length));
+  const widthName =Math.max(...results.map((x) => x.name.length));
   for (const x of results) console.log((x.ok ? "PASS " : "FAIL ") + x.name + (x.ok ? "" : "  <-- " + x.detail));
   console.log(`\n${results.length - failed}/${results.length} passed${PAYFIRST ? " (pay-first mode)" : " (approval-first mode)"}`);
   srv.close(); await pg.end(); process.exit(failed ? 1 : 0);

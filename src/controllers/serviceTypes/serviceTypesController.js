@@ -1,5 +1,6 @@
 const { QueryTypes } = require("sequelize");
 const { sequelize } = require("../../config/db");
+const { chooseSlug, SlugError } = require("../../utils/slug");
 
 // ✅ LIST SERVICE TYPES
 exports.listServiceTypes = async (req, res) => {
@@ -21,7 +22,7 @@ exports.listServiceTypes = async (req, res) => {
 // ✅ ADD SERVICE TYPE
 exports.addServiceType = async (req, res) => {
   try {
-    const { name, is_active, fa_icon, description, tax_category } = req.body;
+    const { name, is_active, fa_icon, description, tax_category, slug } = req.body;
 
     if (!name) {
       return res.error("Name is required");
@@ -30,14 +31,16 @@ exports.addServiceType = async (req, res) => {
       return res.error("tax_category must be exempt_clinical or taxable_18");
     }
 
+    const finalSlug = await chooseSlug("service_types", slug, name, { fallback: "category" });
     const isActive = is_active !== undefined ? is_active : true;
 
     await sequelize.query(
-      `INSERT INTO service_types (name, is_active, fa_icon, description, tax_category)
-       VALUES (:name, :is_active, :fa_icon, :description, :tax_category)`,
+      `INSERT INTO service_types (name, slug, is_active, fa_icon, description, tax_category)
+       VALUES (:name, :slug, :is_active, :fa_icon, :description, :tax_category)`,
       {
         replacements: { 
           name, 
+          slug: finalSlug,
           is_active: isActive, 
           fa_icon: fa_icon || null,
           description: description || null,
@@ -50,6 +53,7 @@ exports.addServiceType = async (req, res) => {
     return res.success(null, "Service type added successfully");
   } catch (error) {
     console.error("Add Service Type Error:", error);
+    if (error instanceof SlugError) return res.error(error.message);
     if (error.name === 'SequelizeUniqueConstraintError' || (error.parent && error.parent.code === '23505')) {
        return res.error("Service type with this name already exists");
     }
@@ -61,7 +65,7 @@ exports.addServiceType = async (req, res) => {
 exports.updateServiceType = async (req, res) => {
   try {
     const { id } = req.params;
-    const { name, is_active, fa_icon, description, tax_category } = req.body;
+    const { name, is_active, fa_icon, description, tax_category, slug } = req.body;
 
     if (!name) {
       return res.error("Name is required");
@@ -70,9 +74,12 @@ exports.updateServiceType = async (req, res) => {
       return res.error("tax_category must be exempt_clinical or taxable_18");
     }
 
+    // a link that is already out in the world changes only when the admin edits the slug itself
+    const finalSlug = slug ? await chooseSlug("service_types", slug, name, { excludeId: Number(id) }) : null;
     let updateQuery = `
        UPDATE service_types
        SET name = :name,
+           slug = COALESCE(:slug, slug),
            is_active = :is_active,
            fa_icon = :fa_icon,
            description = :description,
@@ -85,6 +92,7 @@ exports.updateServiceType = async (req, res) => {
       replacements: { 
         id, 
         name, 
+        slug: finalSlug,
         is_active, 
         fa_icon: fa_icon || null,
         description: description || null,
@@ -96,6 +104,7 @@ exports.updateServiceType = async (req, res) => {
     return res.success(null, "Service type updated successfully");
   } catch (error) {
     console.error("Update Service Type Error:", error);
+    if (error instanceof SlugError) return res.error(error.message);
     return res.error("Failed to update service type");
   }
 };
