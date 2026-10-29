@@ -1,6 +1,5 @@
 const { QueryTypes } = require("sequelize");
 const { sequelize } = require("../../config/db");
-const transporter = require("../../config/mailer");
 const notifications = require("../../services/notifications");
 const razorpay = require("../../services/razorpayService");
 const stateMachine = require("../../services/appointmentStateMachine");

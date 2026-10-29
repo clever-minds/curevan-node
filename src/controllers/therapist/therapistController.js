@@ -1,9 +1,9 @@
 const { QueryTypes } = require("sequelize");
+const notifications = require("../../services/notifications");
 const access = require("../../utils/access");
 const { sequelize } = require("../../config/db");
 const { v4: uuidv4 } = require("uuid");
 const bcrypt = require("bcrypt");
-const transporter = require("../../config/mailer");
 
 
 /* =========================
@@ -229,7 +229,7 @@ exports.registerTherapist = async (req, res) => {
     } = payload;
     
     if (!password) {
-       console.log("No password in payload", payload);
+       console.log("No password in the sign-up payload");
        throw new Error("data and salt arguments required");
     }
 
@@ -397,8 +397,7 @@ exports.registerTherapist = async (req, res) => {
     await t.commit();
 
     try {
-      await transporter.sendMail({
-        from: `"Curevan" <${process.env.MAIL_USER}>`,
+      await notifications.sendEmailLogged({
         to: email,
         subject: "Verify your Email - Curevan",
         html: `

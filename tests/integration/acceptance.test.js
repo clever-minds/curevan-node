@@ -1397,6 +1397,10 @@ async function seed() {
     r = await call("POST", "/api/orders/" + A.id + "/return", T.p1, { reason: "wrong_item", items: [{ order_item_id: itA, quantity: 1 }] });
     check("P19 items from a non-returnable category are refused (400)", r.s === 400 && /cannot be returned/i.test(r.raw || ""), "got " + r.s + " " + (r.raw || "").slice(0, 100));
     await q("UPDATE categories SET non_returnable = false WHERE id = 1");
+    await q("UPDATE products SET non_returnable = true WHERE sku = (SELECT sku FROM order_items WHERE id = $1)", [itA]);
+    r = await call("POST", "/api/orders/" + A.id + "/return", T.p1, { reason: "wrong_item", items: [{ order_item_id: itA, quantity: 1 }] });
+    check("P32 a product marked non-returnable by the admin is refused (400), whatever its category", r.s === 400 && /cannot be returned/i.test(r.raw || ""), "got " + r.s + " " + (r.raw || "").slice(0, 100));
+    await q("UPDATE products SET non_returnable = false WHERE sku = (SELECT sku FROM order_items WHERE id = $1)", [itA]);
     r = await call("POST", "/api/orders/" + A.id + "/return", T.p1, { reason: "damaged", note: "Cracked in the box", photos: ["media-1"], items: [{ order_item_id: itA, quantity: 1 }] });
     const ret1 = r.j && r.j.returnId;
     check("P19 a valid return (delivered, in window, with a photo) is accepted", r.s === 201 && ret1 && (await q("SELECT reason_code, status, photos FROM order_returns WHERE id = $1", [ret1]))[0].reason_code === "damaged");
@@ -2941,6 +2945,59 @@ async function seed() {
     r = await call("GET", "/api/products/frontend/no-such-product", null);
     check("P31 an unknown slug -> 404", r.s === 404, "got " + r.s);
     check("P31 the slug columns are unique in the database", (await q("SELECT count(*)::int AS n FROM pg_indexes WHERE indexname IN ('uq_service_types_slug','uq_products_slug')"))[0].n === 2);
+  }
+  {
+    // P32 refunds (go-live task GL-03): care packs use the refund service, a refund that went out is never left silent, unmatched refunds show in the reconciliation
+    const sm = require("../../src/services/appointmentStateMachine");
+    let r;
+    const paid = await mkA("Paid", 3, { rzp: "pay_p32a", method: "razorpay" });
+    const realTransition = sm.transition;
+    const before = rzpRefunds.length;
+    sm.transition = async () => { throw new Error("database went away"); };
+    try { r = await call("PATCH", "/api/appointments/" + paid + "/cancel", T.p1); } finally { sm.transition = realTransition; }
+    check("P32 the refund went out but the booking could not be cancelled: the patient is told clearly (500) and Razorpay was called once", r.s === 500 && /alerted/i.test(r.raw || "") && rzpRefunds.length === before + 1, "got " + r.s + " " + (r.raw || "").slice(0, 160));
+    check("P32 ... an audit row 'refund_issued_cancel_failed' records it", (await q("SELECT 1 FROM audit_logs WHERE action = 'refund_issued_cancel_failed' AND entity_id = $1", [String(paid)])).length === 1);
+    check("P32 ... and the therapy and super admins get an alert", (await q("SELECT 1 FROM notifications WHERE type = 'refund_without_cancel'")).length >= 1);
+    check("P32 ... the reconciliation lists it as 'refunded but still active'", await (async () => {
+      FakeRazorpay.mockPayments = [];
+      const rr = await call("GET", `/api/admin/reconciliation?date=${day(0)}`, T.su);
+      return rr.s === 200 && rr.j.data.mismatches.some((m) => m.type === "refunded_but_active" && m.curevanId === paid);
+    })());
+
+    // a care pack refund has its own refund row; the pack waits (refund_pending) until the money is confirmed, and comes back if Razorpay says it failed
+    const [plan] = await q("SELECT id FROM care_pack_plans LIMIT 1");
+    const anyUser = (await q("SELECT id FROM users ORDER BY id LIMIT 1"))[0].id;
+    const mkPack = async (status, pay) => (await q("INSERT INTO care_packs(plan_id, patient_id, sessions_total, sessions_used, price_paid, expires_at, status, razorpay_payment_id) VALUES ($1,$2,5,0,1000, now() + interval '30 days',$3,$4) RETURNING id", [plan.id, anyUser, status, pay]))[0].id;
+    const pk = await mkPack("active", "pay_p32pack");
+    r = await call("POST", `/api/care-packs/admin/${pk}/refund`, T.su, { reason: "P32" });
+    const row = (await q("SELECT status, razorpay_refund_id, amount FROM order_refunds WHERE care_pack_id = $1", [pk]))[0];
+    check("P32 a care pack refund is recorded in order_refunds (pending) and sent through the refund service", r.s === 200 && row && row.status === "pending" && row.razorpay_refund_id && Number(row.amount) === 900, "got " + r.s + " " + (r.raw || "").slice(0, 120));
+    const w = await hook("refund.processed", { id: row.razorpay_refund_id }, "refund", "evt_p32_pack");
+    for (let i = 0; i < 30 && (await q("SELECT status FROM order_refunds WHERE care_pack_id = $1", [pk]))[0].status !== "processed"; i++) await new Promise((rs) => setTimeout(rs, 100));   // the webhook answers before it has finished
+    check("P32 the Razorpay webhook for it is accepted and the pack stays refunded", w.s === 200 && (await q("SELECT status FROM order_refunds WHERE care_pack_id = $1", [pk]))[0].status === "processed" && (await q("SELECT status FROM care_packs WHERE id = $1", [pk]))[0].status === "refunded", "got " + w.s);
+    const pf = await mkPack("refund_pending", "pay_p32fail");
+    await q("INSERT INTO order_refunds(care_pack_id, user_id, amount, transaction_id, status, razorpay_refund_id, created_at) VALUES ($1,$2,900,'pay_p32fail','pending','rfnd_p32f', now())", [pf, anyUser]);
+    const wf = await hook("refund.failed", { id: "rfnd_p32f" }, "refund", "evt_p32_fail");
+    for (let i = 0; i < 30 && (await q("SELECT status FROM care_packs WHERE id = $1", [pf]))[0].status === "refund_pending"; i++) await new Promise((rs) => setTimeout(rs, 100));
+    check("P32 a refund Razorpay reports as failed puts the pack back to active", wf.s === 200 && (await q("SELECT status FROM care_packs WHERE id = $1", [pf]))[0].status === "active", "got " + wf.s);
+    check("P32 ... a refund still pending for a pack that is in 'refund_pending' cannot be started a second time (409)", await (async () => { const p2 = await mkPack("refund_pending", "pay_p32x"); const rr = await call("POST", `/api/care-packs/admin/${p2}/refund`, T.su, {}); return rr.s === 409; })());
+    FakeRazorpay.mockPayments = [];
+    const rec = await call("GET", `/api/admin/reconciliation?date=${day(0)}`, T.su);
+    check("P32 the reconciliation lists the failed refund (the customer is not paid back yet)", rec.s === 200 && rec.j.data.mismatches.some((m) => m.type === "refund_failed" && /failed at Razorpay/.test(m.description)), "got " + rec.s + " " + JSON.stringify(rec.j && rec.j.data && rec.j.data.mismatches.map((m) => m.type)));
+    FakeRazorpay.mockPayments = null;
+  }
+  {
+    // P33 every e-mail goes through the notification service (go-live task GL-05)
+    const ns = require("../../src/services/notifications");
+    const out = await ns.sendEmailLogged({ to: "someone@example.com", subject: "Your session is complete", html: "<p>Done</p>", event: "test_direct" });
+    check("P33 a composed e-mail is sent through the e-mail channel and logged in notification_log (sent)", out && out.success === true && (await q("SELECT 1 FROM notification_log WHERE event = 'test_direct' AND channel = 'email' AND status = 'sent'")).length === 1);
+    let threw = false;
+    try { await ns.sendEmailLogged({ to: "someone@example.com", subject: "x", html: "Your OTP is 123456", event: "test_direct_otp" }); } catch (e) { threw = true; }
+    check("P33 an e-mail that carries an OTP is refused by the channel and the failure is logged without the number", threw && (await q("SELECT 1 FROM notification_log WHERE event = 'test_direct_otp' AND status = 'failed' AND COALESCE(error, '') !~ '123456'")).length === 1);
+    const fs = require("fs"), path = require("path");
+    const ctrlDir = path.join(__dirname, "../../src/controllers");
+    const walk = (d) => fs.readdirSync(d, { withFileTypes: true }).flatMap((e) => (e.isDirectory() ? walk(path.join(d, e.name)) : [path.join(d, e.name)]));
+    check("P33 no controller sends mail directly any more", walk(ctrlDir).filter((f) => /\.js$/.test(f) && /transporter\.sendMail|config\/mailer/.test(fs.readFileSync(f, "utf8"))).length === 0);
   }
   unmute();
   const widthName =Math.max(...results.map((x) => x.name.length));

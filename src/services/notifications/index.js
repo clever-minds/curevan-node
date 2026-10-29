@@ -914,4 +914,21 @@ async function notify(event, payload = {}) {
   }
 }
 
-module.exports = { notify, logAttempt, getUser };
+/**
+ * One e-mail that is composed by the caller (support tickets, sign-up, status mails ...): it still goes through the e-mail channel
+ * (provider switch, the OTP-by-email guard) and every attempt is written to notification_log. Throws when the send fails, like the
+ * old direct send did, so the caller's own error handling stays as it was.
+ */
+async function sendEmailLogged({ to, subject, html, text, attachments, userId = null, event = "direct_email" }) {
+  const template = String(subject || "").slice(0, 80);
+  try {
+    const out = await sendEmail({ to, subject, html, text, attachments });
+    await logAttempt({ userId, event, channel: "email", template, status: "sent", providerMessageId: out && out.messageId });
+    return out;
+  } catch (err) {
+    await logAttempt({ userId, event, channel: "email", template, status: "failed", error: err && err.message });
+    throw err;
+  }
+}
+
+module.exports = { notify, logAttempt, getUser, sendEmailLogged };

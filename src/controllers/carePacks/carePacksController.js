@@ -1,6 +1,7 @@
 const { QueryTypes } = require("sequelize");
 const { sequelize } = require("../../config/db");
 const razorpay = require("../../services/razorpayService");
+const refundService = require("../../services/refundService");
 const rules = require("../../config/businessRules");
 const access = require("../../utils/access");
 const carePackService = require("../../services/carePackService");
@@ -202,6 +203,7 @@ exports.adminRefundPack = async (req, res) => {
   const { reason = "Admin approved refund" } = req.body || {};
 
   const t = await sequelize.transaction();
+  let committed = false;
   try {
     const [pack] = await sequelize.query(
       `SELECT * FROM care_packs WHERE id = :id FOR UPDATE`,
@@ -215,6 +217,10 @@ exports.adminRefundPack = async (req, res) => {
     if (pack.status === "refunded") {
       await t.rollback();
       return res.status(409).json({ success: false, error: "Care pack has already been refunded" });
+    }
+    if (pack.status === "refund_pending") {
+      await t.rollback();
+      return res.status(409).json({ success: false, error: "A refund for this care pack is already in progress" });
     }
     if (pack.status === "pending_payment" || pack.status === "cancelled") {
       await t.rollback();
@@ -244,57 +250,29 @@ exports.adminRefundPack = async (req, res) => {
       return res.status(400).json({ success: false, error: "Calculated refund amount is zero or negative" });
     }
 
-    // Razorpay refund
-    const refundPaise = Math.round(netRefundInr * 100);
+    // the pack stops being usable first, then the money moves through the refund service; a refused refund puts the pack back
+    await sequelize.query(`UPDATE care_packs SET status = 'refund_pending', updated_at = now() WHERE id = :id`, { replacements: { id: pack.id }, type: QueryTypes.UPDATE, transaction: t });
+    await t.commit();
+    committed = true;
+
     let rzpRefund;
     try {
-      rzpRefund = await razorpay.refundPayment(pack.razorpay_payment_id, refundPaise, {
-        carePackId: String(pack.id),
-        sessionsRefunded: String(sessionsUnused),
-        reason,
-      });
-    } catch (rzpErr) {
-      await t.rollback();
-      return res.status(502).json({ success: false, error: `Razorpay refund failed: ${rzpErr.message}` });
+      rzpRefund = await refundService.refund({ carePackId: pack.id, amountInr: netRefundInr, reason, actorId: req.user.id });
+    } catch (err) {
+      await sequelize.query(`UPDATE care_packs SET status = :prev, updated_at = now() WHERE id = :id AND status = 'refund_pending'`, { replacements: { id: pack.id, prev: pack.status }, type: QueryTypes.UPDATE });
+      if (err instanceof refundService.RefundError) return res.status(err.status === 502 ? 502 : 400).json({ success: false, error: err.message });
+      throw err;
     }
 
     await sequelize.query(
-      `UPDATE care_packs
-       SET status = 'refunded',
-           refunded_amount = :netRefundInr,
-           refund_reason = :reason,
-           updated_at = now()
-       WHERE id = :id`,
-      {
-        replacements: { id: pack.id, netRefundInr, reason },
-        type: QueryTypes.UPDATE,
-        transaction: t,
-      }
+      `UPDATE care_packs SET status = 'refunded', refunded_amount = :netRefundInr, refund_reason = :reason, updated_at = now() WHERE id = :id`,
+      { replacements: { id: pack.id, netRefundInr, reason }, type: QueryTypes.UPDATE }
     );
-
-    // Audit log
     await sequelize.query(
-      `INSERT INTO audit_logs (actor_id, action, entity_type, entity_id, details)
-       VALUES (:actorId, 'care_pack_refund', 'care_pack', :packId, :details)`,
-      {
-        replacements: {
-          actorId: String(req.user.id),
-          packId: String(pack.id),
-          details: JSON.stringify({
-            grossRefund,
-            processingFee,
-            netRefundInr,
-            sessionsUnused,
-            rzpRefundId: rzpRefund?.id,
-            reason,
-          }),
-        },
-        type: QueryTypes.INSERT,
-        transaction: t,
-      }
+      `INSERT INTO audit_logs (actor_id, action, entity_type, entity_id, details) VALUES (:actorId, 'care_pack_refund', 'care_pack', :packId, :details)`,
+      { replacements: { actorId: String(req.user.id), packId: String(pack.id), details: JSON.stringify({ grossRefund, processingFee, netRefundInr, sessionsUnused, rzpRefundId: rzpRefund.razorpayRefundId, refundId: rzpRefund.refundId, reason }) }, type: QueryTypes.INSERT }
     );
 
-    await t.commit();
     return res.json({
       success: true,
       data: {
@@ -303,12 +281,12 @@ exports.adminRefundPack = async (req, res) => {
         grossRefund,
         processingFee,
         netRefundInr,
-        razorpayRefundId: rzpRefund?.id,
+        razorpayRefundId: rzpRefund.razorpayRefundId,
       },
       message: `Refund of ₹${netRefundInr} for ${sessionsUnused} unused sessions processed successfully`,
     });
   } catch (err) {
-    await t.rollback();
+    if (!committed) await t.rollback();
     console.error("adminRefundPack error:", err);
     return res.status(500).json({ success: false, error: "Failed to process pack refund" });
   }

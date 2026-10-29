@@ -1,6 +1,6 @@
 const { QueryTypes } = require("sequelize");
+const notifications = require("../../services/notifications");
 const { sequelize } = require("../../config/db");
-const transporter = require("../../config/mailer");
 const { v4: uuidv4 } = require('uuid');
 const firebaseNotifier = require("../../utils/firebaseNotifier");
 const { hasRole } = require("../../middlewares/requireRole");
@@ -322,8 +322,7 @@ exports.inviteAdminUser = async (req, res) => {
 
     const inviteLink = `${process.env.FRONTEND_URL}/reset-password?token=${resetToken}`;
 
-    await transporter.sendMail({
-      from: `"Admin Panel" <${process.env.MAIL_USER}>`,
+    await notifications.sendEmailLogged({
       to: email,
       subject: "Admin Invitation",
       html: `
@@ -1011,7 +1010,6 @@ exports.approveChangeRequest = async (req, res) => {
         "SELECT id, uid, fcm_token FROM users WHERE id = :userId",
         { replacements: { userId: request.user_id }, type: sequelize.QueryTypes.SELECT }
       );
-      console.log("USER ROWS:", userRows);
       if (userRows && userRows.id) {
         console.log("INSERTING NOTIFICATION FOR UID:", userRows.id);
         console.log("[BACKEND_NOTIFICATION_INSERT_ATTEMPT] Attempting to insert notification into DB...");
@@ -1028,7 +1026,7 @@ exports.approveChangeRequest = async (req, res) => {
         );
         console.log("NOTIFICATION INSERTED SUCCESSFULLY");
         if (userRows.fcm_token) {
-          console.log("SENDING FCM TO:", userRows.fcm_token);
+          console.log("Sending approval push to user", userRows.id || "");
           firebaseNotifier.sendToTherapist(userRows.fcm_token, isNewRegistration ? 'Therapist ID Approved' : 'Profile Update Approved', isNewRegistration ? 'Your therapist account registration and ID creation has been approved.' : 'Your profile changes have been reviewed and approved.').catch(e => {
             console.error("FCM SEND ERROR:", e);
           });

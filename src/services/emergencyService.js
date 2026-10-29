@@ -89,8 +89,9 @@ async function autoCancelUnassigned(now = Date.now()) {
     const start = access.slotStart(appt);
     if (!start || start.getTime() - now > rules.emergency.autoCancelHoursBefore * 3600000 || start.getTime() < now - 3600000) continue;
     const quote = cancellationService.quote(appt, "admin", now);
+    let issued = null;
     try {
-      if (quote.refundInr > 0 && !appt.care_pack_id) await refundService.refund({ appointmentId: appt.id, amountInr: quote.refundInr, reason: "No replacement therapist found after the therapist's leave", actorId: null });
+      if (quote.refundInr > 0 && !appt.care_pack_id) issued = await refundService.refund({ appointmentId: appt.id, amountInr: quote.refundInr, reason: "No replacement therapist found after the therapist's leave", actorId: null });
     } catch (err) {
       if (err instanceof refundService.RefundError) { result.failed += 1; console.error(`auto-cancel #${appt.id}: refund failed: ${err.message}`); continue; }     // left for support
       throw err;
@@ -103,6 +104,7 @@ async function autoCancelUnassigned(now = Date.now()) {
       await t.commit();
     } catch (err) {
       await t.rollback();
+      if (issued) await refundService.flagRefundedButActive({ appointmentId: appt.id, refund: issued, error: err });   // refunded but not cancelled: alert, never silent
       if (err instanceof stateMachine.TransitionError) { result.failed += 1; continue; }
       throw err;
     }

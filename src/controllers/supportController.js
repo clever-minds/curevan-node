@@ -1,6 +1,6 @@
 const { QueryTypes } = require("sequelize");
+const notifications = require("../services/notifications");
 const { sequelize } = require("../config/db");
-const transporter = require("../config/mailer");
 const access = require("../utils/access");
 const { hasRole } = require("../middlewares/requireRole");
 
@@ -57,8 +57,7 @@ exports.createTicket = async (req, res) => {
       const userName = req.user?.name || "Customer";
       
       if (userEmail) {
-        await transporter.sendMail({
-          from: `"Curevan Support" <${process.env.MAIL_USER}>`,
+        await notifications.sendEmailLogged({
           to: userEmail,
           subject: `Support Ticket Created: ${subject || type}`,
           html: `
@@ -70,8 +69,7 @@ exports.createTicket = async (req, res) => {
         });
       }
 
-      await transporter.sendMail({
-        from: `"Curevan Support" <${process.env.MAIL_USER}>`,
+      await notifications.sendEmailLogged({
         to: process.env.MAIL_USER,
         subject: `New Support Ticket from ${userName}`,
         html: `
@@ -200,8 +198,7 @@ exports.replyTicket = async (req, res) => {
         const isUserReplying = access.same(ticketInfo.user_id, userId);
         
         if (isUserReplying) {
-          await transporter.sendMail({
-            from: `"Curevan Support" <${process.env.MAIL_USER}>`,
+          await notifications.sendEmailLogged({
             to: process.env.MAIL_USER,
             subject: `New Reply on Ticket #${ticket_id} from ${ticketInfo.user_name}`,
             html: `
@@ -211,8 +208,7 @@ exports.replyTicket = async (req, res) => {
           });
         } else {
           if (ticketInfo.user_email) {
-            await transporter.sendMail({
-              from: `"Curevan Support" <${process.env.MAIL_USER}>`,
+            await notifications.sendEmailLogged({
               to: ticketInfo.user_email,
               subject: `Update on your Support Ticket #${ticket_id}`,
               html: `
@@ -267,8 +263,7 @@ exports.closeTicket = async (req, res) => {
       );
 
       if (ticketInfo && ticketInfo.user_email) {
-        await transporter.sendMail({
-          from: `"Curevan Support" <${process.env.MAIL_USER}>`,
+        await notifications.sendEmailLogged({
           to: ticketInfo.user_email,
           subject: `Your Support Ticket #${id} has been closed`,
           html: `
@@ -298,8 +293,7 @@ exports.contactUs = async (req, res) => {
       return res.error("Name, email and message are required", 400);
     }
 
-    await transporter.sendMail({
-      from: `"Curevan Contact" <${email}>`,
+    await notifications.sendEmailLogged({
       to: process.env.MAIL_USER, // Send to site admin
       replyTo: email,
       subject: `New Contact Request: ${subject || "No Subject"}`,

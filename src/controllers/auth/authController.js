@@ -1,9 +1,9 @@
 const { QueryTypes } = require('sequelize');
+const notifications = require("../../services/notifications");
 const { sequelize } = require('../../config/db');
 const bcrypt = require('bcrypt');
 const jwt = require('jsonwebtoken');
 const { v4: uuidv4 } = require('uuid');
-const transporter = require("../../config/mailer");
 const { OAuth2Client } = require('google-auth-library');
 const client = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
 const { getAuth: getFirebaseAuth } = require('../../config/firebaseAdmin');
@@ -186,8 +186,7 @@ exports.register = async (req, res) => {
     await transaction.commit();
 
     try {
-      await transporter.sendMail({
-        from: `"Curevan" <${process.env.MAIL_USER}>`,
+      await notifications.sendEmailLogged({
         to: email,
         subject: "Verify your Email - Curevan",
         html: `
@@ -932,8 +931,7 @@ exports.resendVerificationEmail = async (req, res) => {
       }
     );
 
-    await transporter.sendMail({
-      from: `"Curevan" <${process.env.MAIL_USER}>`,
+    await notifications.sendEmailLogged({
       to: email,
       subject: "Verify your Email - Curevan",
       html: `
@@ -1097,8 +1095,7 @@ exports.forgotPassword = async (req, res) => {
 
     const resetLink = `${process.env.FRONTEND_URL}/reset-password?token=${resetToken}`;
 
-    await transporter.sendMail({
-      from: `"Support" <${process.env.MAIL_USER}>`,
+    await notifications.sendEmailLogged({
       to: user.email,
       subject: "Password Reset Request",
       html: `

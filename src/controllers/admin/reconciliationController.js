@@ -200,6 +200,35 @@ exports.getReconciliation = async (req, res) => {
       }
     }
 
+    // refunds that need a person: Razorpay refused them, they have been "pending" for 2+ days, or the booking is refunded but still active
+    const refundRows = await sequelize.query(
+      `SELECT r.id, r.amount, r.status, r.reason, r.created_at AS "createdAt", r.order_id AS "orderId", r.appointment_id AS "appointmentId", r.care_pack_id AS "carePackId",
+              a.status AS "appointmentStatus"
+       FROM order_refunds r LEFT JOIN appointments a ON a.id = r.appointment_id
+       WHERE (r.created_at AT TIME ZONE 'Asia/Kolkata')::date = :targetDate::date
+         AND (LOWER(r.status) = 'failed'
+              OR (LOWER(r.status) = 'pending' AND r.created_at < NOW() - INTERVAL '2 days')
+              OR (r.appointment_id IS NOT NULL AND LOWER(r.status) IN ('pending', 'processed') AND a.status IN ('confirmed', 'accepted', 'on_the_way', 'arrived', 'in_progress')))
+       ORDER BY r.id ASC`,
+      { replacements: { targetDate }, type: QueryTypes.SELECT }
+    );
+    for (const f of refundRows) {
+      const what = f.orderId ? `order ${f.orderId}` : f.carePackId ? `care pack ${f.carePackId}` : `booking ${f.appointmentId}`;
+      const type = String(f.status).toLowerCase() === "failed" ? "refund_failed" : "refund_pending_long";
+      const activeBooking = f.appointmentId && ["confirmed", "accepted", "on_the_way", "arrived", "in_progress"].includes(f.appointmentStatus);
+      mismatches.push({
+        type: activeBooking ? "refunded_but_active" : type,
+        paymentId: null, orderId: null, curevanId: f.orderId || f.carePackId || f.appointmentId, curevanType: f.orderId ? "order" : f.carePackId ? "care_pack" : "booking",
+        reference: `REFUND-${f.id}`, curevanAmount: r2(f.amount), razorpayAmount: 0,
+        description: activeBooking
+          ? `Refund of ₹${r2(f.amount)} for ${what} was sent, but the booking is still "${f.appointmentStatus}". Cancel it by hand.`
+          : String(f.status).toLowerCase() === "failed"
+            ? `Refund of ₹${r2(f.amount)} for ${what} failed at Razorpay. The customer has not been paid back yet.`
+            : `Refund of ₹${r2(f.amount)} for ${what} has been pending for more than 2 days.`,
+        link: f.orderId ? "/dashboard/admin/orders" : "/dashboard/admin/appointments",
+      });
+    }
+
     const curevanTotal = r2(curevanItems.reduce((acc, x) => acc + x.amount, 0));
     const razorpayTotal = r2(capturedPayments.reduce((acc, x) => acc + Number(x.amount || 0) / 100, 0));
     const matchedTotal = r2(matched.reduce((acc, x) => acc + x.amount, 0));

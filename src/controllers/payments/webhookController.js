@@ -72,7 +72,7 @@ async function onPaymentFailed(payment) {
 
 async function onRefundEvent(refundEntity, finalStatus) {
   const [row] = await sequelize.query(
-    `SELECT id, order_id, appointment_id, return_id FROM order_refunds WHERE razorpay_refund_id = :id`,
+    `SELECT id, order_id, appointment_id, care_pack_id, return_id FROM order_refunds WHERE razorpay_refund_id = :id`,
     { replacements: { id: refundEntity.id }, type: QueryTypes.SELECT }
   );
   if (!row) throw new Error(`Unknown refund ${refundEntity.id}`);
@@ -82,7 +82,20 @@ async function onRefundEvent(refundEntity, finalStatus) {
     { replacements: { status: finalStatus, id: row.id }, type: QueryTypes.UPDATE }
   );
 
-  if (finalStatus !== "processed") return "refund marked failed";
+  if (finalStatus !== "processed") {
+    if (row.care_pack_id) {        // the money did not go back: the pack is usable again
+      await sequelize.query(
+        `UPDATE care_packs SET status = CASE WHEN sessions_used >= sessions_total THEN 'exhausted' WHEN expires_at < now() THEN 'expired' ELSE 'active' END, updated_at = now() WHERE id = :id AND status = 'refund_pending'`,
+        { replacements: { id: row.care_pack_id }, type: QueryTypes.UPDATE }
+      );
+    }
+    return "refund marked failed";
+  }
+
+  if (row.care_pack_id) {          // a care pack has no payment_status of its own: the pack is refunded once the money has gone
+    await sequelize.query(`UPDATE care_packs SET status = 'refunded', updated_at = now() WHERE id = :id AND status IN ('refund_pending', 'refunded')`, { replacements: { id: row.care_pack_id }, type: QueryTypes.UPDATE });
+    return "care pack refunded";
+  }
 
   // paid status follows the total refunded so far
   const owner = row.order_id
