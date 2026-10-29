@@ -972,6 +972,7 @@ exports.listUsersWithProfiles = async (req, res) => {
         tp.service_radius_km,
         tp.qualification,
         tp.id as therapist_id,
+        tp.slug,
         tp.registration_no,
         tp.experience_years as experience,
         tp.hourly_rate as "hourlyRate",
@@ -1010,6 +1011,7 @@ exports.listUsersWithProfiles = async (req, res) => {
 
       GROUP BY 
         u.id,
+        tp.slug,
         u.name,
         u.email,
         u.phone,
@@ -1206,6 +1208,7 @@ exports.listUsersWithProfilesInRadius = async (req, res) => {
         tp.service_radius_km,
         tp.qualification,
         tp.id as therapist_id,
+        tp.slug,
         tp.registration_no,
         tp.experience_years as experience_years,
         tp.experience_years as experience,
@@ -1268,6 +1271,7 @@ exports.listUsersWithProfilesInRadius = async (req, res) => {
 
       GROUP BY 
         u.id,
+        tp.slug,
         u.name,
         u.email,
         u.phone,
