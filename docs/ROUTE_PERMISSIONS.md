@@ -259,6 +259,94 @@ Total routes: 170
 | GET | /api/care-packs/admin/all | admin.super, admin.therapy, admin.ecom |
 | POST | /api/care-packs/admin/:id/refund | admin.super, admin.therapy |
 | POST/PUT | /api/care-packs/admin/plans, /admin/plans/:id | admin.super |
+| GET | `/api/products/inventory/forecast` | yes | admin.super, admin.ecom | products.routes |
+| POST | `/api/coupons/generate-missing` | yes | admin.super, admin.ecom, admin.therapy | coupons.routes |
+| PUT | `/api/orders/returns/:id/reject` | yes | admin.super, admin.ecom | order.routes |
+| PUT | `/api/orders/returns/:id/receive` | yes | admin.super, admin.ecom | order.routes |
+| PUT | `/api/orders/returns/:id/inspect` | yes | admin.super, admin.ecom | order.routes |
+| GET | `/api/config/public` | no | public (no login) | config.routes |
+| GET | `/api/config/legal-entity` | no | public (no login) | config.routes |
+| GET | `/api/pcr/appointment/:appointmentId/pdf` | yes | any logged-in user | pcr.routes |
+| GET | `/api/pcr/:id/pdf` | yes | any logged-in user | pcr.routes |
+| GET | `/api/patients/me/dashboard` | yes | any logged-in user | patients.routes |
+| GET | `/api/patients/:patientId/progress` | yes | any logged-in user | patients.routes |
+| POST | `/api/clinical/plans` | yes | admin.super, therapist, admin.therapy | clinical.routes |
+| GET | `/api/clinical/plans` | yes | any logged-in user | clinical.routes |
+| GET | `/api/clinical/plans/:id` | yes | any logged-in user | clinical.routes |
+| PATCH | `/api/clinical/plans/:id` | yes | any logged-in user | clinical.routes |
+| POST | `/api/clinical/plans/:id/goals` | yes | any logged-in user | clinical.routes |
+| PATCH | `/api/clinical/goals/:id` | yes | any logged-in user | clinical.routes |
+| GET | `/api/clinical/plans/:id/progress` | yes | any logged-in user | clinical.routes |
+| GET | `/api/clinical/plans/:id/reports` | yes | any logged-in user | clinical.routes |
+| GET | `/api/clinical/reports/:id/pdf` | yes | any logged-in user | clinical.routes |
+| GET | `/api/clinical/measures` | yes | any logged-in user | clinical.routes |
+| POST | `/api/clinical/measures` | yes | admin.super, admin.therapy | clinical.routes |
+| PATCH | `/api/clinical/measures/:id` | yes | admin.super, admin.therapy | clinical.routes |
+| POST | `/api/clinical/caregivers` | yes | any logged-in user | clinical.routes |
+| GET | `/api/clinical/caregivers` | yes | any logged-in user | clinical.routes |
+| DELETE | `/api/clinical/caregivers/:id` | yes | any logged-in user | clinical.routes |
+| GET | `/api/clinical/followups/mine` | yes | any logged-in user | clinical.routes |
+| GET | `/api/clinical/followups/overdue` | yes | any logged-in user | clinical.routes |
+| POST | `/api/clinical/followups/:id/confirm` | yes | any logged-in user | clinical.routes |
+| POST | `/api/clinical/followups/:id/change` | yes | any logged-in user | clinical.routes |
+| POST | `/api/clinical/followups/:id/decline` | yes | any logged-in user | clinical.routes |
+| GET | `/api/clinical/reminder-prefs` | yes | any logged-in user | clinical.routes |
+| PUT | `/api/clinical/reminder-prefs` | yes | any logged-in user | clinical.routes |
+| GET | `/api/calendar/token` | yes | any logged-in user | calendar.routes |
+| POST | `/api/calendar/token/regenerate` | yes | any logged-in user | calendar.routes |
+| GET | `/api/calendar/appointments/:file` | yes | any logged-in user | calendar.routes |
+| GET | `/api/calendar/feed/:file` | no | public (no login) | calendar.routes |
+| GET | `/api/payout-batches/list` | yes | admin.super, therapist, admin.therapy | payouts.routes |
+| GET | `/api/payout-batches/export.csv` | yes | admin.super, admin.therapy | payouts.routes |
+| GET | `/api/payout-batches/:id/statement.pdf` | yes | admin.super, therapist, admin.therapy | payouts.routes |
+| GET | `/api/payout-batches/:id` | yes | admin.super, therapist, admin.therapy | payouts.routes |
+| POST | `/api/payout-batches/:id/approve` | yes | admin.super | payouts.routes |
+| POST | `/api/payout-batches/:id/mark-paid` | yes | admin.super | payouts.routes |
+| POST | `/api/payout-batches/:id/hold` | yes | admin.super, admin.therapy | payouts.routes |
+| POST | `/api/payout-batches/:id/release` | yes | admin.super, admin.therapy | payouts.routes |
+| POST | `/api/hooks/logistics` | no | public (no login) | hooks.routes |
+| POST | `/api/hooks/telephony` | no | public (no login) | hooks.routes |
+| POST | `/api/privacy/requests` | yes | any logged-in user | privacy.routes |
+| GET | `/api/privacy/requests` | yes | any logged-in user | privacy.routes |
+| GET | `/api/privacy/export` | yes | any logged-in user | privacy.routes |
+| GET | `/api/privacy/admin/requests` | yes | admin.super | privacy.routes |
+| PATCH | `/api/privacy/admin/requests/:id` | yes | admin.super | privacy.routes |
+| POST | `/api/communication/mask-call` | yes | any logged-in user | communication.routes |
+| GET | `/api/therapists/affiliate` | yes | admin.super, therapist | therapist.routes |
+| GET | `/api/therapists/:therapistId/slots` | no | public (no login) | therapist.routes |
+| GET | `/api/therapists/dashboard-stats` | yes | admin.super, therapist, admin.ecom, admin.therapy | therapist.routes |
+| GET | `/api/therapists/stats` | yes | admin.super, therapist, admin.ecom, admin.therapy | therapist.routes |
+| GET | `/api/therapists/stats/:therapistId` | yes | admin.super, therapist, admin.ecom, admin.therapy | therapist.routes |
+| GET | `/api/therapists/my-patients` | yes | admin.super, therapist | therapist.routes |
+| GET | `/api/therapy-admin/overview` | yes | admin.super, admin.therapy | therapy-admin.routes |
+| GET | `/api/therapy-admin/reassign-queue` | yes | admin.super, admin.therapy | therapy-admin.routes |
+| GET | `/api/therapy-admin/emergency-queue` | yes | admin.super, admin.therapy | therapy-admin.routes |
+| POST | `/api/therapy-admin/reassign` | yes | admin.super, admin.therapy | therapy-admin.routes |
+| GET | `/api/therapy-admin/quality-queue` | yes | admin.super, admin.therapy | therapy-admin.routes |
+| POST | `/api/therapy-admin/quality-action` | yes | admin.super, admin.therapy | therapy-admin.routes |
+| GET | `/api/therapy-admin/credential-queue` | yes | admin.super, admin.therapy | therapy-admin.routes |
+| GET | `/api/therapy-admin/overdue-followups` | yes | admin.super, admin.therapy | therapy-admin.routes |
+| POST | `/api/therapy-admin/close-plan` | yes | admin.super, admin.therapy | therapy-admin.routes |
+| GET | `/api/therapy-admin/stalled-progress` | yes | admin.super, admin.therapy | therapy-admin.routes |
+| GET | `/api/therapy-admin/outcome-summary` | yes | admin.super, admin.therapy | therapy-admin.routes |
+| GET | `/api/admin/reconciliation` | yes | admin.super, admin.ecom | admin.routes |
+| GET | `/api/admin/payment-exceptions` | yes | admin.super, admin.ecom | admin.routes |
+| GET | `/api/care-packs/plans` | no | public (no login) | carePacks.routes |
+| GET | `/api/care-packs/my-packs` | yes | any logged-in user | carePacks.routes |
+| POST | `/api/care-packs/purchase/order` | yes | any logged-in user | carePacks.routes |
+| POST | `/api/care-packs/purchase/verify` | yes | any logged-in user | carePacks.routes |
+| GET | `/api/care-packs/:id` | yes | any logged-in user | carePacks.routes |
+| GET | `/api/care-packs/admin/all` | yes | admin.super, admin.therapy, admin.ecom | carePacks.routes |
+| POST | `/api/care-packs/admin/:id/refund` | yes | admin.super, admin.therapy | carePacks.routes |
+| POST | `/api/care-packs/admin/plans` | yes | admin.super | carePacks.routes |
+| PUT | `/api/care-packs/admin/plans/:id` | yes | admin.super | carePacks.routes |
+| GET | `/api/appointments/:id/otp` | yes | any logged-in user | appointments.routes |
+| POST | `/api/appointments/:id/verify-start-otp` | yes | admin.super, therapist | appointments.routes |
+| GET | `/api/appointments/:id/cancel-quote` | yes | any logged-in user | appointments.routes |
+| GET | `/api/appointments/:id/follow-up-options` | yes | any logged-in user | appointments.routes |
+| POST | `/api/support/chat/sessions` | yes | any logged-in user | support.routes |
+| POST | `/api/support/chat/sessions/:id/messages` | yes | any logged-in user | support.routes |
+| POST | `/api/support/escalate` | yes | any logged-in user | support.routes |
 
 ## Follow-up visit requested by the patient (migration 0021)
 - `POST /api/appointments/create-appointment` and `POST /api/appointments/request` accept `bookingData.followUpOf` (the id of an earlier visit).
@@ -273,3 +361,9 @@ Total routes: 170
   `proposed` (the doctor's slot is already held: confirm it from the dashboard, 409), `booked` (a follow-up already exists, 409).
 - Booking with `followUpOf` on a date outside `dates` is refused (400, the message names the doctor's date). The date rule is checked before slot availability.
 - Slots the doctor proposes in the report (P17) now carry `follow_up_of`, so they count as the follow-up of that visit.
+
+## Decision: `GET /api/media/url/:id` stays public
+It only redirects to a file that is already served under `/uploads` (images and videos shown on public pages, such as therapist photos and product images). Never store a private document as media: clinical PDFs use the private storage folder and are only served by controllers with an access check.
+
+## Keeping this file complete
+`node scripts/route_permissions.js` prints the rows for every route; `--check` (also run by the integration tests, P34) fails when a route is missing here or its login rule differs.

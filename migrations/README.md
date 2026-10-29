@@ -22,3 +22,6 @@ npm run migrate                      # applies everything after the baseline
 npm run migrate:status
 ```
 Applied files are tracked in the `schema_migrations` table.
+
+## Two files share the number 0009
+`0009_treatment_plans_outcomes.sql` (tables) and `0009_treatment_plans_outcomes_seed.sql` (starting data) are applied in file-name order, tables first. Both are already applied everywhere, so they are not renamed (a rename would make the runner run them again). Number every new file with the next free number (`0023` was the last).
