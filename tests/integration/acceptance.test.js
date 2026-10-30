@@ -3013,6 +3013,21 @@ async function seed() {
     const anon = await call("GET", "/api/therapy-admin/overview", null);
     check("P34 the therapy-admin routes need a login (401)", anon.s === 401, "got " + anon.s);
   }
+  {
+    // P35 therapist links are name + city (go-live task GL-09)
+    const rows = await q("SELECT tp.slug, u.name, u.city FROM therapist_profiles tp JOIN users u ON u.id = tp.user_id");
+    check("P35 every therapist profile has a slug (lowercase, hyphens), unique in the database", rows.length > 0 && rows.every((x) => /^[a-z0-9]+(-[a-z0-9]+)*$/.test(x.slug || "")) && new Set(rows.map((x) => x.slug)).size === rows.length);
+    const r = await call("GET", "/api/therapists/list", null);
+    check("P35 the public therapist list carries the slug", r.s === 200 && r.j.data.length > 0 && r.j.data.every((x) => typeof x.slug === "string" && x.slug.length > 0), "got " + r.s);
+    const t1 = (await q("SELECT tp.id, tp.slug, u.name, u.city FROM therapist_profiles tp JOIN users u ON u.id = tp.user_id WHERE tp.user_id = $1", [U.t1.id]))[0];
+    const expected = `${t1.name} ${t1.city || ""}`.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
+    check("P35 the slug is made from the name and the city", t1.slug === expected || t1.slug.startsWith(expected), `${t1.slug} vs ${expected}`);
+    // a second profile with the same name and city gets -2, never the same link
+    await q("UPDATE users SET name = $1, city = $2 WHERE id = $3", [t1.name, t1.city, U.t2.id]);
+    await q("UPDATE therapist_profiles SET slug = NULL WHERE user_id = $1", [U.t2.id]);
+    const t2 = (await q("SELECT slug FROM therapist_profiles WHERE user_id = $1", [U.t2.id]))[0];
+    check("P35 two therapists with the same name and city get different links (-2)", t2.slug !== t1.slug && t2.slug.startsWith(t1.slug.replace(/-\d+$/, "")) && /-2$/.test(t2.slug), `${t1.slug} / ${t2.slug}`);
+  }
   unmute();
   const widthName =Math.max(...results.map((x) => x.name.length));
   for (const x of results) console.log((x.ok ? "PASS " : "FAIL ") + x.name + (x.ok ? "" : "  <-- " + x.detail));
