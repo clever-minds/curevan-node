@@ -41,7 +41,6 @@ async function createOrder(order) {
   try {
     const token = await getToken();
 
-console.log("shiprocketPayload payload",token);
     const res = await axios.post(
       "https://apiv2.shiprocket.in/v1/external/orders/create/adhoc",
       order,

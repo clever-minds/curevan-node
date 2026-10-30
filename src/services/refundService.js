@@ -2,7 +2,7 @@
  * Refunds through Razorpay (P08). The final status (processed / failed) is set by the
  * webhook (refund.processed / refund.failed), not here.
  *
- *   refund({ orderId | appointmentId, amountInr, reason, actorId, returnId })
+ *   refund({ orderId | appointmentId | carePackId, amountInr, reason, actorId, returnId })
  *
  * Booking cancellation rules (P14) call this service with the amount they decide.
  */
@@ -37,8 +37,8 @@ async function writeAudit({ actorId, action, entityType, entityId, details, tran
   );
 }
 
-async function refund({ orderId = null, appointmentId = null, amountInr = null, reason = null, actorId = null, returnId = null }) {
-  if (!orderId && !appointmentId) throw new RefundError("orderId or appointmentId is required");
+async function refund({ orderId = null, appointmentId = null, carePackId = null, amountInr = null, reason = null, actorId = null, returnId = null }) {
+  if (!orderId && !appointmentId && !carePackId) throw new RefundError("orderId, appointmentId or carePackId is required");
 
   const transaction = await sequelize.transaction();
   let refundId;
@@ -56,6 +56,16 @@ async function refund({ orderId = null, appointmentId = null, amountInr = null, 
       if (!o.razorpay_payment_id) throw new RefundError("No online payment is linked to this order - refund it manually");
       paid = { amount: Number(o.total), paymentId: o.razorpay_payment_id };
       userId = o.user_id;
+    } else if (carePackId) {
+      const [p] = await sequelize.query(
+        `SELECT id, patient_id, price_paid, status, razorpay_payment_id FROM care_packs WHERE id = :id FOR UPDATE`,
+        { replacements: { id: carePackId }, type: QueryTypes.SELECT, transaction }
+      );
+      if (!p) throw new RefundError("Care pack not found", 404);
+      if (!["active", "exhausted", "expired", "refund_pending"].includes(p.status)) throw new RefundError("This care pack has no confirmed payment to refund");
+      if (!p.razorpay_payment_id) throw new RefundError("No online payment is linked to this care pack - refund it manually");
+      paid = { amount: Number(p.price_paid), paymentId: p.razorpay_payment_id };
+      userId = p.patient_id;
     } else {
       const [a] = await sequelize.query(
         `SELECT id, patient_id, total_amount, payment_status, razorpay_payment_id FROM appointments WHERE id = :id FOR UPDATE`,
@@ -71,8 +81,8 @@ async function refund({ orderId = null, appointmentId = null, amountInr = null, 
     // 2) never refund more than paid minus what is already refunded (or on its way)
     const [sum] = await sequelize.query(
       `SELECT COALESCE(SUM(amount), 0) AS refunded FROM order_refunds
-       WHERE ${orderId ? "order_id" : "appointment_id"} = :id AND LOWER(status) IN ('pending', 'processed')`,
-      { replacements: { id: orderId || appointmentId }, type: QueryTypes.SELECT, transaction }
+       WHERE ${orderId ? "order_id" : appointmentId ? "appointment_id" : "care_pack_id"} = :id AND LOWER(status) IN ('pending', 'processed')`,
+      { replacements: { id: orderId || appointmentId || carePackId }, type: QueryTypes.SELECT, transaction }
     );
     const remaining = r2(paid.amount - Number(sum.refunded));
     const amount = amountInr === null || amountInr === undefined || amountInr === "" ? remaining : r2(amountInr);
@@ -81,11 +91,11 @@ async function refund({ orderId = null, appointmentId = null, amountInr = null, 
 
     // 3) record first (pending), then call Razorpay
     const [row] = await sequelize.query(
-      `INSERT INTO order_refunds (order_id, appointment_id, return_id, user_id, amount, reason, transaction_id, status, created_at)
-       VALUES (:orderId, :appointmentId, :returnId, :userId, :amount, :reason, :paymentId, 'pending', NOW())
+      `INSERT INTO order_refunds (order_id, appointment_id, care_pack_id, return_id, user_id, amount, reason, transaction_id, status, created_at)
+       VALUES (:orderId, :appointmentId, :carePackId, :returnId, :userId, :amount, :reason, :paymentId, 'pending', NOW())
        RETURNING id`,
       {
-        replacements: { orderId, appointmentId, returnId, userId, amount, reason, paymentId: paid.paymentId },
+        replacements: { orderId, appointmentId, carePackId, returnId, userId, amount, reason, paymentId: paid.paymentId },
         type: QueryTypes.INSERT,
         transaction,
       }
@@ -98,6 +108,7 @@ async function refund({ orderId = null, appointmentId = null, amountInr = null, 
         reason: reason || "Refund",
         orderId: orderId ? String(orderId) : "",
         appointmentId: appointmentId ? String(appointmentId) : "",
+        carePackId: carePackId ? String(carePackId) : "",
       });
     } catch (err) {
       await transaction.rollback();
@@ -112,8 +123,8 @@ async function refund({ orderId = null, appointmentId = null, amountInr = null, 
     await writeAudit({
       actorId,
       action: "refund_initiated",
-      entityType: orderId ? "order" : "appointment",
-      entityId: orderId || appointmentId,
+      entityType: orderId ? "order" : carePackId ? "care_pack" : "appointment",
+      entityId: orderId || appointmentId || carePackId,
       details: { refundId, razorpayRefundId: rzp.id, amount, reason },
       transaction,
     });
@@ -128,4 +139,20 @@ async function refund({ orderId = null, appointmentId = null, amountInr = null, 
   }
 }
 
-module.exports = { refund, RefundError };
+/**
+ * The money has gone back but the booking could not be cancelled. Nothing is hidden: the audit log gets a row and the therapy
+ * and super admins get an alert, so somebody finishes the cancellation by hand instead of leaving a refunded, still-active booking.
+ */
+async function flagRefundedButActive({ appointmentId, refund: r, actorId = null, error }) {
+  const details = { refundId: r && r.refundId, razorpayRefundId: r && r.razorpayRefundId, amount: r && r.amount, error: error && error.message };
+  await writeAudit({ actorId, action: "refund_issued_cancel_failed", entityType: "appointment", entityId: appointmentId, details }).catch((e) => console.error("audit failed:", e.message));
+  await require("./notificationStore").notifyRoles(["admin.therapy", "admin.super"], {
+    type: "refund_without_cancel",
+    title: "Refund sent, booking still active",
+    message: `Booking #${appointmentId} was refunded but could not be cancelled. Please cancel it by hand.`,
+    link: "/dashboard/admin/appointments",
+    data: { appointmentId },
+  }).catch((e) => console.error("refund alert failed:", e.message));
+}
+
+module.exports = { refund, RefundError, flagRefundedButActive };

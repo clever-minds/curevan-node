@@ -46,7 +46,7 @@ exports.requestReturn = async (req, res) => {
         `SELECT oi.id, oi.name, oi.qty,
                 COALESCE((SELECT SUM(ri.quantity) FROM order_return_items ri JOIN order_returns r ON r.id = ri.return_id
                           WHERE ri.order_item_id = oi.id AND r.status NOT IN ('Rejected', 'Closed')), 0) AS already,
-                COALESCE(c.non_returnable, false) AS non_returnable
+                (COALESCE(p.non_returnable, false) OR COALESCE(c.non_returnable, false)) AS non_returnable
          FROM order_items oi LEFT JOIN products p ON p.sku = oi.sku LEFT JOIN categories c ON c.id = p.category_id
          WHERE oi.id = :itemId AND oi.order_id = :orderId LIMIT 1`,
         { replacements: { itemId: it.order_item_id, orderId }, type: QueryTypes.SELECT, transaction: t }

@@ -191,7 +191,7 @@ exports.addProduct = async (req, res) => {
           length_cm, width_cm, height_cm, weight_kg,
           manufacturer, country_of_origin, packer, importer, batch_number,
           manufacturing_date, expiry_date, tags,
-          image_ids, additional_features, is_recommended, service_type_id, sub_category_id
+          image_ids, additional_features, is_recommended, service_type_id, sub_category_id, non_returnable
         ) VALUES (
           :productType, :title, :slug, :subtitle, :shortDescription, :longDescription,
           :brand, :sku, :category, :mrp, :sellingPrice,
@@ -200,7 +200,7 @@ exports.addProduct = async (req, res) => {
           :length_cm, :width_cm, :height_cm, :weight_kg,
           :manufacturer, :country_of_origin, :packer, :importer, :batch_number,
           :manufacturing_date, :expiry_date, :tags::json,
-          ARRAY[:imageIds]::integer[], :additional_features::json, :is_recommended, :service_type_id, :sub_category_id
+          ARRAY[:imageIds]::integer[], :additional_features::json, :is_recommended, :service_type_id, :sub_category_id, :non_returnable
         )
         RETURNING id`,
       {
@@ -238,7 +238,8 @@ exports.addProduct = async (req, res) => {
           additional_features: additionalFeaturesJSON,
           is_recommended: is_recommended || false,
           service_type_id: service_type_id || null,
-          sub_category_id: sub_category_id || null
+          sub_category_id: sub_category_id || null,
+          non_returnable: req.body.non_returnable === true || req.body.non_returnable === "true"
         },
         type: QueryTypes.INSERT,
         transaction: t
@@ -728,7 +729,8 @@ exports.updateProduct = async (req, res) => {
         additional_features = :additional_features::json,
         is_recommended = :is_recommended,
         service_type_id = :service_type_id,
-        sub_category_id = :sub_category_id
+        sub_category_id = :sub_category_id,
+        non_returnable = COALESCE(:non_returnable, non_returnable)
     `;
 
     // update image_ids only if provided
@@ -772,7 +774,8 @@ exports.updateProduct = async (req, res) => {
       additional_features: additionalFeaturesJSON,
       is_recommended: is_recommended || false,
       service_type_id: service_type_id || null,
-      sub_category_id: sub_category_id || null
+      sub_category_id: sub_category_id || null,
+      non_returnable: req.body.non_returnable === undefined ? null : (req.body.non_returnable === true || req.body.non_returnable === "true")
     };
 
     if (imageIds.length > 0) {

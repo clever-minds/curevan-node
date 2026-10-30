@@ -1,6 +1,5 @@
 const { QueryTypes } = require("sequelize");
 const { sequelize } = require("../../config/db");
-const transporter = require("../../config/mailer");
 const notifications = require("../../services/notifications");
 const firebaseNotifier = require("../../utils/firebaseNotifier");
 const access = require("../../utils/access");
@@ -1516,8 +1515,7 @@ exports.cancelOrder = async (req, res) => {
 
     try {
       if (req.user?.email) {
-        await transporter.sendMail({
-          from: `"Curevan Orders" <${process.env.MAIL_FROM || process.env.MAIL_USER}>`,
+        await notifications.sendEmailLogged({
           to: req.user.email,
           subject: `Order Cancelled - #${orderId}`,
           html: `

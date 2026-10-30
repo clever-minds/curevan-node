@@ -17,7 +17,6 @@ const notifications = require("../../services/notifications");
 const compliance = require("../../services/complianceService");
 const followUpLink = require("../../services/followUpLink");
 const { sequelize } = require("../../config/db");
-const transporter = require("../../config/mailer");
 const firebaseNotifier = require("../../utils/firebaseNotifier");
 
 
@@ -1194,8 +1193,7 @@ exports.updatePcr = async (req, res) => {
         );
 
         if (apptInfo?.email) {
-          await transporter.sendMail({
-            from: `"Curevan Support" <${process.env.MAIL_USER}>`,
+          await notifications.sendEmailLogged({
             to: apptInfo.email,
             subject: `Your session is complete`,
             html: `
@@ -1297,8 +1295,7 @@ exports.createBookingRequest = async (req, res) => {
       );
       if (patientUser && patientUser.email) {
         try {
-          await transporter.sendMail({
-            from: `"Curevan Appointments" <${process.env.MAIL_USER}>`,
+          await notifications.sendEmailLogged({
             to: patientUser.email,
             subject: "Appointment Request Received (Pending)",
             html: `
@@ -1512,8 +1509,7 @@ exports.acceptBookingRequest = async (req, res) => {
           data: { appointmentId: id },
         });
         if (patient.email) {
-          await transporter.sendMail({
-            from: `"Curevan Appointments" <${process.env.MAIL_FROM || process.env.MAIL_USER}>`,
+          await notifications.sendEmailLogged({
             to: patient.email,
             subject: "Therapist found - please pay to confirm",
             html: `<p>Hi ${patient.name || ""},</p><p>${therapist.name} accepted your request for ${appt.date} at ${appt.time}.</p><p>Please pay to confirm your session: <a href="${link}">Pay now</a></p>`,
@@ -1661,6 +1657,11 @@ exports.cancelAppointment = async (req, res) => {
       if (q.chargeInr > 0) await payoutService.createItemForCancellation(appt.id).catch((e) => console.error("cancellation payout failed:", e.message));
     } catch (err) {
       await t.rollback();
+      if (refund) {      // the money is already back with the patient: never leave that silent
+        await refundService.flagRefundedButActive({ appointmentId: appt.id, refund, actorId: userId, error: err });
+        const msg = "Your refund has been started but the cancellation could not be completed. Our team has been alerted and will finish it.";
+        return res.status(500).json({ success: false, error: msg, message: msg });
+      }
       throw err;
     }
 
@@ -2023,12 +2024,10 @@ exports.rescheduleAppointment = async (req, res) => {
       
       const admins = await sequelize.query(`SELECT email, fcm_token FROM users WHERE role IN ('super_admin', 'admin', 'superadmin', 'therapyAdmin')`, { type: QueryTypes.SELECT });
       
-      const mailSender = process.env.MAIL_USER ? `"Curevan Appointments" <${process.env.MAIL_USER}>` : '"Curevan Appointments" <noreply@curevan.com>';
 
       // Emails
       if (patient && patient.email) {
-          transporter.sendMail({
-              from: mailSender,
+          notifications.sendEmailLogged({
               to: patient.email,
               subject: "Your Appointment is Rescheduled",
               html: `<p>Hi ${patient.name || 'Patient'},</p><p>Your appointment has been successfully rescheduled to ${date} at ${time}.</p>`
@@ -2036,8 +2035,7 @@ exports.rescheduleAppointment = async (req, res) => {
       }
       
       if (therapist && therapist.email) {
-          transporter.sendMail({
-              from: mailSender,
+          notifications.sendEmailLogged({
               to: therapist.email,
               subject: "Appointment Rescheduled",
               html: `<p>Hi ${therapist.name || 'Therapist'},</p><p>An appointment previously assigned to you has been rescheduled by the patient to ${date} at ${time}. You have been unassigned from this session.</p>`
@@ -2046,8 +2044,7 @@ exports.rescheduleAppointment = async (req, res) => {
       
       for (const admin of admins) {
           if (admin.email) {
-              transporter.sendMail({
-                  from: mailSender,
+              notifications.sendEmailLogged({
                   to: admin.email,
                   subject: "System Alert: Appointment Rescheduled",
                   html: `<p>Hi Admin,</p><p>Appointment ID ${id} has been rescheduled to ${date} at ${time}. The status is now 'Searching Therapist'.</p>`
