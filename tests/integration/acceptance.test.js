@@ -2999,6 +2999,20 @@ async function seed() {
     const walk = (d) => fs.readdirSync(d, { withFileTypes: true }).flatMap((e) => (e.isDirectory() ? walk(path.join(d, e.name)) : [path.join(d, e.name)]));
     check("P33 no controller sends mail directly any more", walk(ctrlDir).filter((f) => /\.js$/.test(f) && /transporter\.sendMail|config\/mailer/.test(fs.readFileSync(f, "utf8"))).length === 0);
   }
+  {
+    // P34 the route list is complete and the therapy-admin routes are guarded (task list P03)
+    const { spawnSync } = require("child_process");
+    const chk = spawnSync(process.execPath, [require("path").join(__dirname, "../../scripts/route_permissions.js"), "--check"], { encoding: "utf8" });
+    check("P34 docs/ROUTE_PERMISSIONS.md lists every route with the right login rule (scripts/route_permissions.js --check)", chk.status === 0, (chk.stdout || "").slice(0, 300));
+    for (const [who, tok, want] of [["a patient", T.p1, 403], ["a therapist", T.t1, 403], ["an e-commerce admin", T.ecom, 403], ["a therapy admin", T.therapy, 200]]) {
+      for (const p of ["/api/therapy-admin/overview", "/api/therapy-admin/quality-queue", "/api/therapy-admin/credential-queue"]) {
+        const x = await call("GET", p, tok);
+        check(`P34 ${p} for ${who} -> ${want}`, x.s === want, "got " + x.s);
+      }
+    }
+    const anon = await call("GET", "/api/therapy-admin/overview", null);
+    check("P34 the therapy-admin routes need a login (401)", anon.s === 401, "got " + anon.s);
+  }
   unmute();
   const widthName =Math.max(...results.map((x) => x.name.length));
   for (const x of results) console.log((x.ok ? "PASS " : "FAIL ") + x.name + (x.ok ? "" : "  <-- " + x.detail));
