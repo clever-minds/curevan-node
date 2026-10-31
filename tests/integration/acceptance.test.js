@@ -3028,6 +3028,51 @@ async function seed() {
     const t2 = (await q("SELECT slug FROM therapist_profiles WHERE user_id = $1", [U.t2.id]))[0];
     check("P35 two therapists with the same name and city get different links (-2)", t2.slug !== t1.slug && t2.slug.startsWith(t1.slug.replace(/-\d+$/, "")) && /-2$/.test(t2.slug), `${t1.slug} / ${t2.slug}`);
   }
+  {
+    // P36 registration certificate upload (task list P22): private file, therapist + therapy/super admins only
+    const post = async (tok, file) => {
+      const f = new FormData();
+      if (file) f.append("certificate", new Blob([file.bytes], { type: file.type }), file.name);
+      const x = await fetch(base + "/api/therapists/me/certificate", { method: "POST", headers: { authorization: "Bearer " + tok }, body: f });
+      return { s: x.status, j: await x.json().catch(() => ({})) };
+    };
+    const get = async (tok, path) => { const x = await fetch(base + path, { headers: { authorization: "Bearer " + tok } }); return { s: x.status, type: x.headers.get("content-type"), buf: Buffer.from(await x.arrayBuffer()) }; };
+    const pdf = Buffer.from("%PDF-1.4 test certificate");
+    let r = await post(T.t1, { bytes: pdf, type: "application/pdf", name: "mci-registration.pdf" });
+    check("P36 a therapist uploads the registration certificate (PDF) -> 200", r.s === 200 && r.j.data && r.j.data.uploaded === true && r.j.data.name === "mci-registration.pdf", "got " + r.s + " " + JSON.stringify(r.j));
+    const row = (await q("SELECT registration_certificate_path AS p FROM therapist_profiles WHERE user_id = $1", [U.t1.id]))[0];
+    check("P36 the file is stored in the private folder, not under /uploads", row.p && row.p.startsWith("certificates" ) && !/uploads/.test(row.p), row.p);
+    r = await post(T.t1, { bytes: Buffer.from("hello"), type: "text/plain", name: "x.txt" });
+    check("P36 a file that is not a PDF / JPG / PNG is refused (400)", r.s === 400, "got " + r.s);
+    r = await post(T.t1, { bytes: Buffer.alloc(5 * 1024 * 1024 + 10), type: "application/pdf", name: "big.pdf" });
+    check("P36 a file over 5 MB is refused (400)", r.s === 400, "got " + r.s);
+    r = await post(T.t1, null);
+    check("P36 no file chosen -> 400", r.s === 400, "got " + r.s);
+    r = await post(T.p1, { bytes: pdf, type: "application/pdf", name: "a.pdf" });
+    check("P36 a patient cannot upload (403)", r.s === 403, "got " + r.s);
+    let g = await get(T.t1, `/api/therapists/certificate/${U.t1.id}/file`);
+    check("P36 the therapist opens her/his own certificate (the same bytes, PDF)", g.s === 200 && /pdf/.test(g.type || "") && g.buf.equals(pdf), "got " + g.s + " " + g.type);
+    g = await get(T.therapy, `/api/therapists/certificate/${U.t1.id}/file`);
+    check("P36 the therapy admin can open it", g.s === 200, "got " + g.s);
+    g = await get(T.su, `/api/therapists/certificate/${U.t1.id}/file`);
+    check("P36 the super admin can open it", g.s === 200, "got " + g.s);
+    for (const [who, tok] of [["another therapist", T.t2], ["a patient", T.p1], ["an e-commerce admin", T.ecom]]) {
+      g = await get(tok, `/api/therapists/certificate/${U.t1.id}/file`);
+      check(`P36 ${who} cannot open it (403)`, g.s === 403, "got " + g.s);
+    }
+    g = await get(T.t1, `/api/therapists/certificate/${U.t2.id}/file`);
+    check("P36 a therapist cannot open another therapist's certificate (403)", g.s === 403, "got " + g.s);
+    g = await get(T.therapy, `/api/therapists/certificate/${U.t2.id}/file`);
+    check("P36 no certificate uploaded yet -> 404", g.s === 404, "got " + g.s);
+    const q1 = await call("GET", "/api/therapy-admin/credential-queue", T.therapy);
+    check("P36 the therapy admin's credential queue shows who has a certificate", q1.s === 200, "got " + q1.s);
+    const old = row.p;
+    r = await post(T.t1, { bytes: Buffer.from("%PDF-1.4 second"), type: "application/pdf", name: "renewed.pdf" });
+    const row2 = (await q("SELECT registration_certificate_path AS p FROM therapist_profiles WHERE user_id = $1", [U.t1.id]))[0];
+    const fsx = require("fs");
+    check("P36 uploading again replaces the file and deletes the old one", r.s === 200 && row2.p !== old && !fsx.existsSync(require("../../src/utils/privateStorage").resolve(old)));
+    check("P36 the upload is written to the audit log", (await q("SELECT 1 FROM audit_logs WHERE action = 'certificate_uploaded' AND entity_id = $1", [String(U.t1.id)])).length >= 2);
+  }
   unmute();
   const widthName =Math.max(...results.map((x) => x.name.length));
   for (const x of results) console.log((x.ok ? "PASS " : "FAIL ") + x.name + (x.ok ? "" : "  <-- " + x.detail));

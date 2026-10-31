@@ -17,6 +17,12 @@ router.get("/affiliate", authMiddleware, requireRole("therapist"), responseHandl
 router.get("/profile/:userId",authMiddleware,responseHandler, therapistController.getProfile);
 router.put("/profile/:userId", authMiddleware, therapistController.updateProfile);
 
+// Registration certificate (private file: the therapist and the therapy / super admins only)
+const certificateController = require("../controllers/therapist/certificateController");
+router.post("/me/certificate", authMiddleware, requireRole("therapist"), certificateController.uploadCertificate);
+router.get("/me/certificate", authMiddleware, requireRole("therapist"), responseHandler, certificateController.myCertificate);
+router.get("/certificate/:userId/file", authMiddleware, certificateController.certificateFile);
+
 // Open slots for a date (public): GET /api/therapists/:therapistId/slots?date=YYYY-MM-DD
 router.get("/:therapistId/slots", async (req, res) => {
   const slotService = require("../services/slotService");
