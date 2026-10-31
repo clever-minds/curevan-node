@@ -347,6 +347,9 @@ Total routes: 170
 | POST | `/api/support/chat/sessions` | yes | any logged-in user | support.routes |
 | POST | `/api/support/chat/sessions/:id/messages` | yes | any logged-in user | support.routes |
 | POST | `/api/support/escalate` | yes | any logged-in user | support.routes |
+| POST | `/api/therapists/me/certificate` | yes | admin.super, therapist | therapist.routes |
+| GET | `/api/therapists/me/certificate` | yes | admin.super, therapist | therapist.routes |
+| GET | `/api/therapists/certificate/:userId/file` | yes | any logged-in user | therapist.routes |
 
 ## Follow-up visit requested by the patient (migration 0021)
 - `POST /api/appointments/create-appointment` and `POST /api/appointments/request` accept `bookingData.followUpOf` (the id of an earlier visit).
@@ -367,3 +370,5 @@ It only redirects to a file that is already served under `/uploads` (images and 
 
 ## Keeping this file complete
 `node scripts/route_permissions.js` prints the rows for every route; `--check` (also run by the integration tests, P34) fails when a route is missing here or its login rule differs.
+
+- `GET /api/therapists/certificate/:userId/file` is marked "any logged-in user" because the guard is inside the controller: only that therapist, `admin.therapy` and `admin.super` get the file (403 for everyone else, 404 when none is uploaded). The file sits in the private storage folder, never under `/uploads`. Test P36.

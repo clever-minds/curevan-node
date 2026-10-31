@@ -238,6 +238,7 @@ exports.getCredentialQueue = async (req, res) => {
          SELECT u.id as user_id, u.name, u.email, u.phone, u.city,
                 tp.id as profile_id, tp.council, tp.registration_no, tp.registration_valid_until,
                 tp.registration_doc_id, tp.qualification,
+                (tp.registration_certificate_path IS NOT NULL) AS has_certificate, tp.registration_certificate_uploaded_at,
                 CASE
                   WHEN tp.registration_valid_until IS NULL THEN 'missing'
                   WHEN tp.registration_valid_until < CURRENT_DATE THEN 'expired'
