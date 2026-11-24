@@ -10,6 +10,7 @@
     "wa:templates": "node scripts/whatsapp_templates.js --list",
     "wa:submit": "node scripts/whatsapp_templates.js --submit",
     "test": "node tests/run_all.js",
+    "test:whatsapp": "node --test tests/unit/whatsapp_p30.test.js",
     "test:unit": "node tests/unit/cancellation_quote.test.js",
     "test:integration": "node tests/integration/acceptance.test.js",
     "test:db": "node tests/integration/setup_db.js",

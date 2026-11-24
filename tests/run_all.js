@@ -11,6 +11,7 @@ if (!/test/i.test(dbName)) { console.error(`Refusing to run: DB_NAME "${dbName}"
 const log = path.join(os.tmpdir(), "curevan-acceptance.log");
 const steps = [
   ["unit tests", ["tests/unit/cancellation_quote.test.js"]],
+  ["whatsapp p30 unit tests", ["tests/unit/whatsapp_p30.test.js"]],
   ["test database", ["tests/integration/setup_db.js"]],
   ["acceptance, pay-first flow (the handoff pack)", ["tests/integration/acceptance.test.js"], log],
   ["go-live checklist mapping", ["tests/check_checklist.js", log]],

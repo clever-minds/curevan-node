@@ -602,7 +602,7 @@ const TEMPLATES = {
     name: "admin_therapist_leave",
     category: "UTILITY",
     metaTemplateName: "curevan_admin_therapist_leave_v1",
-    metaApprovedText: `Hello {{1}}, therapist {{2}} requested leave on {{3}}. Reassignment may be required. Review details: {{4}}\n${SUPPORT_LINE}`,
+    metaApprovedText: `Hello {{1}}, Curevan therapist {{2}} requested leave on {{3}}. Reassignment may be required. Review details: {{4}}\n${SUPPORT_LINE}`,
     variables: ["admin_name", "therapist_name", "date", "link"],
     samples: ["Admin", "Dr Sharma", "2026-11-26", "https://www.curevan.com/dashboard/therapy-admin"],
     formatWhatsApp: ({ adminName, therapistName, date, link }) =>
