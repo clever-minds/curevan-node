@@ -7,6 +7,8 @@
     "dev": "nodemon src/server.js",
     "migrate": "node scripts/migrate.js",
     "migrate:status": "node scripts/migrate.js --status",
+    "wa:templates": "node scripts/whatsapp_templates.js --list",
+    "wa:submit": "node scripts/whatsapp_templates.js --submit",
     "test": "node tests/run_all.js",
     "test:unit": "node tests/unit/cancellation_quote.test.js",
     "test:integration": "node tests/integration/acceptance.test.js",

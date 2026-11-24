@@ -48,7 +48,20 @@ module.exports = Object.freeze({
   emergency: Object.freeze({ radiusKm: 8, autoCancelHoursBefore: 2, lookAheadDays: 1 }),                // therapist leave: replacement radius, auto-cancel window, days looked ahead (P22)
   maskedCall: Object.freeze({ windowHoursBefore: 2, windowHoursAfter: 1 }),                              // D12
   carePacks: Object.freeze({ defaultValidityDays: 90, cancellationRefundProcessingFeePct: 10 }),         // D14 (P28): 90-day validity, up to 10% processing fee
-  features: Object.freeze({ carePacks: true }),                                                           // enabled by P28
+  whatsapp: Object.freeze({
+    enabled: true,
+    templateLang: process.env.WHATSAPP_TEMPLATE_LANG || 'en',
+    graphVersion: process.env.WHATSAPP_GRAPH_VERSION || 'v21.0',
+    supportPhone: '+91 95144 46292',
+  }),
+  features: Object.freeze({ carePacks: true, whatsapp: true }),                                           // master on/off switches
+  notifications: Object.freeze({
+    adminWhatsAppRoles: Object.freeze({
+      'admin.super': true,
+      'admin.therapy': true,
+      'admin.ecom': true,
+    }),
+  }),
   support: Object.freeze({ openHour: 8, closeHour: 21, callbackBy: '09:30' }),
   ai: Object.freeze({ modelId: process.env.AI_MODEL_ID || '' }),                                         // set at go-live
 });
