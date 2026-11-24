@@ -118,7 +118,7 @@ function authCookieOptions() {
 exports.register = async (req, res) => {
   // Public sign-up always creates a patient. Role/roles in the body are ignored on purpose:
   // therapists register via /api/therapists/register, admins are invited by a Super Admin.
-  const { email, password, name, phone } = req.body;
+  const { email, password, name, phone, whatsapp_opt_in } = req.body;
   const role = 'patient';
   const roles = ['patient'];
 
@@ -144,19 +144,38 @@ exports.register = async (req, res) => {
 
     const hash = await bcrypt.hash(password, 10);
     const verificationToken = uuidv4();
+    const isWaOptIn = Boolean(whatsapp_opt_in);
 
     const [user] = await sequelize.query(
-      `INSERT INTO users (uid,email,password,name,phone,role,is_verified,verification_code)
-       VALUES (:uid,:email,:password,:name,:phone,:role,false,:verificationToken)
+      `INSERT INTO users (uid,email,password,name,phone,role,is_verified,verification_code,whatsapp_opt_in,whatsapp_opt_in_at,whatsapp_opt_in_source)
+       VALUES (:uid,:email,:password,:name,:phone,:role,false,:verificationToken,:isWaOptIn,${isWaOptIn ? 'NOW()' : 'NULL'},${isWaOptIn ? "'signup'" : 'NULL'})
        RETURNING id`,
       {
-        replacements: { uid, email, password: hash, name, phone, role, verificationToken },
+        replacements: { uid, email, password: hash, name, phone, role, verificationToken, isWaOptIn },
         type: QueryTypes.INSERT,
         transaction
       }
     );
 
     const userId = user[0].id;
+
+    if (isWaOptIn) {
+      const policyVer = require("../../config/businessRules").consent?.policyVersion || "2026-10";
+      await sequelize.query(
+        `INSERT INTO consent_logs (user_id, consent_type, policy_version, granted, ip, user_agent, created_at)
+         VALUES (:userId, 'whatsapp', :policyVer, true, :ip, :ua, NOW())`,
+        {
+          replacements: {
+            userId,
+            policyVer,
+            ip: req.ip || null,
+            ua: String(req.headers["user-agent"] || "").slice(0, 300) || null,
+          },
+          type: QueryTypes.INSERT,
+          transaction,
+        }
+      );
+    }
 
     for (const roleName of roles) {
       const [roleRes] = await sequelize.query(
@@ -403,7 +422,7 @@ exports.getUserProfile = async (req, res) => {
     // 1️⃣ User fetch
     const users = await sequelize.query(
       `
-      SELECT id, uid, name, email, phone, role
+      SELECT id, uid, name, email, phone, role, whatsapp_opt_in
       FROM users
       WHERE id = :userId
       `,
@@ -446,7 +465,8 @@ exports.getUserProfile = async (req, res) => {
         email: user.email,
         phone: user.phone,
         role: user.role,
-        roles: roles
+        roles: roles,
+        whatsapp_opt_in: Boolean(user.whatsapp_opt_in)
       });
     }
 
@@ -493,7 +513,8 @@ exports.getUserProfile = async (req, res) => {
       email: user.email,
       phone: user.phone,
       role: user.role,
-      roles: roles
+      roles: roles,
+      whatsapp_opt_in: Boolean(user.whatsapp_opt_in)
     });
 
   } catch (error) {
@@ -1246,8 +1267,14 @@ exports.updateUserProfile = async (req, res) => {
       pin,
       country,
       email_opt_in,
-      push_opt_in
+      push_opt_in,
+      whatsapp_opt_in
     } = req.body;
+
+    if (whatsapp_opt_in !== undefined) {
+      const { saveWhatsAppConsent } = require("../../utils/consentHelper");
+      await saveWhatsAppConsent(userId, whatsapp_opt_in, "account", req);
+    }
 
     await sequelize.query(
       `

@@ -945,7 +945,13 @@ exports.createOrderFromCart = async (req, res) => {
       shipping_address_id,
       coupon_code,
       referred_therapist_id,
+      whatsapp_opt_in
     } = req.body;
+
+    if (whatsapp_opt_in !== undefined && userId) {
+      const { saveWhatsAppConsent } = require("../../utils/consentHelper");
+      await saveWhatsAppConsent(userId, whatsapp_opt_in, "checkout", req);
+    }
 
     // A new checkout replaces this user's earlier unpaid orders (their stock goes back).
     await releasePendingOrders({ userId, transaction });

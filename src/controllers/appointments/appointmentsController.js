@@ -274,6 +274,11 @@ exports.createBookingAndInvoice = async (req, res) => {
     let amount;
 
     if (payForId) {
+      const waOptIn = bookingData?.whatsapp_opt_in ?? req.body?.whatsapp_opt_in;
+      if (waOptIn !== undefined && req.user?.id) {
+        const { saveWhatsAppConsent } = require("../../utils/consentHelper");
+        await saveWhatsAppConsent(req.user.id, waOptIn, "booking", req);
+      }
       // ---- pay for an existing, accepted and still unpaid request
       const [appt] = await sequelize.query(
         `SELECT id, patient_id, status, payment_status, service_amount FROM appointments WHERE id = :id FOR UPDATE`,
@@ -1231,6 +1236,12 @@ exports.createBookingRequest = async (req, res) => {
   try {
     if (!bookingData) {
       return res.status(400).json({ success: false, error: "Booking data required" });
+    }
+
+    const waOptIn = bookingData?.whatsapp_opt_in ?? req.body?.whatsapp_opt_in;
+    if (waOptIn !== undefined && req.user?.id) {
+      const { saveWhatsAppConsent } = require("../../utils/consentHelper");
+      await saveWhatsAppConsent(req.user.id, waOptIn, "booking", req);
     }
 
     // patients request for themselves; the price comes from the service type (set by the server),

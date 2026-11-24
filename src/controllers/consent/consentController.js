@@ -2,7 +2,8 @@ const { QueryTypes } = require("sequelize");
 const { sequelize } = require("../../config/db");
 const access = require("../../utils/access");
 
-const TYPES = ["terms", "privacy", "medical", "marketing", "cookies"];
+const TYPES = ["terms", "privacy", "medical", "marketing", "cookies", "whatsapp"];
+const { saveWhatsAppConsent } = require("../../utils/consentHelper");
 
 /* POST /api/consent/log   { consentType, version, granted? }
    Open to anonymous visitors (cookie banner); the user id comes from the token, never from the body. */
@@ -14,6 +15,11 @@ exports.logConsent = async (req, res) => {
       return res.status(400).json({ success: false, error: `consentType must be one of ${TYPES.join(", ")}`, message: "Invalid consent type" });
     }
     const user = access.optionalUser(req);
+
+    if (consentType === "whatsapp" && user) {
+      await saveWhatsAppConsent(user.id, granted, req.body?.source || "account", req);
+      return res.json({ success: true });
+    }
 
     await sequelize.query(
       `INSERT INTO consent_logs (user_id, consent_type, policy_version, granted, ip, user_agent)
