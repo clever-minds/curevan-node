@@ -3,6 +3,7 @@ const router = express.Router();
 const authMiddleware = require("../middlewares/authMiddleware");
 const { requireRole } = require("../middlewares/requireRole");
 const reconciliationController = require("../controllers/admin/reconciliationController");
+const notificationLogController = require("../controllers/admin/notificationLogController");
 
 // Payment reconciliation for super admin and ecom admin
 router.get(
@@ -18,6 +19,21 @@ router.get(
   authMiddleware,
   requireRole("admin.super", "admin.ecom"),
   reconciliationController.getPaymentExceptions
+);
+
+// Notification delivery log & resend (P30: WhatsApp Cloud API & Omnichannel delivery)
+router.get(
+  "/notification-log",
+  authMiddleware,
+  requireRole("admin.super"),
+  notificationLogController.getNotificationLogs
+);
+
+router.post(
+  "/notification-log/:id/resend",
+  authMiddleware,
+  requireRole("admin.super"),
+  notificationLogController.resendNotification
 );
 
 module.exports = router;

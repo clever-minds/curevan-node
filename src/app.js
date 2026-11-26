@@ -25,6 +25,8 @@ app.use(cors({
 // Razorpay webhook needs the exact raw body for signature checking, so it is mounted
 // before the JSON parser and only for this path.
 app.post("/api/payments/webhook", express.raw({ type: "application/json", limit: "1mb" }), require("./controllers/payments/webhookController").handleWebhook);
+// WhatsApp webhook needs the exact raw body for signature checking
+app.use("/api/hooks/whatsapp", express.raw({ type: "application/json", limit: "1mb" }));
 app.use(express.json({ limit: "10mb" }));
 app.use((err, req, res, next) => {
   if (err instanceof SyntaxError && err.status === 400 && "body" in err) {

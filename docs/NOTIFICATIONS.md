@@ -1,318 +1,142 @@
-# Curevan Notification Service: Approved Templates & Vendor Integration (P24)
+# Curevan Omnichannel Notification System & WhatsApp Cloud API Guide
 
-This document specifies the exact approved templates, variables, DLT entity IDs, and routing channels for Curevan's notification service operated by Himaya Care Pvt. Ltd.
+## 1. Overview
+Curevan uses an omnichannel notification architecture across **WhatsApp Cloud API (Meta Graph API)**, **SMS (DLT-compliant gateway)**, and **Transactional Email**.
 
----
-
-## 1. Regulatory Context & Provider Settings
-
-| Parameter | Value |
-|---|---|
-| **Operating Entity** | Himaya Care Pvt. Ltd. |
-| **Brand / Sender ID (DLT Header)** | `CURVAN` |
-| **TRAI Principal Entity ID (DLT)** | set via `DLT_ENTITY_ID` (from the TRAI DLT portal; no default) |
-| **Supported WhatsApp Provider** | Meta WhatsApp Cloud API (`WHATSAPP_PROVIDER=meta`), console dev fallback |
-| **Supported SMS Provider** | MSG91 (`SMS_PROVIDER=msg91`), console dev fallback |
-| **Transactional Email Provider** | `MAIL_PROVIDER=sendgrid` (HTTP API, needs `SENDGRID_API_KEY`, `MAIL_FROM` on curevan.com) in production; `smtp` = old Gmail/SMTP transporter, development fallback only; `console` (default) prints only |
-| **Sender Email** | `notifications@curevan.com` (set via `MAIL_FROM`) |
-| **Timezone** | Asia/Kolkata (IST, UTC+5:30) |
-
-> **Strict Compliance Rules**:
-> 1. **Utility Category**: No marketing or promotional text is permitted inside utility templates.
-> 2. **OTP Zero-Leak Boundary**: OTP (Start Code) is strictly prohibited from being sent via email or recorded in database log tables or stdout logs.
-> 3. **High-Availability Fallback**: WhatsApp failure on critical transactional messages (`booking_confirmed`) automatically falls back to TRAI DLT SMS.
+All outbound communications are strictly opt-in, non-marketing, and compliant with Meta Business Messaging Policies and Indian healthcare data privacy principles:
+- **No clinical details or diagnosis words** are ever transmitted over WhatsApp.
+- **Start Codes (OTP)** are **never** included in `booking_confirmed` or utility templates. The Start Code is delivered exclusively through an **AUTHENTICATION** category template (`curevan_start_code`) inside the 2-hour pre-visit window directly to the patient.
+- Customer message bodies and OTPs are **never logged or persisted** in plain text.
+- Customer phone numbers in admin logs are strictly masked (`+91 ••••• 46292`).
 
 ---
 
-## 2. Event & Channel Routing Matrix
+## 2. Environment Variables Reference
 
-| Event | Patient Channels | Therapist Channels | Admin Channels |
+| Variable | Description | Example / Default | Required in Production |
 |---|---|---|---|
-| `booking_confirmed` | WhatsApp Utility + SMS Fallback + In-App + Email (No OTP) | Push + In-App | — |
-| `followup_proposed` | WhatsApp Utility (Confirm link) + In-App | — | — |
-| `followup_nudge` | WhatsApp Utility + In-App | — | — |
-| `followup_expired` | WhatsApp + In-App | Push + In-App | — |
-| `followup_no_slot` | WhatsApp + In-App | Push + In-App | — |
-| `reminder_24h` | WhatsApp Utility + SMS Fallback | — | — |
-| `reminder_2h` | WhatsApp Utility + SMS Fallback | — | — |
-| `reminder_30_min` | WhatsApp | Push | — |
-| `therapist_daily_agenda` | — | WhatsApp or Push | — |
-| `therapist_60min` | — | WhatsApp or Push | — |
-| `followup_overdue` | WhatsApp + In-App | In-App | In-App (Therapy Admin) |
-| `hep_daily` | WhatsApp or Push (Opt-in only) | — | — |
-| `progress_report_ready` | WhatsApp document + In-App + Email (to Patient & consented Caregiver) | — | — |
-| `therapist_on_the_way` | WhatsApp + Push | — | — |
-| `session_completed_review`| WhatsApp + In-App | — | — |
-| `pcr_pdf_ready` | WhatsApp document + Email | — | — |
-| `booking_cancelled` | WhatsApp + In-App | Push + In-App | In-App |
-| `booking_reassigned` | WhatsApp + In-App | Push + In-App | In-App |
-| `order_paid` | WhatsApp + Email | — | — |
-| `order_shipped` | WhatsApp (Tracking Link) + Email | — | — |
-| `order_delivered` | WhatsApp + Email | — | — |
-| `refund_processed` | WhatsApp + Email | — | — |
-| `payout_paid` | — | WhatsApp + Email (Statement) | — |
-| `sos_raised` | — | — | Push + SMS to On-Call |
+| `WHATSAPP_PROVIDER` | Active WhatsApp provider (`meta` or `mock`) | `meta` | Yes |
+| `WHATSAPP_ACCESS_TOKEN` | Meta System User permanent token | `EAA...` (Secret) | Yes |
+| `WHATSAPP_PHONE_NUMBER_ID` | Meta Phone Number ID (from WhatsApp App dashboard) | `1029384756...` | Yes |
+| `WHATSAPP_WABA_ID` | WhatsApp Business Account ID | `9876543210...` | Yes |
+| `WHATSAPP_APP_ID` | Meta Developer App ID | `123456789...` | Yes |
+| `WHATSAPP_APP_SECRET` | Meta Developer App Secret (used for webhook HMAC validation) | `abcdef...` (Secret) | Yes |
+| `WHATSAPP_WEBHOOK_VERIFY_TOKEN` | Custom verification token for Meta webhook GET challenge | `curevan_wh_verify_...` | Yes |
+| `WHATSAPP_GRAPH_VERSION` | Graph API version | `v22.0` | Optional (default: `v22.0`) |
+| `WHATSAPP_TEMPLATE_LANG` | Default template language code | `en` | Optional (default: `en`) |
+
+> **IMPORTANT**: Never commit actual secrets or access tokens to Git. Read all secrets exclusively via `process.env`.
 
 ---
 
-## 3. Meta WhatsApp Cloud API Templates (To Submit in Meta Business Manager)
+## 3. Step A: One-Time Meta Business Setup Runbook
 
-All templates below are classified strictly under the **UTILITY** category.
+Follow these steps to configure your Meta WhatsApp Cloud API app for live production:
 
-### 1. `curevan_booking_confirmed_v1`
-- **Category**: UTILITY
-- **Language**: English (en_US)
-- **Approved Body Text**:
-  ```
-  Namaste {{1}}, your Curevan home session with {{2}} is confirmed for {{3}} at {{4}} in {{5}}. Please share your Start Code {{6}} with the therapist only when they arrive at your home. View session details: {{7}}
-  ```
-- **Variables**: `{{1}}` patient_name, `{{2}}` therapist_name, `{{3}}` date, `{{4}}` time, `{{5}}` locality, `{{6}}` start_otp, `{{7}}` booking_link.
+### 3.1. Permanent System User Access Token
+1. Open [Meta Business Manager](https://business.facebook.com/settings).
+2. Go to **Users** -> **System Users**.
+3. Create or select a System User with the **Admin** role (e.g., `curevan-whatsapp-service`).
+4. Under **Assigned Assets**, assign your WhatsApp Business Account (WABA) with full control (`whatsapp_business_messaging`, `whatsapp_business_management`).
+5. Click **Generate New Token**:
+   - Select your Curevan Meta App.
+   - Token expiration: **Never**.
+   - Scopes required: `whatsapp_business_messaging`, `whatsapp_business_management`.
+6. Save this token as `WHATSAPP_ACCESS_TOKEN` in production environment configuration.
 
-### 2. `curevan_followup_proposed_v1`
-- **Category**: UTILITY
-- **Language**: English (en_US)
-- **Approved Body Text**:
-  ```
-  Namaste {{1}}, {{2}} has recommended your next session for {{3}} at {{4}}. We have reserved this slot for you. Confirm your slot here: {{5}}
-  ```
-- **Variables**: `{{1}}` patient_name, `{{2}}` therapist_name, `{{3}}` date, `{{4}}` time, `{{5}}` confirm_link.
+### 3.2. Two-Step Verification PIN Registration
+1. In Meta App Dashboard -> **WhatsApp** -> **API Setup**.
+2. Select your registered production phone number (+91 95144 46292 or business number).
+3. Set and register a 6-digit Two-step verification PIN. Keep this PIN safe.
+4. Execute the one-time registration request (via Graph API or Meta dashboard) to register the number:
+   ```bash
+   curl -X POST "https://graph.facebook.com/v22.0/<PHONE_NUMBER_ID>/register" \
+     -H "Authorization: Bearer <WHATSAPP_ACCESS_TOKEN>" \
+     -H "Content-Type: application/json" \
+     -d '{"messaging_product": "whatsapp", "pin": "<YOUR_6_DIGIT_PIN>"}'
+   ```
 
-### 3. `curevan_followup_nudge_v1`
-- **Category**: UTILITY
-- **Language**: English (en_US)
-- **Approved Body Text**:
-  ```
-  Namaste {{1}}, your recommended session on {{2}} at {{3}} is still reserved. Confirm your session soon to keep the slot: {{4}}
-  ```
-- **Variables**: `{{1}}` patient_name, `{{2}}` date, `{{3}}` time, `{{4}}` confirm_link.
-
-### 4. `curevan_followup_expired_v1`
-- **Category**: UTILITY
-- **Language**: English (en_US)
-- **Approved Body Text**:
-  ```
-  Namaste {{1}}, the slot reserved for your session on {{2}} has been released because it was not confirmed in time. You can book again anytime: {{3}}
-  ```
-- **Variables**: `{{1}}` patient_name, `{{2}}` date, `{{3}}` booking_link.
-
-### 5. `curevan_followup_noslot_v1`
-- **Category**: UTILITY
-- **Language**: English (en_US)
-- **Approved Body Text**:
-  ```
-  Namaste {{1}}, your therapist recommended a session, but no matching slot was available. Please select an alternate slot here: {{2}}
-  ```
-- **Variables**: `{{1}}` patient_name, `{{2}}` booking_link.
-
-### 6. `curevan_reminder_24h_v1`
-- **Category**: UTILITY
-- **Language**: English (en_US)
-- **Approved Body Text**:
-  ```
-  Namaste {{1}}, reminder: your Curevan home therapy session with {{2}} is tomorrow at {{3}}. View booking: {{4}}
-  ```
-- **Variables**: `{{1}}` patient_name, `{{2}}` therapist_name, `{{3}}` time, `{{4}}` booking_link.
-
-### 7. `curevan_reminder_2h_v1`
-- **Category**: UTILITY
-- **Language**: English (en_US)
-- **Approved Body Text**:
-  ```
-  Namaste {{1}}, your Curevan home therapy session with {{2}} starts in 2 hours at {{3}}. Your start code is available in the app: {{4}}
-  ```
-- **Variables**: `{{1}}` patient_name, `{{2}}` therapist_name, `{{3}}` time, `{{4}}` booking_link.
-
-### 8. `curevan_reminder_30min_v1`
-- **Category**: UTILITY
-- **Language**: English (en_US)
-- **Approved Body Text**:
-  ```
-  Namaste {{1}}, your therapist {{2}} will arrive in approximately 30 minutes for your session at {{3}}. Please be ready with your start code.
-  ```
-- **Variables**: `{{1}}` patient_name, `{{2}}` therapist_name, `{{3}}` time.
-
-### 9. `curevan_therapist_agenda_v1`
-- **Category**: UTILITY
-- **Language**: English (en_US)
-- **Approved Body Text**:
-  ```
-  Dr {{1}}, your Curevan schedule for today ({{2}}): {{3}}. View schedule: {{4}}
-  ```
-- **Variables**: `{{1}}` therapist_name, `{{2}}` date, `{{3}}` agenda_summary, `{{4}}` schedule_link.
-
-### 10. `curevan_therapist_60min_v1`
-- **Category**: UTILITY
-- **Language**: English (en_US)
-- **Approved Body Text**:
-  ```
-  Dr {{1}}, your session with {{2}} starts in 60 minutes at {{3}} in {{4}}. View details: {{5}}
-  ```
-- **Variables**: `{{1}}` therapist_name, `{{2}}` patient_name, `{{3}}` time, `{{4}}` city, `{{5}}` schedule_link.
-
-### 11. `curevan_followup_overdue_v1`
-- **Category**: UTILITY
-- **Language**: English (en_US)
-- **Approved Body Text**:
-  ```
-  Namaste {{1}}, it has been a while since your last session. Book your next appointment to keep your recovery plan on track: {{2}}
-  ```
-- **Variables**: `{{1}}` patient_name, `{{2}}` booking_link.
-
-### 12. `curevan_hep_daily_v1`
-- **Category**: UTILITY
-- **Language**: English (en_US)
-- **Approved Body Text**:
-  ```
-  Namaste {{1}}, time for your home exercises! A few minutes of prescribed exercises today keeps your recovery progressing: {{2}}
-  ```
-- **Variables**: `{{1}}` patient_name, `{{2}}` exercise_link.
-
-### 13. `curevan_progress_report_v1`
-- **Category**: UTILITY
-- **Language**: English (en_US)
-- **Approved Body Text**:
-  ```
-  Namaste {{1}}, your clinical progress report from Dr {{2}} is ready. View your recovery milestones: {{3}}
-  ```
-- **Variables**: `{{1}}` recipient_name, `{{2}}` therapist_name, `{{3}}` report_link.
-
-### 14. `curevan_therapist_ontheway_v1`
-- **Category**: UTILITY
-- **Language**: English (en_US)
-- **Approved Body Text**:
-  ```
-  Namaste {{1}}, your therapist {{2}} is on the way to your home for the {{3}} session. Please keep your Start Code ready.
-  ```
-- **Variables**: `{{1}}` patient_name, `{{2}}` therapist_name, `{{3}}` time.
-
-### 15. `curevan_session_completed_v1`
-- **Category**: UTILITY
-- **Language**: English (en_US)
-- **Approved Body Text**:
-  ```
-  Namaste {{1}}, your session with {{2}} is complete. How did it go? Rate your experience and help us maintain quality care: {{3}}
-  ```
-- **Variables**: `{{1}}` patient_name, `{{2}}` therapist_name, `{{3}}` review_link.
-
-### 16. `curevan_pcr_ready_v1`
-- **Category**: UTILITY
-- **Language**: English (en_US)
-- **Approved Body Text**:
-  ```
-  Namaste {{1}}, your Patient Care Record (PCR) summary for session #{{2}} on {{3}} has been finalized. View record: {{4}}
-  ```
-- **Variables**: `{{1}}` patient_name, `{{2}}` session_number, `{{3}}` date, `{{4}}` record_link.
-
-### 17. `curevan_booking_cancelled_v1`
-- **Category**: UTILITY
-- **Language**: English (en_US)
-- **Approved Body Text**:
-  ```
-  Namaste {{1}}, your booking for {{2}} at {{3}} has been cancelled. Reason: {{4}}
-  ```
-- **Variables**: `{{1}}` patient_name, `{{2}}` date, `{{3}}` time, `{{4}}` reason.
-
-### 18. `curevan_booking_reassigned_v1`
-- **Category**: UTILITY
-- **Language**: English (en_US)
-- **Approved Body Text**:
-  ```
-  Namaste {{1}}, your session on {{2}} at {{3}} has been reassigned to {{4}}. View details: {{5}}
-  ```
-- **Variables**: `{{1}}` patient_name, `{{2}}` date, `{{3}}` time, `{{4}}` new_therapist_name, `{{5}}` link.
-
-### 19. `curevan_order_paid_v1`
-- **Category**: UTILITY
-- **Language**: English (en_US)
-- **Approved Body Text**:
-  ```
-  Namaste {{1}}, thank you! We received your payment of INR {{2}} for Order #{{3}}. We will pack and ship your wellness items shortly. Track order: {{4}}
-  ```
-- **Variables**: `{{1}}` customer_name, `{{2}}` amount, `{{3}}` order_number, `{{4}}` track_link.
-
-### 20. `curevan_order_shipped_v1`
-- **Category**: UTILITY
-- **Language**: English (en_US)
-- **Approved Body Text**:
-  ```
-  Namaste {{1}}, your Curevan order #{{2}} has been shipped via {{3}}. Tracking AWB: {{4}}. Track here: {{5}}
-  ```
-- **Variables**: `{{1}}` customer_name, `{{2}}` order_number, `{{3}}` courier, `{{4}}` awb, `{{5}}` track_link.
-
-### 21. `curevan_order_delivered_v1`
-- **Category**: UTILITY
-- **Language**: English (en_US)
-- **Approved Body Text**:
-  ```
-  Namaste {{1}}, your Curevan order #{{2}} has been delivered. You have 7 days to report any issues or request a return: {{3}}
-  ```
-- **Variables**: `{{1}}` customer_name, `{{2}}` order_number, `{{3}}` return_link.
-
-### 22. `curevan_refund_processed_v1`
-- **Category**: UTILITY
-- **Language**: English (en_US)
-- **Approved Body Text**:
-  ```
-  Namaste {{1}}, a refund of INR {{2}} has been initiated for {{3}} (Ref: {{4}}). It typically reflects in your bank account within 5-7 business days.
-  ```
-- **Variables**: `{{1}}` customer_name, `{{2}}` amount, `{{3}}` reference, `{{4}}` refund_id.
-
-### 23. `curevan_payout_paid_v1`
-- **Category**: UTILITY
-- **Language**: English (en_US)
-- **Approved Body Text**:
-  ```
-  Dr {{1}}, your weekly payout of INR {{2}} for the week of {{3}} has been transferred. Bank UTR: {{4}}. Statement: {{5}}
-  ```
-- **Variables**: `{{1}}` therapist_name, `{{2}}` amount, `{{3}}` week, `{{4}}` utr, `{{5}}` statement_link.
+### 3.3. Webhook Setup & Subscription
+1. In Meta App Dashboard -> **WhatsApp** -> **Configuration**.
+2. Click **Edit** under Webhook:
+   - **Callback URL**: `https://<api-domain>/api/hooks/whatsapp`
+   - **Verify Token**: Must match `WHATSAPP_WEBHOOK_VERIFY_TOKEN` in your environment.
+3. Click **Verify and Save**. Meta will send a GET challenge to verify the endpoint.
+4. Under **Webhook fields**, click **Manage** and subscribe to:
+   - `messages` (delivers incoming messages, STOP/START replies, and delivery/read status updates).
 
 ---
 
-## 4. TRAI DLT SMS Templates (India Registration)
+## 4. Templates Registry & Synchronization
 
-- **Principal Entity ID**: set `DLT_ENTITY_ID` (from the TRAI DLT portal; no default)
-- **Header**: `CURVAN`
-- **Category**: Service Implicit
+All WhatsApp templates are defined in `src/services/notifications/templates.js`.
 
-### 1. Booking Confirmed Fallback
-- **Template ID**: assigned by the DLT portal after approval (env: `DLT_TID_BOOKING_CONFIRMED`)
-- **Approved Text**:
+### 4.1. Meta Template Rules & Guardrails
+- **Greeting**: Every template starts with `Namaste {{1}},` or `Hello {{1}},`.
+- **Brand Identity**: The `Curevan` brand name must appear in every template.
+- **Support Contact**: Utility templates must end with:
+  ```text
+  Need help? Call +91 95144 46292
   ```
-  Your Curevan home session with {#var#} is confirmed for {#var#} at {#var#}. Share Start Code {#var#} only when therapist arrives. - Curevan
+- **No Clinical Terminology**: Never use words like `diagnosis`, `stroke`, `paralysis`, `pain`, `injury`, `surgery`, or `condition`.
+- **No Hardcoded Numbers / OTPs in Utility**: No 4-6 digit numeric literals. Utility templates must not contain the words `OTP` or `code`.
+- **Links**: URLs must link strictly to `https://www.curevan.com/...`.
+
+### 4.2. CLI Template Management
+Check the status of templates or submit all registered templates to Meta Graph API using the built-in CLI:
+
+- **List existing templates from Meta WABA**:
+  ```bash
+  npm run wa:templates
+  ```
+- **Submit missing templates for Meta approval**:
+  ```bash
+  npm run wa:submit
   ```
 
-### 2. Reminder 24 Hours Before
-- **Template ID**: assigned by the DLT portal after approval (env: `DLT_TID_REMINDER_24H`)
-- **Approved Text**:
-  ```
-  Reminder: Your Curevan home therapy session with {#var#} is tomorrow at {#var#}. Details: {#var#} - Curevan
-  ```
-
-### 3. Reminder 2 Hours Before
-- **Template ID**: assigned by the DLT portal after approval (env: `DLT_TID_REMINDER_2H`)
-- **Approved Text**:
-  ```
-  Your Curevan home therapy session with {#var#} starts in 2 hours at {#var#}. Check your app for details. - Curevan
-  ```
-
-### 4. SOS Emergency Alert (On-Call Staff)
-- **Template ID**: assigned by the DLT portal after approval (env: `DLT_TID_SOS`)
-- **Approved Text**:
-  ```
-  EMERGENCY ALERT: SOS raised by therapist Dr {#var#} (Phone: {#var#}) for Booking #{#var#} at {#var#}. Lat/Lng: {#var#},{#var#}. Action required immediately. - Curevan
-  ```
+### 4.3. Adding New Templates or Handling Rejections
+1. If Meta rejects a template:
+   - Do **NOT** delete or re-submit the same name.
+   - Update the template name in `src/services/notifications/templates.js` with a new version suffix (e.g. `curevan_booking_confirmed_v2`).
+   - Run `npm run wa:submit` to submit the new version for review.
+2. Run unit tests to verify compliance before submission:
+   ```bash
+   npm run test:whatsapp
+   ```
 
 ---
 
-## 5. Audit Logging (`notification_log`)
+## 5. Recipient Matrix & Opt-In Rules
 
-Every notification dispatch is logged in the `notification_log` database table with the following schema:
-- `id SERIAL PRIMARY KEY`
-- `user_id INT NULL` (foreign key to `users.id`)
-- `event TEXT NOT NULL`
-- `channel TEXT NOT NULL` (`whatsapp`, `sms`, `email`, `push`, `inapp`)
-- `template TEXT NULL` (Meta template name or DLT Template ID)
-- `status TEXT NOT NULL` (`sent`, `failed`, `skipped`)
-- `provider_message_id TEXT NULL`
-- `error TEXT NULL` (strictly sanitized to redact any numbers or sensitive tokens)
-- `created_at TIMESTAMPTZ DEFAULT now()`
+Notifications are dispatched according to user roles and explicit consent:
+
+| Event | Patient | Caregivers | Assigned Therapist | Admin Roles |
+|---|---|---|---|---|
+| `booking_created` | WhatsApp + SMS | WhatsApp (if linked) | WhatsApp | `admin.therapy` |
+| `booking_confirmed` | WhatsApp + SMS (NO start code) | WhatsApp (if linked) | WhatsApp | `admin.therapy` |
+| `reminder_24h` | WhatsApp | WhatsApp (if linked) | WhatsApp | - |
+| `reminder_2h` | WhatsApp (NO start code) | WhatsApp (if linked) | WhatsApp | - |
+| `curevan_start_code` | WhatsApp (AUTH category, Patient only) | - | - | - |
+| `therapist_on_the_way` | WhatsApp + SMS | WhatsApp (if linked) | - | - |
+| `session_completed` | WhatsApp + SMS | WhatsApp (if linked) | - | `admin.therapy` |
+| `order_placed` | WhatsApp + Email | - | - | `admin.ecom` |
+| `order_dispatched` | WhatsApp + SMS | - | - | `admin.ecom` |
+| `order_delivered` | WhatsApp | - | - | `admin.ecom` |
+| `sos_triggered` | - | WhatsApp + SMS | - | `admin.super`, `admin.therapy` |
+
+### Opt-In & Opt-Out Enforcement
+- **Consent Check**: Before any WhatsApp notification is queued, the system verifies `user.whatsapp_opt_in === true`. If false, the message is skipped (or routed to SMS if configured).
+- **Inbound Keywords**:
+  - `STOP`, `UNSUBSCRIBE`: Webhook immediately sets `users.whatsapp_opt_in = false` and logs an opt-out event in `consent_logs`.
+  - `START`, `UNSTOP`: Sets `users.whatsapp_opt_in = true` with source `whatsapp_reply`.
+
+---
+
+## 6. Admin Delivery Log & Resend Screen
+
+Super Admins can monitor real-time message delivery and handle delivery exceptions at:
+**`/dashboard/admin/notification-log`**
+
+- **Filterable by**: Channel (`whatsapp`, `sms`, `email`), Status (`sent`, `delivered`, `read`, `failed`), and Event.
+- **Privacy Protections**: Recipient phone numbers are masked (`+91 ••••• 46292`) and customer message bodies/OTPs are never stored or exposed.
+- **Manual Resend**: Super Admin can trigger a 1-click re-dispatch for failed notifications.

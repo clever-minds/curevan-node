@@ -1,9 +1,10 @@
 /**
- * WhatsApp channel adapter (P24).
+ * WhatsApp channel adapter (P24, P30).
  * Supports 'meta' (Meta WhatsApp Cloud API), 'fail' (for testing fallback), and 'console' (dev/testing).
- * Automatically retries once on network failure.
+ * Automatically retries once on network failure or rate limit (429 / 130429).
  */
 const axios = require("axios");
+const rules = require("../../../config/businessRules");
 
 function cleanPhone(raw) {
   const digits = String(raw || "").replace(/\D/g, "");
@@ -14,6 +15,15 @@ function cleanPhone(raw) {
 }
 
 async function sendWhatsApp({ to, text, templateName, templateParams = [], components = null }) {
+  // Master feature switch (P30: businessRules.features.whatsapp)
+  if (rules.features && rules.features.whatsapp === false) {
+    return {
+      success: false,
+      skipped: true,
+      reason: "features.whatsapp_disabled",
+    };
+  }
+
   const phone = cleanPhone(to);
   if (!phone) {
     throw new Error("Invalid recipient phone number for WhatsApp");
@@ -23,11 +33,15 @@ async function sendWhatsApp({ to, text, templateName, templateParams = [], compo
 
   // Test simulation for fallback verification
   if (provider === "fail") {
-    throw new Error("Simulated WhatsApp delivery failure for fallback test");
+    const failErr = new Error("Simulated WhatsApp delivery failure for fallback test");
+    failErr.isFallbackToSms = true;
+    throw failErr;
   }
 
   const token = process.env.WHATSAPP_ACCESS_TOKEN;
   const phoneId = process.env.WHATSAPP_PHONE_NUMBER_ID;
+  const graphVersion = rules.whatsapp?.graphVersion || process.env.WHATSAPP_GRAPH_VERSION || "v21.0";
+  const templateLang = rules.whatsapp?.templateLang || process.env.WHATSAPP_TEMPLATE_LANG || "en";
 
   // Real Meta Cloud API
   if (provider === "meta" && token && phoneId) {
@@ -39,7 +53,7 @@ async function sendWhatsApp({ to, text, templateName, templateParams = [], compo
         type: "template",
         template: {
           name: templateName,
-          language: { code: "en_US" },
+          language: { code: templateLang },
           components: components || [
             {
               type: "body",
@@ -57,12 +71,11 @@ async function sendWhatsApp({ to, text, templateName, templateParams = [], compo
       };
     }
 
-    // Attempt with 1 retry
     let lastErr;
     for (let attempt = 1; attempt <= 2; attempt++) {
       try {
         const resp = await axios.post(
-          `https://graph.facebook.com/v21.0/${phoneId}/messages`,
+          `https://graph.facebook.com/${graphVersion}/${phoneId}/messages`,
           bodyPayload,
           {
             headers: {
@@ -76,10 +89,36 @@ async function sendWhatsApp({ to, text, templateName, templateParams = [], compo
         return { success: true, messageId: msgId, provider: "meta" };
       } catch (err) {
         lastErr = err;
-        if (attempt === 1) await new Promise((r) => setTimeout(r, 200));
+        const status = err.response?.status;
+        const metaCode = err.response?.data?.error?.code;
+
+        // Do not retry on 4xx errors except rate limits (429 or Meta code 130429)
+        const isRateLimit = status === 429 || metaCode === 130429;
+        const isClientError = status && status >= 400 && status < 500;
+        if (isClientError && !isRateLimit) {
+          break; // Stop immediately without second attempt
+        }
+
+        if (attempt === 1) {
+          await new Promise((r) => setTimeout(r, 200));
+        }
       }
     }
-    throw new Error(`Meta WhatsApp API failed: ${lastErr?.response?.data?.error?.message || lastErr.message}`);
+
+    const metaErr = lastErr?.response?.data?.error;
+    const metaCode = metaErr?.code;
+    const metaMsg = metaErr?.message || lastErr.message;
+
+    const error = new Error(`Meta WhatsApp API failed (${metaCode || "ERR"}): ${metaMsg}`);
+    error.code = metaCode;
+
+    // Map Meta error 131026 (not a WhatsApp user) and 131047 (24-hour window) to fallback to SMS
+    if (metaCode === 131026 || metaCode === 131047) {
+      error.isFallbackToSms = true;
+      error.fallbackReason = metaCode === 131026 ? "not_a_whatsapp_user" : "outside_24h_window";
+    }
+
+    throw error;
   }
 
   // Console / Dev Provider (Sanitize any potential OTP before logging to stdout)
